@@ -40,7 +40,7 @@ export function verifySession(token: string): SessionPayload | null {
 }
 
 /** Generates a URL-safe random token and returns both the raw token (to email/send)
- * and its sha256 hash (to store in the DB). Never store the raw token. */
+ *  and its sha256 hash (to store in the DB). Never store the raw token. */
 export function generateOneTimeToken(): { raw: string; hash: string } {
   const raw = crypto.randomBytes(32).toString("base64url");
   const hash = crypto.createHash("sha256").update(raw).digest("hex");
@@ -52,9 +52,9 @@ export function hashToken(raw: string): string {
 }
 
 /** Generates a 6-digit numeric OTP (e.g. for email verification) and returns
- * both the plain code (to email) and its sha256 hash (to store in the DB).
- * Never store the plain code. crypto.randomInt is uniform over
- * [0, 1_000_000) — zero-padded so e.g. 42 becomes "000042", not "42". */
+ *  both the plain code (to email) and its sha256 hash (to store in the DB).
+ *  Never store the plain code. crypto.randomInt is uniform over
+ *  [0, 1_000_000) — zero-padded so e.g. 42 becomes "000042", not "42". */
 export function generateOtp(): { code: string; hash: string } {
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
   const hash = crypto.createHash("sha256").update(code).digest("hex");
@@ -63,16 +63,19 @@ export function generateOtp(): { code: string; hash: string } {
 
 export const SESSION_COOKIE_NAME = "medschool_session";
 
-// This deployment is always split-domain: the frontend(s) run on separate
-// subdomains and the API server runs on api.medschoolproffs.live.
-// Cross-site fetch/XHR calls carry cookies when they're set as
-// SameSite=None; Secure. The shared domain allows the same session cookie
-// to be sent to the student frontend, admin frontend, and API subdomain.
+// This deployment is always split-domain: the frontend(s) run on Netlify
+// and the API server runs on a separate host (Railway/Render). Cross-site
+// fetch/XHR calls only carry cookies when they're set as
+// SameSite=None; Secure — SameSite=Lax (the old default here) is silently
+// dropped on JS-initiated cross-origin requests, which caused login
+// to succeed (200) but the very next /me check to come back 401 and
+// bounce the user straight back to /login. Hardcoded to "none"/secure
+// rather than gated behind an env var so this can't regress by forgetting
+// to set COOKIE_CROSS_SITE=true on the API host.
 export const sessionCookieOptions = {
   httpOnly: true,
   sameSite: "none" as const,
   secure: true,
   maxAge: 7 * 24 * 60 * 60 * 1000,
   path: "/",
-  domain: ".medschoolproffs.live",
 };
