@@ -32,34 +32,20 @@ jobs:
       - name: Build Student + Admin + API
         env:
           API_URL: https://api.medschoolproffs.live
-
-          # Student frontend
           VITE_API_BASE_URL: https://api.medschoolproffs.live
-
-          # Admin frontend
           VITE_STUDENT_URL: https://medschoolproffs.live
           VITE_ADMIN_API_URL: https://api.medschoolproffs.live
-
-        run: |
-          bash scripts/build-hostinger.sh
+        run: bash scripts/build-hostinger.sh
 
       - name: Verify build output
         run: |
-          echo "========================================"
-          echo "Student build"
-          echo "========================================"
+          echo "Student build:"
           ls -la hostinger-out/student/
 
-          echo ""
-          echo "========================================"
-          echo "Admin build"
-          echo "========================================"
+          echo "Admin build:"
           ls -la hostinger-out/admin/
 
-          echo ""
-          echo "========================================"
-          echo "API build"
-          echo "========================================"
+          echo "API build:"
           ls -la hostinger-out/api/
           ls -la hostinger-out/api/dist/
 
@@ -86,10 +72,11 @@ jobs:
           server-dir: ./
 
       - name: Update API deployment branch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           rm -rf /tmp/medschoolproffs-api-deploy
           mkdir -p /tmp/medschoolproffs-api-deploy
-
           cp -r hostinger-out/api/. /tmp/medschoolproffs-api-deploy/
 
           cd /tmp/medschoolproffs-api-deploy
@@ -103,7 +90,6 @@ jobs:
           git add .
           git commit -m "Deploy API runtime from main"
 
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git push origin hostinger-api --force
 ```
