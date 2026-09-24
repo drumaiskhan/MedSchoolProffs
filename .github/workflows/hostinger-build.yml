@@ -1,0 +1,32 @@
+# Builds the three Hostinger upload packages on GitHub (no local setup needed).
+# Run it: GitHub -> Actions -> "Build Hostinger packages" -> Run workflow
+# (also runs on every push to main). Download the zips from the run's "Artifacts".
+name: Build Hostinger packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Build packages
+        env:
+          # Set a repository variable API_URL (Settings -> Variables) to override.
+          API_URL: ${{ vars.API_URL || 'https://api.medschoolproffs.live' }}
+        run: bash scripts/build-hostinger.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hostinger-packages
+          path: hostinger-out/*.zip
+          if-no-files-found: error
