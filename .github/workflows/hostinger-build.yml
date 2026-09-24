@@ -1,4 +1,3 @@
-```yaml
 name: Deploy Student + Admin + API to Hostinger
 
 on:
@@ -92,4 +91,3 @@ jobs:
 
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git push origin hostinger-api --force
-```
