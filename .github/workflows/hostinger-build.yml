@@ -28,15 +28,28 @@ jobs:
       - name: Build Student + Admin
         env:
           API_URL: https://api.medschoolproffs.live
+
+          # Student frontend
+          VITE_API_BASE_URL: https://api.medschoolproffs.live
+
+          # Admin frontend
+          VITE_STUDENT_URL: https://medschoolproffs.live
+          VITE_ADMIN_API_URL: https://api.medschoolproffs.live
+
         run: |
           bash scripts/build-hostinger.sh
 
       - name: Verify build output
         run: |
-          echo "Student build:"
+          echo "========================================"
+          echo "Student build"
+          echo "========================================"
           ls -la hostinger-out/student/
 
-          echo "Admin build:"
+          echo ""
+          echo "========================================"
+          echo "Admin build"
+          echo "========================================"
           ls -la hostinger-out/admin/
 
       - name: Deploy Student frontend
