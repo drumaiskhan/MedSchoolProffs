@@ -220,7 +220,7 @@ router.post("/admin/mcq-import/commit", requireAdmin, async (req, res): Promise<
         options: mcq.options,
         correctAnswer: mcq.correctAnswer ?? null,
         explanation: mcq.explanation ?? null,
-        optionExplanations: mcq.optionExplanations ?? null,
+        optionExplanations: mcq.optionExplanations ? mcq.optionExplanations.map((explanation) => explanation ?? "") : null,
         explanationStatus: mcq.explanation?.trim() ? "APPROVED" as const : "PENDING" as const,
         reference: mcq.reference ?? null,
         hint: mcq.hint ?? null,

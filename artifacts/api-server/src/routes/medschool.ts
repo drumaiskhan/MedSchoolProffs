@@ -924,6 +924,7 @@ router.post("/mcqs", requireAdmin, async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const [mcq] = await db.insert(mcqsTable).values({
     ...parsed.data, options: parsed.data.options, status: "draft",
+    optionExplanations: parsed.data.optionExplanations ? parsed.data.optionExplanations.map((explanation) => explanation ?? "") : null,
     explanationStatus: parsed.data.explanation?.trim() ? "APPROVED" : "PENDING",
   }).returning();
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "MCQ_CREATED", entity: "mcq", entityId: mcq.id });
@@ -1035,6 +1036,7 @@ router.post("/admin/mcqs/bulk", requireAdmin, async (req, res): Promise<void> =>
   try {
     const rows = await db.insert(mcqsTable).values(parsed.data.mcqs.map((mcq) => ({
       ...mcq, options: mcq.options, status: "draft" as const,
+      optionExplanations: mcq.optionExplanations ? mcq.optionExplanations.map((explanation) => explanation ?? "") : null,
       explanationStatus: (mcq.explanation?.trim() ? "APPROVED" : "PENDING") as "APPROVED" | "PENDING",
     }))).returning();
     await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "MCQ_BULK_CREATED", entity: "mcq", entityId: 0, metadata: JSON.stringify({ count: rows.length }) });

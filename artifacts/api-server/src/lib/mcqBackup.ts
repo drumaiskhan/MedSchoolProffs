@@ -129,7 +129,7 @@ export async function restoreMcqBackup(mcqs: ParsedBackupMcq[]): Promise<number>
         options: m.options,
         correctAnswer: m.correctAnswer ?? null,
         explanation: m.explanation ?? null,
-        optionExplanations: m.optionExplanations ?? null,
+        optionExplanations: m.optionExplanations ? m.optionExplanations.map((explanation) => explanation ?? "") : null,
         hint: m.hint ?? null,
         explanationStatus: (m.explanationStatus as "PENDING" | "AI_GENERATED" | "REVIEWED" | "APPROVED" | undefined) ?? "PENDING",
         reference: m.reference ?? null,
