@@ -1,32 +1,54 @@
-# Builds the three Hostinger upload packages on GitHub (no local setup needed).
-# Run it: GitHub -> Actions -> "Build Hostinger packages" -> Run workflow
-# (also runs on every push to main). Download the zips from the run's "Artifacts".
-name: Build Hostinger packages
+name: Deploy Student + Admin to Hostinger
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - name: Build packages
+
+      - name: Build Student + Admin
         env:
-          # Set a repository variable API_URL (Settings -> Variables) to override.
-          API_URL: ${{ vars.API_URL || 'https://api.medschoolproffs.live' }}
-        run: bash scripts/build-hostinger.sh
-      - uses: actions/upload-artifact@v4
+          API_URL: https://api.medschoolproffs.live
+        run: |
+          bash scripts/build-hostinger.sh
+
+      - name: Deploy Student frontend
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          name: hostinger-packages
-          path: hostinger-out/*.zip
-          if-no-files-found: error
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ secrets.FTP_PORT }}
+          protocol: ftps
+          local-dir: ./hostinger-out/student/
+          server-dir: ./
+
+      - name: Deploy Admin frontend
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.ADMIN_FTP_HOST }}
+          username: ${{ secrets.ADMIN_FTP_USERNAME }}
+          password: ${{ secrets.ADMIN_FTP_PASSWORD }}
+          port: ${{ secrets.ADMIN_FTP_PORT }}
+          protocol: ftps
+          local-dir: ./hostinger-out/admin/
+          server-dir: ./
