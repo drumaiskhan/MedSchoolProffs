@@ -39,6 +39,14 @@ jobs:
           echo "Admin build:"
           ls -la hostinger-out/admin/
 
+      - name: Inspect Student build
+        run: |
+          echo "=== Student files ==="
+          find hostinger-out/student -maxdepth 3 -type f | sort
+
+          echo "=== Student root ==="
+          ls -lah hostinger-out/student/
+
       - name: Deploy Student frontend
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
