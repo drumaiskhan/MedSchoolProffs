@@ -89,4 +89,16 @@ jobs:
           git commit -m "Deploy API runtime from main"
 
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin hostinger-api --force
+          # GitHub occasionally answers a push with a transient "Internal Server
+          # Error". Retry with backoff instead of failing the whole deploy (the
+          # frontends have already been uploaded by this point, so a failed push
+          # leaves the API one version behind them).
+          for attempt in 1 2 3 4 5; do
+            if git push origin hostinger-api --force; then
+              exit 0
+            fi
+            echo "Push failed (attempt $attempt/5), retrying in $((attempt * 15))s..."
+            sleep $((attempt * 15))
+          done
+          echo "::error::Could not push hostinger-api after 5 attempts"
+          exit 1

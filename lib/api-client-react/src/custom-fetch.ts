@@ -360,7 +360,20 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // The API lives on its own origin (api.<domain>) while the apps run on
+  // <domain> / admin.<domain>. For cross-origin requests fetch() defaults to
+  // credentials: "same-origin", which silently omits the HttpOnly session
+  // cookie — so every generated-hook call (e.g. GET /auth/me, GET
+  // /notifications) reached the API with no Cookie header and got a 401 even
+  // though login had just succeeded. "include" sends the cookie cross-origin
+  // (the API already answers with Access-Control-Allow-Credentials: true and a
+  // specific allowed origin). A caller can still override it via options.
+  const response = await fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "include",
+    method,
+    headers,
+  });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
