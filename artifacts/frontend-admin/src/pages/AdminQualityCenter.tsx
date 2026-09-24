@@ -42,14 +42,19 @@ function ProgressBar({ label, done, total }: { label: string; done: number; tota
 
 function Compare({ pair, onClose, onDelete }: { pair: DupPair; onClose: () => void; onDelete: (id: number) => void }) {
   const cols = [pair.a, pair.b];
-  const sameOpts = (o: string, other: AdminMcqRow) => other.options.includes(o);
+  // Defensive: a legacy/malformed row can have a null `options` value
+  // (older imports, direct DB edits) even though the schema says
+  // otherwise — without the `?? []` guards below, opening Compare on such
+  // a pair threw "Cannot read properties of null (reading 'map')" and
+  // surfaced as a generic "Action failed" toast with no useful context.
+  const sameOpts = (o: string, other: AdminMcqRow) => (other.options ?? []).includes(o);
   return <div className="fixed inset-0 z-[60] grid place-items-center overflow-y-auto bg-black/40 p-3 animate-in fade-in duration-200" onClick={onClose}>
     <div onClick={(e) => e.stopPropagation()} className="w-full max-w-4xl rounded-3xl bg-card p-4 shadow-2xl animate-in zoom-in-95 duration-200 md:p-6" data-testid="dialog-compare">
       <div className="flex items-center justify-between"><div><div className="font-display text-xl">Side-by-side comparison</div><div className="text-[11px] font-bold text-muted-foreground">{Math.round(pair.score * 100)}% similar question wording</div></div><button onClick={onClose} aria-label="Close" className="grid size-9 place-items-center rounded-xl hover:bg-muted"><X size={16} /></button></div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">{cols.map((m, ci) => { const other = cols[1 - ci]; return <div key={m.id} className="rounded-2xl border border-border p-4">
         <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><span>#{m.id} · {m.status} · {m.difficulty}</span><span>{new Date(m.createdAt).toLocaleDateString()}</span></div>
         <p className="mt-2 text-sm font-semibold leading-6">{m.question}</p>
-        <div className="mt-3 space-y-1.5">{m.options.map((o) => <div key={o} className={cn('rounded-lg px-2.5 py-1.5 text-xs', o === m.correctAnswer ? 'bg-primary/10 font-bold text-primary' : 'bg-muted/60', !sameOpts(o, other) && 'ring-1 ring-accent')}>{o}{!sameOpts(o, other) && <span className="ml-1.5 text-[9px] font-extrabold uppercase text-accent-text">differs</span>}</div>)}</div>
+        <div className="mt-3 space-y-1.5">{(m.options ?? []).map((o) => <div key={o} className={cn('rounded-lg px-2.5 py-1.5 text-xs', o === m.correctAnswer ? 'bg-primary/10 font-bold text-primary' : 'bg-muted/60', !sameOpts(o, other) && 'ring-1 ring-accent')}>{o}{!sameOpts(o, other) && <span className="ml-1.5 text-[9px] font-extrabold uppercase text-accent-text">differs</span>}</div>)}</div>
         <div className="mt-3 line-clamp-3 text-[11px] leading-5 text-muted-foreground">{m.explanation ? clip(m.explanation, 220) : 'No explanation'}</div>
         <div className="mt-2 flex flex-wrap gap-1.5">{m.correctAnswer !== other.correctAnswer && <Badge tone="amber">Different answer key</Badge>}{!hasReference(m) && <Badge tone="red">No reference</Badge>}</div>
         <button onClick={() => onDelete(m.id)} className="mt-3 w-full rounded-xl border border-destructive/30 py-2 text-xs font-extrabold text-destructive hover:bg-destructive/5" data-testid={`button-delete-${m.id}`}>Delete this copy</button>
@@ -71,24 +76,34 @@ export default function AdminQualityCenter() {
   const fail = (e: unknown) => toast({ title: 'Action failed', description: e instanceof Error ? e.message : 'Try again.', variant: 'destructive' });
   const setStatus = useMutation({ mutationFn: (v: { id: number; s: 'REVIEWED' | 'APPROVED' }) => explanationsApi.setStatus(v.id, v.s), onSuccess: refresh, onError: fail });
   const gen = useMutation({ mutationFn: (id: number) => explanationsApi.generate(id), onSuccess: () => { refresh(); toast({ title: 'Explanation drafted', description: 'Sent to Draft → review it, then approve.' }); }, onError: fail });
+  const [referenceOneId, setReferenceOneId] = useState<number | null>(null);
+  const referenceOne = useMutation({ mutationFn: (id: number) => mcqAdminApi.referenceBatch([id]), onSuccess: (r) => { refresh(); toast(r.fixed ? { title: 'Reference added' } : { title: "AI wasn't confident enough", description: 'Try again, or add one manually in the bank.' }); }, onError: fail });
   const bulkGen = useMutation({ mutationFn: (ids: number[]) => explanationsApi.bulkGenerate({ mcqIds: ids }), onSuccess: (r) => { refresh(); toast({ title: `Drafted ${r.generated} explanations`, description: r.failed ? `${r.failed} failed` : undefined }); }, onError: fail });
   const publish = useMutation({ mutationFn: (id: number) => mcqAdminApi.publish(id), onSuccess: refresh, onError: fail });
   const resolve = useMutation({ mutationFn: (id: number) => flaggedMcqsApi.updateStatus(id, 'resolved'), onSuccess: refresh, onError: fail });
   const remove = useMutation({ mutationFn: (id: number) => mcqAdminApi.remove(id), onSuccess: () => { setDel(null); setCmp(null); refresh(); toast({ title: 'Question deleted' }); }, onError: fail });
 
-  // "AI Fix" actions — three entry points (the header's combined "AI Fix
-  // All", the Duplicates tab's own button, and the Invalid stat/list's own
-  // button) all share the same underlying batch loops so there's exactly
-  // one place that knows about the 8-per-call cap / re-fetch-between-rounds
-  // pattern used to dodge the hosting gateway's timeout (see the batch
-  // routes' own comments in explanations.ts for why 8 and why re-fetch).
-  // busyKind gates all three buttons at once — only one fix run at a time,
-  // so a click on one button can't race a dedupe/repair the other kicked
-  // off. progress tracks the currently-running loop for the shared
-  // ProgressBar; total is a snapshot taken when that loop starts.
-  const [busyKind, setBusyKind] = useState<null | 'all' | 'duplicates' | 'invalid'>(null);
+  // "AI Fix" actions — four entry points (the header's combined "AI Fix
+  // All", the Duplicates tab's own button, the Invalid stat/list's own
+  // button, and the No reference stat/list's own button) all share the
+  // same underlying batch loops so there's exactly one place that knows
+  // about the 20-per-call cap / re-fetch-between-rounds pattern used to
+  // dodge the hosting gateway's timeout (see the batch routes' own
+  // comments in explanations.ts for why 20 and why re-fetch). busyKind
+  // gates all four buttons at once — only one fix run at a time, so a
+  // click on one button can't race a dedupe/repair/reference-fill the
+  // other kicked off. progress tracks the currently-running loop for the
+  // shared ProgressBar; total is a snapshot taken when that loop starts.
+  const [busyKind, setBusyKind] = useState<null | 'all' | 'duplicates' | 'invalid' | 'noReference'>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const MAX_FIX_ROUNDS = 15;
+  const FIX_BATCH_SIZE = 20;
+
+  // Pushes a freshly re-fetched row list straight into the query cache so
+  // every question fixed in a round appears in the bank/quality-center list
+  // immediately, round by round — rather than only once the *entire*
+  // multi-round run finishes (which could be a while for a big backlog).
+  const applyRows = (next: AdminMcqRow[]) => qc.setQueryData(['admin-mcqs-all'], next);
 
   const fixDuplicatesLoop = async (initialDupes: DupPair[]) => {
     const total = initialDupes.length;
@@ -97,10 +112,11 @@ export default function AdminQualityCenter() {
     let currentDupes = initialDupes;
     let fixedTotal = 0;
     for (let round = 0; round < MAX_FIX_ROUNDS && currentDupes.length; round++) {
-      const batch = currentDupes.slice(0, 8);
+      const batch = currentDupes.slice(0, FIX_BATCH_SIZE);
       const { fixed } = await mcqAdminApi.dedupeBatch(batch.map((p) => ({ id: p.b.id, otherId: p.a.id })));
       fixedTotal += fixed;
       currentRows = await mcqAdminApi.list();
+      applyRows(currentRows);
       currentDupes = findDuplicates(currentRows).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`));
       setProgress({ done: Math.max(0, total - currentDupes.length), total });
     }
@@ -114,14 +130,33 @@ export default function AdminQualityCenter() {
     setProgress({ done: 0, total });
     let fixedTotal = 0;
     for (let round = 0; round < MAX_FIX_ROUNDS && currentInvalid.length; round++) {
-      const batch = currentInvalid.slice(0, 8);
+      const batch = currentInvalid.slice(0, FIX_BATCH_SIZE);
       const { fixed } = await mcqAdminApi.repairInvalidBatch(batch.map((m) => ({ id: m.id, reasons: invalidReasons(m) })));
       fixedTotal += fixed;
       currentRows = await mcqAdminApi.list();
+      applyRows(currentRows);
       currentInvalid = currentRows.filter((m) => invalidReasons(m).length);
       setProgress({ done: Math.max(0, total - currentInvalid.length), total });
     }
     return { fixedTotal, remaining: currentInvalid.length };
+  };
+
+  const fixNoReferenceLoop = async () => {
+    let currentRows = rows;
+    let currentNoRef = currentRows.filter((m) => !hasReference(m));
+    const total = currentNoRef.length;
+    setProgress({ done: 0, total });
+    let fixedTotal = 0;
+    for (let round = 0; round < MAX_FIX_ROUNDS && currentNoRef.length; round++) {
+      const batch = currentNoRef.slice(0, FIX_BATCH_SIZE);
+      const { fixed } = await mcqAdminApi.referenceBatch(batch.map((m) => m.id));
+      fixedTotal += fixed;
+      currentRows = await mcqAdminApi.list();
+      applyRows(currentRows);
+      currentNoRef = currentRows.filter((m) => !hasReference(m));
+      setProgress({ done: Math.max(0, total - currentNoRef.length), total });
+    }
+    return { fixedTotal, remaining: currentNoRef.length };
   };
 
   const runAiFixAll = async () => {
@@ -131,9 +166,11 @@ export default function AdminQualityCenter() {
         const r = await flaggedMcqsApi.resolveAll();
         toast({ title: `Resolved ${r.resolved} reported question${r.resolved === 1 ? '' : 's'}` });
       }
-      const { fixedTotal, remaining } = await fixDuplicatesLoop(dupes);
+      const dupResult = await fixDuplicatesLoop(dupes);
+      const refResult = await fixNoReferenceLoop();
       refresh();
-      toast({ title: 'AI Fix All complete', description: `${fixedTotal} duplicate question${fixedTotal === 1 ? '' : 's'} rewritten by AI.${remaining ? ` ${remaining} pairs left — run it again to keep going.` : ''}` });
+      const remaining = dupResult.remaining + refResult.remaining;
+      toast({ title: 'AI Fix All complete', description: `${dupResult.fixedTotal} duplicate question${dupResult.fixedTotal === 1 ? '' : 's'} rewritten and ${refResult.fixedTotal} reference${refResult.fixedTotal === 1 ? '' : 's'} added by AI.${remaining ? ` ${remaining} left — run it again to keep going.` : ''}` });
     } catch (e) {
       fail(e);
     } finally {
@@ -170,6 +207,20 @@ export default function AdminQualityCenter() {
     }
   };
 
+  const runAiFixNoReference = async () => {
+    setBusyKind('noReference');
+    try {
+      const { fixedTotal, remaining } = await fixNoReferenceLoop();
+      refresh();
+      toast({ title: 'References added', description: `${fixedTotal} question${fixedTotal === 1 ? '' : 's'} given a reference by AI.${remaining ? ` ${remaining} left — run it again to keep going.` : ''}` });
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusyKind(null);
+      setProgress(null);
+    }
+  };
+
   const rows: AdminMcqRow[] = mcqs.data ?? [];
   const openFlags = useMemo(() => (flags.data ?? []).filter((f: FlaggedMcq) => f.status === 'open' && !f.mcqDeleted), [flags.data]);
   const dupes = useMemo(() => findDuplicates(rows).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`)), [rows, hidden]);
@@ -188,15 +239,18 @@ export default function AdminQualityCenter() {
   const list: Array<{ m?: AdminMcqRow; id: number; text: string; note: string; action: React.ReactNode }> =
     issue === 'invalid' ? invalid.map((m) => ({ m, id: m.id, text: m.question, note: invalidReasons(m).join(' · '), action: <Link href="/admin/mcqs" className="inline-flex items-center gap-1 rounded-xl border border-border px-3 py-1.5 text-[11px] font-extrabold hover:bg-muted">Fix in bank <ArrowRight size={11} /></Link> }))
     : issue === 'noExplanation' ? noExp.map((m) => ({ m, id: m.id, text: m.question, note: 'No explanation yet', action: <button disabled={gen.isPending} onClick={() => gen.mutate(m.id)} className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground disabled:opacity-50"><Sparkles size={11} /> Draft with AI</button> }))
-    : issue === 'noReference' ? noRef.map((m) => ({ m, id: m.id, text: m.question, note: 'No reference / source cited', action: <Link href="/admin/mcqs" className="inline-flex items-center gap-1 rounded-xl border border-border px-3 py-1.5 text-[11px] font-extrabold hover:bg-muted">Add in bank <ArrowRight size={11} /></Link> }))
+    : issue === 'noReference' ? noRef.map((m) => ({ m, id: m.id, text: m.question, note: 'No reference / source cited', action: <div className="flex shrink-0 items-center gap-1.5">
+        <button disabled={referenceOne.isPending && referenceOneId === m.id} onClick={() => { setReferenceOneId(m.id); referenceOne.mutate(m.id); }} className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground disabled:opacity-50"><Sparkles size={11} /> {referenceOne.isPending && referenceOneId === m.id ? 'Adding…' : 'Add with AI'}</button>
+        <Link href="/admin/mcqs" className="inline-flex items-center gap-1 rounded-xl border border-border px-3 py-1.5 text-[11px] font-extrabold hover:bg-muted">Add in bank <ArrowRight size={11} /></Link>
+      </div> }))
     : openFlags.map((f) => ({ id: f.mcqId, text: f.question ?? '', note: `${f.reason || 'No reason given'}${f.path ? ` · ${f.path}` : ''}`, action: <button onClick={() => resolve.mutate(f.id)} className="inline-flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground"><CheckCircle2 size={11} /> Resolve</button> }));
 
   return <div data-testid="page-quality-center">
     <SectionHeader eyebrow="Question bank" title="Content Quality Center" action={<div className="flex flex-wrap items-center gap-2">
       <button
-        disabled={busyKind !== null || (!openFlags.length && !dupes.length)}
+        disabled={busyKind !== null || (!openFlags.length && !dupes.length && !noRef.length)}
         onClick={runAiFixAll}
-        title="Resolves every reported question and has AI rewrite duplicate questions so they're no longer near-copies"
+        title="Resolves every reported question, has AI rewrite duplicate questions so they're no longer near-copies, and has AI add a reference to questions that are missing one"
         className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-primary to-violet px-3.5 py-2 text-xs font-extrabold text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
         data-testid="button-ai-fix-all"
       >{busyKind === 'all' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} {busyKind === 'all' ? 'Working…' : 'AI Fix All'}</button>
@@ -204,7 +258,7 @@ export default function AdminQualityCenter() {
     </div>} />
 
     {progress && <div className="mb-4">
-      <ProgressBar label={busyKind === 'invalid' ? 'Repairing invalid questions with AI…' : 'Rewriting duplicates with AI…'} done={progress.done} total={progress.total} />
+      <ProgressBar label={busyKind === 'invalid' ? 'Repairing invalid questions with AI…' : busyKind === 'noReference' ? 'Adding references with AI…' : 'Rewriting duplicates with AI…'} done={progress.done} total={progress.total} />
     </div>}
 
 
@@ -225,6 +279,7 @@ export default function AdminQualityCenter() {
         <Stat icon={Flag} label="Reported" value={openFlags.length} tone="bg-violet/15 text-violet" active={issue === 'reported'} onClick={() => setIssue('reported')} />
       </div>
       {issue === 'invalid' && !!invalid.length && <button disabled={busyKind !== null} onClick={runAiFixInvalid} className="inline-flex items-center gap-1.5 self-start rounded-xl bg-gradient-to-r from-primary to-violet px-3.5 py-2 text-xs font-extrabold text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0" data-testid="button-ai-fix-invalid">{busyKind === 'invalid' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fix {invalid.length} invalid with AI</button>}
+      {issue === 'noReference' && !!noRef.length && <button disabled={busyKind !== null} onClick={runAiFixNoReference} className="inline-flex items-center gap-1.5 self-start rounded-xl bg-gradient-to-r from-primary to-violet px-3.5 py-2 text-xs font-extrabold text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0" data-testid="button-ai-fix-reference">{busyKind === 'noReference' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Add {noRef.length} reference{noRef.length === 1 ? '' : 's'} with AI</button>}
       {!list.length ? <EmptyState icon={ShieldCheck} title="All clear" body="Nothing in this category needs attention." /> : <div className="grid gap-2">{list.slice(0, 60).map((r, i) => <div key={`${issue}-${r.id}-${i}`} className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-3.5 animate-in fade-in slide-in-from-bottom-1 duration-300" data-testid={`issue-row-${r.id}`}>
         <div className="min-w-0 flex-1"><div className="line-clamp-2 text-xs font-semibold leading-5">{r.text}</div><div className="mt-1 text-[10px] font-bold text-muted-foreground">#{r.id} · {r.note}</div></div>{r.action}</div>)}{list.length > 60 && <p className="text-center text-[11px] text-muted-foreground">Showing 60 of {list.length}.</p>}</div>}
     </div>}

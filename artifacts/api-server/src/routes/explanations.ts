@@ -3,8 +3,9 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, mcqsTable, flashcardsTable, topicsTable, subjectsTable, modulesTable, auditLogsTable } from "@workspace/db";
 import { requireAdmin, requireAuth, requireMembershipFor } from "../middlewares/auth";
-import { generateExplanation, generateFlashcardExplanation, generateFlashcardSet, generateMcqSet, classifyDifficulty, generateOptionExplanations, rewriteDuplicateMcq, repairInvalidMcq, AiNotConfiguredError } from "../lib/aiExplain";
+import { generateExplanation, generateFlashcardExplanation, generateFlashcardSet, generateMcqSet, classifyDifficulty, generateOptionExplanations, rewriteDuplicateMcq, repairInvalidMcq, generateMcqReference, AiNotConfiguredError } from "../lib/aiExplain";
 import { getAllSettings } from "../lib/settings";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 
@@ -378,9 +379,18 @@ router.post("/admin/mcqs/generate-option-explanations", requireAdmin, async (req
 // with 100+ duplicate pairs is worked through by the frontend calling this
 // repeatedly rather than one request trying to rewrite them all and hitting
 // the 26s proxy ceiling.
+//
+// Batch size (20) — raised from an earlier 8 so a round clears more of the
+// backlog per round-trip (fewer refetches, visibly faster in the Content
+// Quality Center). Rows still run fully in parallel (see the concurrency
+// note below), so 20 is a bet that 20 concurrent ~12s AI calls still land
+// inside the hosting gateway's proxy ceiling the same way 8 did — if a
+// given deployment's AI provider is slow enough that this starts timing
+// out, lower it back down rather than lowering the per-call deadline.
 // ---------------------------------------------------------------------------
 
-const DedupeBatchBody = z.object({ pairs: z.array(z.object({ id: z.number().int().positive(), otherId: z.number().int().positive() })).min(1).max(8) });
+const DEDUPE_REPAIR_BATCH_CAP = 20;
+const DedupeBatchBody = z.object({ pairs: z.array(z.object({ id: z.number().int().positive(), otherId: z.number().int().positive() })).min(1).max(DEDUPE_REPAIR_BATCH_CAP) });
 
 router.post("/admin/mcqs/dedupe-batch", requireAdmin, async (req, res): Promise<void> => {
   const parsed = DedupeBatchBody.safeParse(req.body);
@@ -391,18 +401,28 @@ router.post("/admin/mcqs/dedupe-batch", requireAdmin, async (req, res): Promise<
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   // Same concurrency reasoning as CLASSIFY_CONCURRENCY / GENERATE_CONCURRENCY
-  // above: a fully sequential loop over up to 8 AI calls (each with its own
-  // 12s hard deadline) could take a while, so pairs run in parallel and the
-  // batch size (8) is chosen so one round comfortably clears in a single
-  // 12s window.
+  // above: a fully sequential loop over up to 20 AI calls (each with its own
+  // 12s hard deadline) could take a while, so pairs run in parallel. Each
+  // pair is wrapped in its own try/catch so one bad row (a DB error, a
+  // malformed legacy row) can't reject the whole Promise.all and throw away
+  // every other row's already-computed fix — the batch always returns
+  // whatever it managed, which is also what lets the client fold each
+  // round's results into the visible list right away instead of only at
+  // the very end of a multi-round run (see fixDuplicatesLoop in
+  // AdminQualityCenter.tsx).
   const results = await Promise.all(parsed.data.pairs.map(async (pair) => {
-    const row = byId.get(pair.id);
-    const other = byId.get(pair.otherId);
-    if (!row || !other) return { id: pair.id, rewritten: false };
-    const rewritten = await rewriteDuplicateMcq({ question: row.question, options: row.options as string[], correctAnswer: row.correctAnswer, otherQuestion: other.question });
-    if (!rewritten) return { id: pair.id, rewritten: false };
-    await db.update(mcqsTable).set({ question: rewritten.question, options: rewritten.options, correctAnswer: rewritten.correctAnswer }).where(eq(mcqsTable.id, pair.id));
-    return { id: pair.id, rewritten: true };
+    try {
+      const row = byId.get(pair.id);
+      const other = byId.get(pair.otherId);
+      if (!row || !other) return { id: pair.id, rewritten: false };
+      const rewritten = await rewriteDuplicateMcq({ question: row.question, options: (row.options as string[]) ?? [], correctAnswer: row.correctAnswer, otherQuestion: other.question });
+      if (!rewritten) return { id: pair.id, rewritten: false };
+      await db.update(mcqsTable).set({ question: rewritten.question, options: rewritten.options, correctAnswer: rewritten.correctAnswer }).where(eq(mcqsTable.id, pair.id));
+      return { id: pair.id, rewritten: true };
+    } catch (err) {
+      logger.error({ err, mcqId: pair.id }, "dedupe-batch: row failed, skipping");
+      return { id: pair.id, rewritten: false };
+    }
   }));
   res.json({ fixed: results.filter((r) => r.rewritten).length, results });
 });
@@ -412,11 +432,12 @@ router.post("/admin/mcqs/dedupe-batch", requireAdmin, async (req, res): Promise<
 // few/duplicate options, missing or mismatched correct answer — see
 // invalidReasons in the frontend's contentQuality.ts). The client already
 // has each row's reasons computed (no server-side re-check needed), so it
-// sends them along with the batch. Same capped/concurrency-limited shape as
+// sends them along with the batch. Same capped/concurrency-limited shape,
+// same per-row try/catch, and the same raised-to-20 batch size as
 // dedupe-batch above.
 // ---------------------------------------------------------------------------
 
-const RepairInvalidBatchBody = z.object({ items: z.array(z.object({ id: z.number().int().positive(), reasons: z.array(z.string()).min(1) })).min(1).max(8) });
+const RepairInvalidBatchBody = z.object({ items: z.array(z.object({ id: z.number().int().positive(), reasons: z.array(z.string()).min(1) })).min(1).max(DEDUPE_REPAIR_BATCH_CAP) });
 
 router.post("/admin/mcqs/repair-invalid-batch", requireAdmin, async (req, res): Promise<void> => {
   const parsed = RepairInvalidBatchBody.safeParse(req.body);
@@ -426,12 +447,51 @@ router.post("/admin/mcqs/repair-invalid-batch", requireAdmin, async (req, res): 
   const byId = new Map(rows.map((r) => [r.id, r]));
 
   const results = await Promise.all(parsed.data.items.map(async (item) => {
-    const row = byId.get(item.id);
-    if (!row) return { id: item.id, fixed: false };
-    const repaired = await repairInvalidMcq({ question: row.question, options: row.options as string[], correctAnswer: row.correctAnswer, reasons: item.reasons });
-    if (!repaired) return { id: item.id, fixed: false };
-    await db.update(mcqsTable).set({ question: repaired.question, options: repaired.options, correctAnswer: repaired.correctAnswer }).where(eq(mcqsTable.id, item.id));
-    return { id: item.id, fixed: true };
+    try {
+      const row = byId.get(item.id);
+      if (!row) return { id: item.id, fixed: false };
+      const repaired = await repairInvalidMcq({ question: row.question, options: (row.options as string[]) ?? [], correctAnswer: row.correctAnswer, reasons: item.reasons });
+      if (!repaired) return { id: item.id, fixed: false };
+      await db.update(mcqsTable).set({ question: repaired.question, options: repaired.options, correctAnswer: repaired.correctAnswer }).where(eq(mcqsTable.id, item.id));
+      return { id: item.id, fixed: true };
+    } catch (err) {
+      logger.error({ err, mcqId: item.id }, "repair-invalid-batch: row failed, skipping");
+      return { id: item.id, fixed: false };
+    }
+  }));
+  res.json({ fixed: results.filter((r) => r.fixed).length, results });
+});
+
+// ---------------------------------------------------------------------------
+// Admin: "AI Fix" for questions with no reference/source cited (see
+// hasReference in the frontend's contentQuality.ts). Generates a short
+// textbook/source citation per question — same capped/concurrency-limited/
+// per-row-try/catch shape as repair-invalid-batch above, same 20-per-call cap.
+// A question the model isn't confident about (generateMcqReference returns
+// null) is left alone rather than given a made-up-sounding citation.
+// ---------------------------------------------------------------------------
+
+const ReferenceBatchBody = z.object({ ids: z.array(z.number().int().positive()).min(1).max(DEDUPE_REPAIR_BATCH_CAP) });
+
+router.post("/admin/mcqs/reference-batch", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = ReferenceBatchBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+
+  const rows = await db.select({ id: mcqsTable.id, question: mcqsTable.question, options: mcqsTable.options, correctAnswer: mcqsTable.correctAnswer, explanation: mcqsTable.explanation }).from(mcqsTable).where(inArray(mcqsTable.id, parsed.data.ids));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const results = await Promise.all(parsed.data.ids.map(async (id) => {
+    try {
+      const row = byId.get(id);
+      if (!row) return { id, fixed: false };
+      const reference = await generateMcqReference({ question: row.question, options: (row.options as string[]) ?? [], correctAnswer: row.correctAnswer, explanation: row.explanation });
+      if (!reference) return { id, fixed: false };
+      await db.update(mcqsTable).set({ reference }).where(eq(mcqsTable.id, id));
+      return { id, fixed: true };
+    } catch (err) {
+      logger.error({ err, mcqId: id }, "reference-batch: row failed, skipping");
+      return { id, fixed: false };
+    }
   }));
   res.json({ fixed: results.filter((r) => r.fixed).length, results });
 });

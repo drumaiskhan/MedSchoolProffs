@@ -1125,6 +1125,51 @@ export async function repairInvalidMcq(request: { question: string; options: str
   })(), REPAIR_INVALID_HARD_DEADLINE_MS, () => null);
 }
 
+function buildReferencePrompt({ question, options, correctAnswer, explanation }: { question: string; options: string[]; correctAnswer: string | null; explanation?: string | null }): string {
+  const optionList = options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join("\n");
+  return [
+    "You are citing a source for one question in a medical school (MBBS/BDS) MCQ bank so students can look the topic up themselves.",
+    "Name the single standard, widely-used textbook (or, if genuinely more appropriate, a major guideline body) that this fact is normally taught from, with its edition where you're confident of one — e.g. \"Harrison's Principles of Internal Medicine, 21st ed.\" or \"Robbins & Cotran Pathologic Basis of Disease, 10th ed.\" Add a chapter or topic name if it helps a student find the section, but do NOT invent a specific page number.",
+    "Keep it short — a single line, under 120 characters, no prose explanation, just the citation.",
+    "If you are not reasonably confident which standard textbook covers this exact fact, respond with exactly: UNKNOWN",
+    "Do not use markdown.",
+    NO_REASONING_INSTRUCTION,
+    "",
+    `Question: ${question}`,
+    `Options:\n${optionList}`,
+    correctAnswer ? `Correct answer: ${correctAnswer}` : "",
+    explanation ? `Existing explanation (for context only): ${explanation}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+// 12s per row — same budget as repairInvalidMcq/rewriteDuplicateMcq above;
+// a capped batch at the same concurrency stays under the 26s proxy ceiling
+// for the same reason.
+const GENERATE_REFERENCE_HARD_DEADLINE_MS = 12_000;
+
+/** Generates a short textbook/source citation for a question that has none
+ * — the "AI Fix" action for the Content Quality Center's "No reference"
+ * stat/list. Returns null (so the caller skips that row rather than writing
+ * a made-up-sounding citation or stalling the batch) on an unparseable/empty
+ * response, the model's own "UNKNOWN" (it wasn't confident which textbook
+ * this belongs to), an error, or simply taking too long. */
+export async function generateMcqReference(request: { question: string; options: string[]; correctAnswer: string | null; explanation?: string | null }, modelOverride?: string): Promise<string | null> {
+  return withHardDeadline((async () => {
+    try {
+      const raw = await runPrompt(buildReferencePrompt(request), 120, false, modelOverride);
+      const cleaned = stripReasoningArtifacts(raw).replace(/^["'`]|["'`]$/g, "").trim();
+      if (!cleaned || /^unknown$/i.test(cleaned)) return null;
+      // A citation line shouldn't run long — if the model ignored the length
+      // instruction and wrote a paragraph, treat it as unusable rather than
+      // truncating it into something misleading.
+      if (cleaned.length > 200) return null;
+      return cleaned;
+    } catch {
+      return null;
+    }
+  })(), GENERATE_REFERENCE_HARD_DEADLINE_MS, () => null);
+}
+
 export async function generateFlashcardExplanation(request: FlashcardExplanationRequest): Promise<string> {
   return runPrompt(buildFlashcardPrompt(request), 700);
 }

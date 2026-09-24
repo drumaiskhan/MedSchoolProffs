@@ -11,6 +11,26 @@ import { normalizeLegacyRoles } from "./lib/normalizeLegacyRoles";
 import { ensureSchema } from "@workspace/db";
 import { warmStorageConfigCache } from "./lib/storage";
 
+// Without these, a single unhandled promise rejection ANYWHERE in the
+// process — not just inside an Express route, where app.ts's error
+// middleware already turns a rejection into a clean JSON 500 — crashes the
+// whole Node process (default behavior since Node 15). Every in-flight
+// request, on every route, gets its connection abruptly dropped
+// (net::ERR_CONNECTION_RESET in the browser) until the process manager
+// restarts it. Logging and carrying on is the right trade-off for an admin
+// tool like this: a stray rejection in some background/fire-and-forget path
+// shouldn't take down every other admin's session. uncaughtException is
+// caught too, but treated as a signal to exit after logging — the process
+// is in an unknown state at that point, and a process manager (Railway/
+// Render/PM2/etc.) restarting it cleanly is safer than limping on.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "[process] Unhandled promise rejection — continuing, but this should be fixed at its source.");
+});
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "[process] Uncaught exception — exiting so the process manager can restart cleanly.");
+  process.exit(1);
+});
+
 // Most hosts (Railway, Render, Fly, Replit) inject PORT automatically. For
 // local dev without a .env, default to 3001 instead of hard-failing.
 const port = Number(process.env["PORT"]) || 3001;

@@ -13,8 +13,9 @@ import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, Clock3, FileStack, 
 import { analyticsApi, type ProgressOverview, type ProgressTopic } from '@/lib/api';
 import { Badge, EmptyState, ErrorState, Progress, SectionHeader, SkeletonPage, StatTile, cn } from '@/lib/shared';
 import { SubjectIcon } from '@/lib/subject-icons';
+import { ProgressAchievements } from '@/components/ProgressAchievements';
 
-type Tab = 'overview' | 'mcqs' | 'papers' | 'improvement' | 'exams';
+type Tab = 'overview' | 'mcqs' | 'papers' | 'improvement' | 'exams' | 'achievements';
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 const pctText = (n: number | null | undefined) => (n == null ? '—' : `${Math.round(n)}%`);
@@ -52,11 +53,12 @@ function Overview({ d, go }: { d: ProgressOverview; go: (t: Tab) => void }) {
       <div className="flex flex-wrap items-center gap-2"><Sparkles size={15} className="text-primary" /><span className="text-sm font-extrabold">How you're doing</span><Badge tone={verdict.tone}>{verdict.label}</Badge></div>
       <p className="mt-2 text-sm text-muted-foreground">{verdict.text}</p>
     </div>
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {[
         { tab: 'mcqs' as const, icon: Target, title: 'MCQ practice', line: `${d.summary.uniqueMcqsAttempted} different questions attempted`, sub: `${pctText(d.summary.accuracy)} overall accuracy` },
         { tab: 'papers' as const, icon: FileStack, title: 'Past papers', line: d.pastPapers.length ? `${d.pastPapers.length} paper${d.pastPapers.length === 1 ? '' : 's'} started` : 'None started yet', sub: d.pastPapers[0] ? `Latest: ${d.pastPapers[0].title}` : 'Try one from Past papers' },
         { tab: 'exams' as const, icon: ClipboardCheck, title: 'Pre-Proffs', line: d.exams.length ? `${d.exams.length} attempt${d.exams.length === 1 ? '' : 's'}` : 'No attempts yet', sub: d.exams[0]?.released ? `Latest: ${pctText(d.exams[0].percentage)}` : d.exams[0] ? 'Latest result awaiting release' : 'Sit one when it opens' },
+        { tab: 'achievements' as const, icon: Trophy, title: 'Achievements', line: `${d.summary.currentStreak}-day streak`, sub: 'Badges for practice, streaks & more' },
       ].map((c) => <button key={c.tab} type="button" onClick={() => go(c.tab)} className="card-lift group flex items-start gap-3 rounded-2xl border border-border bg-card p-4 text-left" data-testid={`card-progress-${c.tab}`}>
         <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><c.icon size={18} /></span>
         <span className="min-w-0 flex-1"><span className="block text-xs font-extrabold">{c.title}</span><span className="mt-0.5 block text-xs">{c.line}</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{c.sub}</span></span>
@@ -161,7 +163,7 @@ function Progress_() {
   const d = q.data;
   const TABS: Array<{ id: Tab; label: string; icon: typeof Target }> = [
     { id: 'overview', label: 'Overview', icon: Activity }, { id: 'mcqs', label: 'MCQs', icon: Target }, { id: 'papers', label: 'Past papers', icon: FileStack },
-    { id: 'improvement', label: 'Improvement', icon: LineChart }, { id: 'exams', label: 'Pre-Proffs', icon: ClipboardCheck },
+    { id: 'improvement', label: 'Improvement', icon: LineChart }, { id: 'exams', label: 'Pre-Proffs', icon: ClipboardCheck }, { id: 'achievements', label: 'Achievements', icon: Trophy },
   ];
   return <div className="space-y-6">
     <SectionHeader eyebrow="Where you stand" title="My progress" description="Your accuracy, past papers and improvement over time — visible only to you." />
@@ -180,6 +182,7 @@ function Progress_() {
     {tab === 'papers' && <PapersTab d={d} />}
     {tab === 'improvement' && <ImprovementTab d={d} />}
     {tab === 'exams' && <ExamsTab d={d} />}
+    {tab === 'achievements' && <ProgressAchievements overview={d} />}
   </div>;
 }
 
