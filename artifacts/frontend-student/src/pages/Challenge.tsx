@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { Swords, Search, Share2, CheckCircle2, XCircle, Clock3, Trophy, ArrowLeft, X, GraduationCap, SlidersHorizontal } from 'lucide-react';
 import { authApi, blocksApi, type Block, challengesApi, ApiRequestError, type ChallengeOpponent, type ChallengeSummary } from '@/lib/api';
-import { getGetCurrentUserQueryKey, useListModules, useListSubjects, useListTopics } from '@workspace/api-client-react';
+import { getGetCurrentUserQueryKey, getListSubjectsQueryKey, getListTopicsQueryKey, useListModules, useListSubjects, useListTopics } from '@workspace/api-client-react';
 import { EmptyState, SectionHeader, SkeletonPage, Badge, cn, initials, BrandSpinner } from '@/lib/shared';
 import { toast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -34,8 +34,10 @@ function FindFriend({ onChallenged }: { onChallenged: () => void }) {
 
   const blocksQ = useQuery({ queryKey: ['blocks'], queryFn: blocksApi.list });
   const modulesQ = useListModules();
-  const subjectsQ = useListSubjects(moduleId ? { moduleId } : undefined, { query: { enabled: !!moduleId } });
-  const topicsQ = useListTopics(subjectId ? { subjectId } : undefined, { query: { enabled: !!subjectId } });
+  const subjectsParams = moduleId ? { moduleId } : undefined;
+  const topicsParams = subjectId ? { subjectId } : undefined;
+  const subjectsQ = useListSubjects(subjectsParams, { query: { enabled: !!moduleId, queryKey: getListSubjectsQueryKey(subjectsParams) } });
+  const topicsQ = useListTopics(topicsParams, { query: { enabled: !!subjectId, queryKey: getListTopicsQueryKey(topicsParams) } });
 
   const modulesInBlock = (modulesQ.data || []).filter((m) => !blockId || m.blockId === blockId);
 

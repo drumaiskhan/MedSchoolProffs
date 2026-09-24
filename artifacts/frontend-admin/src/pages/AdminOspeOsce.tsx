@@ -479,6 +479,12 @@ function StationsTab({ examType }: { examType: OspeExamType }) {
 
 function toLocalInput(iso?: string): string { if (!iso) return ''; const d = new Date(iso); const pad = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
+// The <select> onChange hands back a plain string, but the exam contract only
+// accepts these literal unions. Look the value up in the allowed list so the
+// state stays correctly typed with no cast (an unknown value is ignored).
+const RESULT_RELEASE_MODES: readonly OspeAdminExam['resultReleaseMode'][] = ['immediate', 'after_end', 'manual'];
+const EXAM_STATUSES: readonly OspeAdminExam['status'][] = ['draft', 'published', 'archived'];
+
 function ExamForm({ initial, onSave, onCancel, pending, examType }: { initial?: OspeAdminExam; onSave: (body: Partial<OspeAdminExam> & { startAt: string; endAt: string }) => void; onCancel: () => void; pending: boolean; examType: OspeExamType }) {
   const [title, setTitle] = useState(initial?.title || '');
   const [description, setDescription] = useState(initial?.description || '');
@@ -487,13 +493,13 @@ function ExamForm({ initial, onSave, onCancel, pending, examType }: { initial?: 
   const [endAt, setEndAt] = useState(toLocalInput(initial?.endAt));
   const [maxAttempts, setMaxAttempts] = useState(String(initial?.maxAttempts ?? 1));
   const [passingPercent, setPassingPercent] = useState(initial?.passingPercent != null ? String(initial.passingPercent) : '');
-  const [resultReleaseMode, setResultReleaseMode] = useState(initial?.resultReleaseMode || 'immediate');
+  const [resultReleaseMode, setResultReleaseMode] = useState<OspeAdminExam['resultReleaseMode']>(initial?.resultReleaseMode || 'immediate');
   const [showMarks, setShowMarks] = useState(initial?.showMarks ?? true);
   const [showPercentage, setShowPercentage] = useState(initial?.showPercentage ?? true);
   const [showCorrectAnswers, setShowCorrectAnswers] = useState(initial?.showCorrectAnswers ?? true);
   const [kind, setKind] = useState<string | null>(initial?.programTargetKind ?? null);
   const [year, setYear] = useState<number | null>(initial?.yearTargetNumber ?? null);
-  const [status, setStatus] = useState(initial?.status || 'draft');
+  const [status, setStatus] = useState<OspeAdminExam['status']>(initial?.status || 'draft');
 
   return <div className="mt-3 space-y-2 rounded-xl border border-border bg-background p-3">
     <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Exam title" className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-exam-title" />
@@ -508,12 +514,12 @@ function ExamForm({ initial, onSave, onCancel, pending, examType }: { initial?: 
       <label className="block"><span className="mb-1 block text-[10px] font-bold text-muted-foreground">Passing % (optional)</span><input value={passingPercent} onChange={(e) => setPassingPercent(e.target.value)} type="number" min="0" max="100" className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-exam-passing-percent" /></label>
     </div>
     <div className="grid gap-2 sm:grid-cols-2">
-      <select value={resultReleaseMode} onChange={(e) => setResultReleaseMode(e.target.value)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs" data-testid="select-exam-release-mode">
+      <select value={resultReleaseMode} onChange={(e) => { const mode = RESULT_RELEASE_MODES.find((m) => m === e.target.value); if (mode) setResultReleaseMode(mode); }} className="h-10 rounded-xl border border-border bg-card px-3 text-xs" data-testid="select-exam-release-mode">
         <option value="immediate">Release results immediately on submit</option>
         <option value="after_end">Release once the exam window closes</option>
         <option value="manual">Release manually (admin controlled)</option>
       </select>
-      <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-10 rounded-xl border border-border bg-card px-3 text-xs" data-testid="select-exam-status">
+      <select value={status} onChange={(e) => { const next = EXAM_STATUSES.find((m) => m === e.target.value); if (next) setStatus(next); }} className="h-10 rounded-xl border border-border bg-card px-3 text-xs" data-testid="select-exam-status">
         <option value="draft">Draft (not visible to students)</option>
         <option value="published">Published</option>
         <option value="archived">Archived</option>

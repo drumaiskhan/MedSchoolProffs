@@ -86,7 +86,9 @@ function TakeOspeExam() {
   const attemptId = Number(params.attemptId);
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const [session, setSession] = useState<OspeExamStartResponse | null>(null);
+  // The start endpoint doesn't return the exam's title — the load query below
+  // adds it client-side from the exam list, so the session carries it too.
+  const [session, setSession] = useState<(OspeExamStartResponse & { examTitle: string }) | null>(null);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<Record<number, string | null>>({});
   const [written, setWritten] = useState<Record<number, string>>({});

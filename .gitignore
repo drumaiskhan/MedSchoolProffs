@@ -10,6 +10,12 @@ dist/
 **/dist/
 build/
 **/build/
+# TypeScript incremental/project-reference state. For composite libs this file
+# lives NEXT TO tsconfig.json (e.g. lib/db/tsconfig.tsbuildinfo), not inside dist/,
+# so deleting dist/ alone leaves it behind and `tsc --build` then skips the
+# rebuild (TS6305). Treat it as build output, same as dist/.
+*.tsbuildinfo
+.tsbuildinfo
 
 # Environment files
 .env

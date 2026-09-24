@@ -209,6 +209,9 @@ export interface McqInput {
   options: string[];
   correctAnswer?: string;
   explanation?: string;
+  /** Index-aligned with `options` — optionExplanations[i] explains why
+   * options[i] is right or wrong. Each entry may be null. */
+  optionExplanations?: (string | null)[];
   reference?: string;
   hint?: string;
   difficulty: string;

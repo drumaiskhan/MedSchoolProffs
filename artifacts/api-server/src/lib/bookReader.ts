@@ -18,7 +18,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { resolveFileUrl } from "./storage";
 import { logger } from "./logger";
 
@@ -29,6 +28,16 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null;
 function loadPdfjs(): Promise<PdfjsModule> {
   pdfjsPromise ??= import("pdfjs-dist/legacy/build/pdf.mjs");
   return pdfjsPromise;
+}
+
+// ---- @napi-rs/canvas (lazy, same reason: native binary) ----------------------
+// Loaded on first page render instead of at startup, so a host where the
+// prebuilt binary can't load only breaks the secure reader, not the whole API.
+type CanvasModule = typeof import("@napi-rs/canvas");
+let canvasPromise: Promise<CanvasModule> | null = null;
+function loadCanvas(): Promise<CanvasModule> {
+  canvasPromise ??= import("@napi-rs/canvas");
+  return canvasPromise;
 }
 
 const require_ = createRequire(import.meta.url);
@@ -43,7 +52,7 @@ function pdfjsAssetDir(sub: string): string {
 // draw the watermark as nothing. DejaVu Sans ships in assets/fonts instead.
 let fontReady = false;
 const FONT_FAMILY = "MspWatermark";
-function ensureFont(): void {
+function ensureFont(GlobalFonts: CanvasModule["GlobalFonts"]): void {
   if (fontReady) return;
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -197,7 +206,8 @@ function drawWatermark(ctx: import("@napi-rs/canvas").SKRSContext2D, w: number, 
 
 export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targetWidth: number, wm: Watermark): Promise<Buffer> {
   if (pageNumber < 1 || pageNumber > book.pageCount) throw new RangeError("Page out of range");
-  ensureFont();
+  const { createCanvas, GlobalFonts } = await loadCanvas();
+  ensureFont(GlobalFonts);
   book.lastUsed = Date.now();
   return withSlot(async () => {
     const page = await book.pdf.getPage(pageNumber);

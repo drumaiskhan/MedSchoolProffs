@@ -130,7 +130,7 @@ function OspeOsce() {
   return <div className="cu-page">
     <OspeHero examType={examType} onExamType={setExamType} materialsCount={materials.length} examsCount={exams.length} />
 
-    <SegToggle value={tab} onChange={setTab} ariaLabel="Section" testIdPrefix="tab-ospe"
+    <SegToggle value={tab} onChange={(next) => setTab(next)} ariaLabel="Section" testIdPrefix="tab-ospe"
       options={[{ value: 'learn', label: 'Learning material' }, { value: 'exam', label: 'Exams' }]} />
 
     {tab === 'learn' && (materialsQ.isLoading ? <CardsSkeleton /> : <div className="cu-ospe-grid is-materials">

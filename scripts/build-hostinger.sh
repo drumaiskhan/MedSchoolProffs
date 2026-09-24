@@ -14,7 +14,7 @@ OUT="hostinger-out"
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   command -v pnpm >/dev/null 2>&1 || corepack enable
-  pnpm install
+  pnpm install --no-frozen-lockfile
   # Frontends call the API on its own subdomain (baked in at build time).
   export VITE_API_BASE_URL="$API_URL"
   pnpm run build:student
@@ -65,8 +65,8 @@ cat > "$OUT/api/package.json" <<'PJ'
   "name": "medschoolproffs-api-runtime",
   "private": true,
   "type": "module",
-  "main": "server.mjs",
-  "scripts": { "start": "node --enable-source-maps server.mjs" },
+  "main": "server.cjs",
+  "scripts": { "start": "node --enable-source-maps server.cjs" },
   "engines": { "node": ">=22" },
   "dependencies": {
     "nodemailer": "^6.9.15",
@@ -75,7 +75,16 @@ cat > "$OUT/api/package.json" <<'PJ'
   }
 }
 PJ
-echo 'import "./dist/index.mjs";' > "$OUT/api/server.mjs"
+# CommonJS entry that loads the ESM bundle: works whether the host starts the app
+# with node directly or through a Passenger-style loader (which can't take an ESM
+# entry file). Also defaults NODE_ENV to production (dev logging needs pino-pretty).
+cat > "$OUT/api/server.cjs" <<'EN'
+process.env.NODE_ENV = process.env.NODE_ENV || "production";
+import("./dist/index.mjs").catch((err) => {
+  console.error("API failed to start:", err);
+  process.exit(1);
+});
+EN
 
 # ---- zips (files at the zip root, as Hostinger expects) --------------------
 if command -v zip >/dev/null 2>&1; then

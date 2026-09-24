@@ -25,8 +25,11 @@ function findElement(elements: VizElement[], id: string): VizElement | undefined
   return elements.find((el) => el.id === id);
 }
 
-function elementCenter(el: VizElement): { x: number; y: number } {
-  return { x: el.x, y: el.y };
+// Only shapes and labels have a position; an arrow/particle whose fromId/toId
+// points at another arrow or particle has no center, so it is skipped like any
+// other unresolvable id.
+function elementCenter(el: VizElement): { x: number; y: number } | null {
+  return el.kind === 'shape' || el.kind === 'label' ? { x: el.x, y: el.y } : null;
 }
 
 export function DiagramCanvas({ elements, highlightIds, stepKey, className }: { elements: VizElement[]; highlightIds?: string[]; stepKey?: string | number; className?: string }) {
@@ -52,6 +55,7 @@ export function DiagramCanvas({ elements, highlightIds, stepKey, className }: { 
             if (!from || !to) return null;
             const a = elementCenter(from);
             const b = elementCenter(to);
+            if (!a || !b) return null;
             return (
               <g key={el.id}>
                 <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="stroke-muted-foreground" strokeWidth={0.6} strokeDasharray={el.style === 'dashed' ? '2,1.5' : undefined} markerEnd="url(#viz-arrowhead)" />
@@ -86,6 +90,7 @@ export function DiagramCanvas({ elements, highlightIds, stepKey, className }: { 
             if (!from || !to) return null;
             const a = elementCenter(from);
             const b = elementCenter(to);
+            if (!a || !b) return null;
             const fill = safeColor(el.color, el.id);
             return (
               <motion.circle
