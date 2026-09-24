@@ -39,18 +39,10 @@ jobs:
           echo "Admin build:"
           ls -la hostinger-out/admin/
 
-      - name: Inspect Student build
-        run: |
-          echo "=== Student files ==="
-          find hostinger-out/student -maxdepth 3 -type f | sort
-
-          echo "=== Student root ==="
-          ls -lah hostinger-out/student/
-
       - name: Deploy Student frontend
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: 194.5.156.45
+          server: ftp.medschoolproffs.live
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           port: 21
