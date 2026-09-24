@@ -1,0 +1,58 @@
+# One-server deployment for a Hostinger VPS:
+#   api  = Express API (root Dockerfile)   -> talks to your Supabase Postgres
+#   web  = Caddy + both built frontends    -> HTTPS on ports 80/443
+#
+# Everything is configured from a single .env file (copy hostinger.env.example).
+#   docker compose up -d --build
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      TRUST_PROXY: "1"
+      APP_URL: https://${STUDENT_DOMAIN:?set STUDENT_DOMAIN in .env},https://${ADMIN_DOMAIN:?set ADMIN_DOMAIN in .env}
+      PUBLIC_APP_URL: https://${STUDENT_DOMAIN}
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      STUDENT_DOMAIN: ${STUDENT_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  caddy_data:
+  caddy_config:
