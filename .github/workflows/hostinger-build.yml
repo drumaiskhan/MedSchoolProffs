@@ -1,4 +1,4 @@
-name: Deploy Student + Admin to Hostinger
+name: Test Hostinger FTP Connection
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,24 +31,15 @@ jobs:
         run: |
           bash scripts/build-hostinger.sh
 
-      - name: Deploy Student frontend
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: 194.5.156.45
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          port: 21
-          protocol: ftp
-          local-dir: ./hostinger-out/student/
-          server-dir: ./
+      - name: Verify build output
+        run: |
+          echo "Student build:"
+          ls -la hostinger-out/student/
 
-      - name: Deploy Admin frontend
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.ADMIN_FTP_HOST }}
-          username: ${{ secrets.ADMIN_FTP_USERNAME }}
-          password: ${{ secrets.ADMIN_FTP_PASSWORD }}
-          port: ${{ secrets.ADMIN_FTP_PORT }}
-          protocol: ftp
-          local-dir: ./hostinger-out/admin/
-          server-dir: ./
+          echo "Admin build:"
+          ls -la hostinger-out/admin/
+
+      - name: Test Hostinger FTP connection
+        run: |
+          echo "Testing 194.5.156.45:21..."
+          nc -vz -w 10 194.5.156.45 21
