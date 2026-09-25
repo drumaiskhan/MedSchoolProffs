@@ -602,6 +602,121 @@ export const mcqBackupApi = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Whole-database backup/restore — every application table (see
+// lib/fullBackup.ts on the backend), not just the MCQ bank. "content" is
+// curriculum + platform config (no student data); "users" is every
+// student's account + activity, exported separately since it's a bigger
+// deal to restore/share. This is the migration path from PostgreSQL/
+// Supabase to a future MySQL build: same JSON, re-imported there once that
+// importer exists.
+// ---------------------------------------------------------------------------
+
+export type FullBackupScope = 'content' | 'users';
+
+export interface FullBackupValidation {
+  valid: boolean;
+  scope: FullBackupScope | null;
+  exportedAt: string | null;
+  counts: Record<string, number>;
+  issues: Array<{ level: 'error' | 'warning'; message: string }>;
+  targetHasExistingData: boolean;
+}
+
+export interface FullBackupRestoreResult {
+  scope: FullBackupScope;
+  mode: 'restore-empty' | 'wipe-and-restore';
+  restored: Record<string, number>;
+  wipedFirst: Record<string, number>;
+}
+
+export const fullBackupApi = {
+  // Same "fetch as a blob with credentials, trigger the save ourselves"
+  // pattern as mcqBackupApi.downloadBackup above — a plain <a href> can't
+  // carry the admin's session cookie.
+  downloadBackup: async (scope: FullBackupScope): Promise<void> => {
+    const res = await fetch(`${API_BASE}/admin/full-backup/export?scope=${scope}`, { credentials: 'include' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
+    }
+    const disposition = res.headers.get('content-disposition') || '';
+    const filenameMatch = disposition.match(/filename="([^"]+)"/);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filenameMatch?.[1] || `medschoolproffs-${scope}-backup.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+  // Dry run — parses and checks the file, never writes anything. Used to
+  // populate the confirmation screen before the admin commits to a restore.
+  validate: async (file: File): Promise<FullBackupValidation> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/admin/full-backup/validate`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not validate this backup', data);
+    return data;
+  },
+  importBackup: async (file: File, mode: 'restore-empty' | 'wipe-and-restore'): Promise<FullBackupRestoreResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/admin/full-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
+    return data;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// MySQL restore target — same JSON backup files as fullBackupApi above, but
+// restored into an admin-supplied MySQL database instead of this app's own
+// PostgreSQL database. The connection string is sent per-request and never
+// stored server-side. This is a future-migration tool, not a live second
+// database: PostgreSQL/Supabase stays the database this application reads
+// and writes during normal operation.
+// ---------------------------------------------------------------------------
+
+export interface MysqlFullBackupValidation extends FullBackupValidation {}
+export interface MysqlFullBackupRestoreResult extends FullBackupRestoreResult {}
+
+export const mysqlBackupApi = {
+  testConnection: async (url: string): Promise<{ ok: boolean; error?: string }> => {
+    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/test-connection`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not test this connection', data);
+    return data;
+  },
+  validate: async (file: File, url: string): Promise<MysqlFullBackupValidation> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('url', url);
+    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/validate`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not validate this backup', data);
+    return data;
+  },
+  importBackup: async (file: File, url: string, mode: 'restore-empty' | 'wipe-and-restore'): Promise<MysqlFullBackupRestoreResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('url', url);
+    form.append('mode', mode);
+    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/import`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
+    return data;
+  },
+};
+
 export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; archived?: boolean; displayOrder: number; mcqCount: number; programId: number | null; academicYearId: number | null; programTargetKind: string | null; yearTargetNumber: number | null }
 export interface NotebookEntry { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
 export interface SavedSession { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }

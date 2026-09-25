@@ -130,7 +130,7 @@ export const adminGroups: Array<{ label: string; items: NavItem[] }> = [
     ['/admin/feedback', 'Feedback inbox', MessageSquare], ['/admin/ai-visualizer-logs', 'AI Visualizer activity', Wand2],
   ] },
   { label: 'Workspace', items: [
-    ['/admin/settings', 'Platform settings', Settings],
+    ['/admin/settings', 'Platform settings', Settings], ['/admin/database-backup', 'Database backup & restore', Database],
   ] },
 ];
 

@@ -267,8 +267,29 @@ export function welcomeEmailHtml(name: string, loginUrl: string): string {
   return `<p>Hi ${name},</p><p>Your email is verified and your MedschoolProffs account is ready to go. Welcome aboard!</p><p>Log in to get started:</p><p><a href="${loginUrl}">${loginUrl}</a></p><p>If you ever need help, just reply to this email.</p>`;
 }
 
+/**
+ * Brevo rewrites EVERY link in a transactional email (anchors and bare text
+ * URLs alike) through its click-tracking domain, and that can't be switched
+ * off per message or per account. When the sending domain has a Brevo
+ * "branded subdomain" set up (e.g. support.medschoolproffs.live) but the DNS
+ * records for its tracking host (r.support.medschoolproffs.live) are missing,
+ * every rewritten link dies with DNS_PROBE_FINISHED_NXDOMAIN even though the
+ * URL printed in the email looks perfectly fine — this is the "This site
+ * can't be reached" students/admins hit after tapping Reset password.
+ *
+ * The real fix is DNS (see FIX_RESET_EMAIL_LINK.md), but a password reset
+ * should never depend on a third-party redirect being healthy, so the email
+ * now also carries the reset code itself as plain text. A code isn't a URL,
+ * so Brevo leaves it alone, and the /reset-password page accepts it pasted
+ * in (see ResetPassword.tsx in both frontends).
+ */
 export function resetPasswordEmailHtml(name: string, resetUrl: string): string {
-  return `<p>Hi ${name},</p><p>We received a request to reset your password. Click below to choose a new one:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email. This link expires in 1 hour.</p>`;
+  let code = "";
+  try { code = new URL(resetUrl).searchParams.get("token") ?? ""; } catch { /* keep blank */ }
+  const codeBlock = code
+    ? `<p style="margin:20px 0 6px;"><strong>Link not opening?</strong> Go to the sign-in page, tap <em>Forgot password</em>, choose <em>I already have a code</em>, and paste this reset code:</p><p style="font-family:monospace;font-size:15px;background:#f1f5f9;border-radius:8px;padding:12px 14px;word-break:break-all;user-select:all;">${code}</p>`
+    : "";
+  return `<p>Hi ${name},</p><p>We received a request to reset your password. Click below to choose a new one:</p><p><a href="${resetUrl}">Reset my password</a></p>${codeBlock}<p>If you didn't request this, you can safely ignore this email. This link and code expire in 1 hour.</p>`;
 }
 
 export function membershipActivatedEmailHtml(name: string, planName: string | null, expiresAt: Date): string {

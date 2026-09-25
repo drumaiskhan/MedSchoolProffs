@@ -617,7 +617,12 @@ router.post("/auth/reset-password", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" });
     return;
   }
-  const tokenHash = hashToken(parsed.data.token);
+  // Accept the bare code, the whole reset link pasted in, or a code with stray
+  // whitespace/line breaks from an email client — all three resolve to the
+  // same token (see resetPasswordEmailHtml for why a pasted code matters).
+  const pasted = parsed.data.token.trim();
+  const rawToken = pasted.includes("token=") ? (pasted.split("token=")[1] ?? "").split(/[&#\s]/)[0] ?? "" : pasted.replace(/\s+/g, "");
+  const tokenHash = hashToken(rawToken);
   const [record] = await db
     .select()
     .from(passwordResetTokensTable)
