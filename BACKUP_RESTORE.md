@@ -5,14 +5,16 @@ backup under Admin → MCQ bank). Exports the whole platform as portable JSON an
 a previous export. No architecture, auth, routes, or schema changed to build this — it's an
 additive feature on top of the existing PostgreSQL/Supabase + Drizzle setup.
 
-## Two scopes
+## Three scopes
 
 | Scope | What it covers | Contains student PII? |
 |---|---|---|
-| **content** | Colleges, programs, academic years, batches, blocks, modules, subjects, topics, MCQs, exam-question links, flashcards, resources, books, past papers, team members, membership plans, coupons, OSPE/OSCE content, and platform settings (secrets redacted — see below) | No |
+| **full** | Everything in `content` and `users` together, in one file — content tables first, then user tables, same dependency order each group already uses. The single-file migration path: one export, one import, on a fresh PostgreSQL/Supabase (or MySQL) database. | Yes (it includes `users`) |
+| **content** | Colleges, programs, academic years, batches, blocks, modules, subjects, topics, MCQs, exam-question links, flashcards, resources, books, past papers, team members, membership plans, coupons, MCQ import profiles, OSPE/OSCE content, and platform settings (secrets redacted — see below) | No |
 | **users** | Every student account plus their activity: documents, payments, memberships, book purchases, practice attempts/answers, progress, challenges, notebook, highlights, reading progress, saved sessions, flagged MCQs, feedback (+ replies), notifications, exam/OSPE attempts & answers, AI Visualizer logs | Yes |
 
-Deliberately **excluded** from both, on purpose:
+`content` (26 tables) + `users` (24 tables) = 50 of the application's 55 tables — every table
+except the 5 below, which are excluded from `full` too, on purpose:
 - `med_user_sessions` — live device sessions tied to a JWT `sid`; meaningless to restore.
 - `med_email_verification_tokens`, `med_password_reset_tokens` — single-use, short-lived.
 - `med_payment_webhook_events` — raw gateway payloads; the derived `med_payments` rows are
@@ -88,7 +90,7 @@ Deliberately **excluded** from both, on purpose:
 
 PostgreSQL (this application's own database):
 
-- `GET /admin/full-backup/export?scope=content|users` — downloads the JSON file.
+- `GET /admin/full-backup/export?scope=full|content|users` — downloads the JSON file.
 - `POST /admin/full-backup/validate` — multipart `file`; dry-run validation, no writes.
 - `POST /admin/full-backup/import?mode=restore-empty|wipe-and-restore` — multipart `file`.
 

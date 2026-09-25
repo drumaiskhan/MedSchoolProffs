@@ -540,6 +540,25 @@ const platformSettingsSpec: MysqlTableSpec = {
   ],
 };
 
+const mcqImportProfilesSpec: MysqlTableSpec = {
+  key: "mcqImportProfiles",
+  sqlName: "med_mcq_import_profiles",
+  primaryKey: ["id"],
+  columns: [
+    { js: "id", sql: "id", type: "int" },
+    { js: "name", sql: "name", type: "text" },
+    { js: "questionPattern", sql: "question_pattern", type: "text" },
+    { js: "optionPattern", sql: "option_pattern", type: "text" },
+    { js: "answerPattern", sql: "answer_pattern", type: "text" },
+    { js: "explanationPattern", sql: "explanation_pattern", type: "text" },
+    { js: "hintPattern", sql: "hint_pattern", type: "text" },
+    { js: "referencePattern", sql: "reference_pattern", type: "text" },
+    { js: "isDefault", sql: "is_default", type: "boolean" },
+    { js: "createdAt", sql: "created_at", type: "timestamp" },
+    { js: "updatedAt", sql: "updated_at", type: "timestamp" },
+  ],
+};
+
 const usersSpec: MysqlTableSpec = {
   key: "users",
   sqlName: "med_users",
@@ -1023,6 +1042,7 @@ export const CONTENT_TABLE_SPECS: MysqlTableSpec[] = [
   ospeExamsSpec,
   ospeExamStationsSpec,
   platformSettingsSpec,
+  mcqImportProfilesSpec,
 ];
 
 // Same order as USER_TABLES in fullBackup.ts.
@@ -1053,10 +1073,15 @@ export const USER_TABLE_SPECS: MysqlTableSpec[] = [
   aiVisualizerLogsSpec,
 ];
 
-export type BackupScopeName = "content" | "users";
+export type BackupScopeName = "content" | "users" | "full";
+
+// Same order as ALL_TABLES in fullBackup.ts.
+export const ALL_TABLE_SPECS: MysqlTableSpec[] = [...CONTENT_TABLE_SPECS, ...USER_TABLE_SPECS];
 
 export function specsFor(scope: BackupScopeName): MysqlTableSpec[] {
-  return scope === "content" ? CONTENT_TABLE_SPECS : USER_TABLE_SPECS;
+  if (scope === "content") return CONTENT_TABLE_SPECS;
+  if (scope === "users") return USER_TABLE_SPECS;
+  return ALL_TABLE_SPECS;
 }
 
 // Tables with no auto-increment `id` to resync after a bulk insert with explicit

@@ -28,6 +28,7 @@ import {
   ospeExamsTable,
   ospeExamStationsTable,
   platformSettingsTable,
+  mcqImportProfilesTable,
   usersTable,
   studentDocumentsTable,
   paymentsTable,
@@ -121,6 +122,7 @@ export const CONTENT_TABLES: TableSpec[] = [
   { key: "ospeExams", table: ospeExamsTable, sqlName: "med_ospe_exams" },
   { key: "ospeExamStations", table: ospeExamStationsTable, sqlName: "med_ospe_exam_stations" },
   { key: "platformSettings", table: platformSettingsTable, sqlName: "med_platform_settings", redactSettingSecrets: true },
+  { key: "mcqImportProfiles", table: mcqImportProfilesTable, sqlName: "med_mcq_import_profiles" },
 ];
 
 // Deliberately excluded from every backup, content or user: med_user_sessions
@@ -157,10 +159,26 @@ export const USER_TABLES: TableSpec[] = [
   { key: "aiVisualizerLogs", table: aiVisualizerLogsTable, sqlName: "med_ai_visualizer_logs" },
 ];
 
-export type BackupScopeName = "content" | "users";
+// "full" is every table from both groups, content first (dependency order
+// preserved within each group) — the single-file migration path: everything
+// needed to recreate the whole database on a fresh Postgres/Supabase (or,
+// via full-backup-mysql.ts, MySQL) instance from one JSON. "content" and
+// "users" stay available as separate, smaller exports for the cases that
+// motivated the split in the first place (sharing/storing curriculum data
+// without student PII, or restoring just one half).
+export type BackupScopeName = "content" | "users" | "full";
+
+// Keep in sync with ALL_TABLE_KEYS-style completeness checks elsewhere (see
+// the "full" branch of buildFullBackup/validateFullBackup below, which walk
+// this array) — anything added to CONTENT_TABLES or USER_TABLES is
+// automatically included here too, so there's nothing to remember to update
+// when a new table is added to either group.
+export const ALL_TABLES: TableSpec[] = [...CONTENT_TABLES, ...USER_TABLES];
 
 function specsFor(scope: BackupScopeName): TableSpec[] {
-  return scope === "content" ? CONTENT_TABLES : USER_TABLES;
+  if (scope === "content") return CONTENT_TABLES;
+  if (scope === "users") return USER_TABLES;
+  return ALL_TABLES;
 }
 
 // Platform settings can hold provider API keys/secrets (AI_API_KEY, Brevo,
@@ -208,7 +226,7 @@ export async function buildFullBackup(scope: BackupScopeName): Promise<FullBacku
     const rows = (await db.select().from(spec.table)) as Record<string, unknown>[];
     const cleaned = spec.redactSettingSecrets
       ? rows.map(redactSettingRow)
-      : scope === "users" && spec.key === "users"
+      : spec.key === "users"
         ? rows.map(redactUserRow)
         : rows;
     data[spec.key] = cleaned;
@@ -303,8 +321,9 @@ export async function validateFullBackup(raw: unknown): Promise<ValidationResult
   } else if (file.formatVersion > FULL_BACKUP_FORMAT_VERSION) {
     issues.push({ level: "error", message: `This backup was made by a newer version of the app (format v${file.formatVersion}) and can't be safely restored here (this server supports up to v${FULL_BACKUP_FORMAT_VERSION}).` });
   }
-  const scope: BackupScopeName | null = file.scope === "content" || file.scope === "users" ? file.scope : null;
-  if (!scope) issues.push({ level: "error", message: 'Missing or invalid "scope" — expected "content" or "users".' });
+  const scope: BackupScopeName | null =
+    file.scope === "content" || file.scope === "users" || file.scope === "full" ? file.scope : null;
+  if (!scope) issues.push({ level: "error", message: 'Missing or invalid "scope" — expected "content", "users", or "full".' });
   if (!isPlainObject(file.data)) issues.push({ level: "error", message: "Missing data section." });
 
   const counts: Record<string, number> = {};

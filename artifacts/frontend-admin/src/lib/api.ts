@@ -607,12 +607,12 @@ export const mcqBackupApi = {
 // lib/fullBackup.ts on the backend), not just the MCQ bank. "content" is
 // curriculum + platform config (no student data); "users" is every
 // student's account + activity, exported separately since it's a bigger
-// deal to restore/share. This is the migration path from PostgreSQL/
-// Supabase to a future MySQL build: same JSON, re-imported there once that
-// importer exists.
+// deal to restore/share; "full" is both together, in one file — the single-
+// download migration path (PostgreSQL/Supabase -> a fresh PostgreSQL/
+// Supabase, or -> MySQL via the mysql/* routes below, same JSON either way).
 // ---------------------------------------------------------------------------
 
-export type FullBackupScope = 'content' | 'users';
+export type FullBackupScope = 'content' | 'users' | 'full';
 
 export interface FullBackupValidation {
   valid: boolean;

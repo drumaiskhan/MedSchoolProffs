@@ -1,8 +1,10 @@
 // Admin -> Database Backup & Restore. Whole-platform JSON export/import —
-// every application table (see lib/fullBackup.ts on the backend), split
-// into "Platform content" (curriculum + settings, no student data) and
-// "Student data" (accounts + activity, exported separately since restoring
-// or sharing it is a bigger deal). Each card can restore that same JSON
+// every application table (see lib/fullBackup.ts on the backend). Three
+// scopes, same underlying tables: "Full Database Backup" (everything, one
+// file — the migration path), "Platform content" (curriculum + settings, no
+// student data), and "Student data" (accounts + activity) — the latter two
+// exported separately since sharing/restoring just one of them is sometimes
+// the smaller, safer move. Each card can restore that same JSON
 // into either this app's own PostgreSQL database (the normal path) or an
 // admin-supplied MySQL database (see routes/full-backup-mysql.ts on the
 // backend) — the MySQL path is for migrating data to a future MySQL build
@@ -10,13 +12,14 @@
 // the format notes at the bottom of this page.
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Database, Download, Loader2, Plug, ShieldAlert, Upload, Users } from 'lucide-react';
+import { AlertTriangle, Archive, CheckCircle2, Database, Download, Loader2, Plug, ShieldAlert, Upload, Users } from 'lucide-react';
 import { SectionHeader, ConfirmDialog, cn } from '@/lib/shared';
 import { fullBackupApi, mysqlBackupApi, ApiRequestError, type FullBackupScope, type FullBackupValidation, type FullBackupRestoreResult } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
 const SCOPES: Array<{ scope: FullBackupScope; title: string; description: string; icon: typeof Database }> = [
-  { scope: 'content', title: 'Platform content', description: 'Colleges, courses, modules, subjects, topics, MCQs, flashcards, books, past papers, exams, OSPE/OSCE, team, plans, coupons, and platform settings (secrets redacted). No student accounts or activity.', icon: Database },
+  { scope: 'full', title: 'Full Database Backup', description: 'Everything in one portable JSON file — platform content and student data together (50 of the app\'s 55 tables; the other 5 are live sessions, one-time tokens, raw webhook events, and the audit log, none of which a restore needs). This is the file to use for a complete migration to a new empty PostgreSQL/Supabase (or MySQL) database.', icon: Archive },
+  { scope: 'content', title: 'Platform content', description: 'Colleges, courses, modules, subjects, topics, MCQs, flashcards, books, past papers, exams, OSPE/OSCE, team, plans, coupons, MCQ import profiles, and platform settings (secrets redacted). No student accounts or activity.', icon: Database },
   { scope: 'users', title: 'Student data', description: 'Every student account and their activity — payments, memberships, progress, attempts, notebook, flags, feedback, notifications. Password hashes are never included; students sign in again with "Forgot password" after a restore.', icon: Users },
 ];
 
@@ -158,7 +161,7 @@ function BackupCard({ scope, title, description, icon: Icon, onImported }: { sco
 
     {confirmWipe && <ConfirmDialog
       title={`Wipe existing ${title.toLowerCase()}?`}
-      body={`This permanently deletes every row currently in the ${scope} tables${target === 'mysql' ? ' in this MySQL database' : ''}, then restores this backup in the same transaction. If anything goes wrong the whole operation rolls back — but if it succeeds, there is no undo.`}
+      body={`This permanently deletes every row currently in the tables this backup covers${target === 'mysql' ? ' in this MySQL database' : ''}, then restores this backup in the same transaction. If anything goes wrong the whole operation rolls back — but if it succeeds, there is no undo.`}
       confirmLabel="Wipe and restore"
       tone="destructive"
       pending={restore.isPending}
@@ -196,7 +199,8 @@ function AdminDatabaseBackup() {
         <li>A MySQL restore is a one-time data migration into a separate database — it doesn't change which database this application reads from. Making the live app run on MySQL instead of PostgreSQL is a separate, larger change not done by this page.</li>
         <li>Platform settings that look like secrets (API keys, SMTP password, the admin signup code) are exported as a placeholder — reconfigure those from Admin → Platform settings after a restore.</li>
         <li>Restoring works best into an empty database. Restoring into one that already has data requires explicitly choosing "wipe and restore," which runs inside a single transaction — a failure rolls back rather than leaving things half-restored.</li>
-        <li>A brand-new PostgreSQL database (a freshly created Supabase project, for example) doesn't need its 49 tables created by hand first — restoring into it automatically prepares the required schema before restoring data.</li>
+        <li>A brand-new PostgreSQL database (a freshly created Supabase project, for example) doesn't need its tables created by hand first — restoring into it automatically prepares the required schema before restoring data.</li>
+        <li>Use "Full Database Backup" for a complete migration — it's the same JSON either way, just every table in one file instead of two.</li>
       </ul>
     </div>
   </div>;

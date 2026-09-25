@@ -1,6 +1,6 @@
 // The future MySQL importer referenced throughout BACKUP_RESTORE.md: takes
 // the exact same JSON that Admin -> Database Backup & Restore exports from
-// Postgres today (GET /admin/full-backup/export?scope=content|users) and
+// Postgres today (GET /admin/full-backup/export?scope=content|users|full) and
 // loads it into a MySQL database whose tables were created by
 // generateSchema.ts. This file never touches Postgres or `@workspace/db` —
 // it only reads a JSON file from disk and writes to whatever --url points

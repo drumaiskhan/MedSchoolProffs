@@ -29,7 +29,7 @@ const upload = multer({
   },
 });
 
-const ScopeQuery = z.object({ scope: z.enum(["content", "users"]) });
+const ScopeQuery = z.object({ scope: z.enum(["content", "users", "full"]) });
 
 // ---------------------------------------------------------------------------
 // Export
@@ -37,7 +37,7 @@ const ScopeQuery = z.object({ scope: z.enum(["content", "users"]) });
 
 router.get("/admin/full-backup/export", requireAdmin, async (req, res): Promise<void> => {
   const parsed = ScopeQuery.safeParse(req.query);
-  if (!parsed.success) { res.status(400).json({ error: 'scope must be "content" or "users"' }); return; }
+  if (!parsed.success) { res.status(400).json({ error: 'scope must be "content", "users", or "full"' }); return; }
   try {
     const backup = await buildFullBackup(parsed.data.scope);
     const stamp = backup.exportedAt.replace(/[:.]/g, "-").slice(0, 19);

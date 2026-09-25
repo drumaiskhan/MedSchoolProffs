@@ -48,8 +48,9 @@ export function validateBackupFile(raw: unknown): ValidationResult {
     issues.push({ level: "error", message: `This backup was made by a newer format (v${file.formatVersion}) than this importer supports (v${FULL_BACKUP_FORMAT_VERSION}).` });
   }
 
-  const scope: BackupScopeName | null = file.scope === "content" || file.scope === "users" ? (file.scope as BackupScopeName) : null;
-  if (!scope) issues.push({ level: "error", message: 'Missing or invalid "scope" — expected "content" or "users".' });
+  const scope: BackupScopeName | null =
+    file.scope === "content" || file.scope === "users" || file.scope === "full" ? (file.scope as BackupScopeName) : null;
+  if (!scope) issues.push({ level: "error", message: 'Missing or invalid "scope" — expected "content", "users", or "full".' });
   if (!isPlainObject(file.data)) issues.push({ level: "error", message: "Missing data section." });
 
   const counts: Record<string, number> = {};
