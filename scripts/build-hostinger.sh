@@ -94,7 +94,8 @@ cat > "$OUT/api/package.json" <<'PJ'
   "dependencies": {
     "nodemailer": "^6.9.15",
     "pdfjs-dist": "4.10.38",
-    "@napi-rs/canvas": "0.1.100"
+    "@napi-rs/canvas": "0.1.100",
+    "mysql2": "^3.15.4"
   }
 }
 PJ
