@@ -77,6 +77,15 @@ COPY --from=build /repo/artifacts/api-server/assets ./assets
 # versions in step with artifacts/api-server/package.json — two copies of
 # @napi-rs/canvas break rendering), so install them here.
 #
+# mysql2 is externalized the same way (see build.mjs's `external` list) and
+# is required at import time by routes/full-backup-mysql.ts (via
+# @workspace/scripts's mysql-restore module, imported eagerly from
+# routes/index.ts) — the "MySQL database" restore target on the admin
+# Database Backup & Restore page. Without it here, the compiled server
+# throws "Cannot find module 'mysql2/promise'" on startup and never starts
+# listening, which took down every /api/* route, not just the backup page.
+# Keep this version in step with scripts/package.json.
+#
 # We deliberately do NOT copy:
 #
 # artifacts/api-server/package.json
@@ -92,7 +101,7 @@ COPY --from=build /repo/artifacts/api-server/assets ./assets
 # actually required by the compiled server.
 
 RUN echo '{"name":"medschoolproffs-api-runtime","private":true,"type":"module"}' > package.json \
-    && npm install --omit=dev nodemailer@^6.9.15 pdfjs-dist@4.10.38 @napi-rs/canvas@0.1.100
+    && npm install --omit=dev nodemailer@^6.9.15 pdfjs-dist@4.10.38 @napi-rs/canvas@0.1.100 mysql2@^3.15.4
 
 # ---------------------------------------------------------------------------
 # API port

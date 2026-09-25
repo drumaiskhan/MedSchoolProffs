@@ -1,0 +1,39 @@
+[33mcommit 88948562602bce861aa99ade4c2d281be80f9bd4[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Umais Khan <umais0khan@gmail.com>
+Date:   Fri Sep 25 09:10:42 2026 +0500
+
+    1
+
+ BACKUP_RESTORE.md                                  |  217 [32m++++[m
+ FIX_RESET_EMAIL_LINK.md                            |   59 [32m++[m
+ artifacts/api-server/.tsbuildinfo                  |    2 [32m+[m[31m-[m
+ artifacts/api-server/package.json                  |    1 [32m+[m
+ artifacts/api-server/src/lib/email.ts              |   23 [32m+[m[31m-[m
+ artifacts/api-server/src/lib/fullBackup.ts         |  496 [32m+++++++++[m
+ artifacts/api-server/src/routes/auth.ts            |    7 [32m+[m[31m-[m
+ .../api-server/src/routes/full-backup-mysql.ts     |  156 [32m+++[m
+ artifacts/api-server/src/routes/full-backup.ts     |  142 [32m+++[m
+ artifacts/api-server/src/routes/index.ts           |    4 [32m+[m
+ artifacts/api-server/tsconfig.json                 |    3 [32m+[m
+ artifacts/frontend-admin/src/App.tsx               |    3 [32m+[m[31m-[m
+ artifacts/frontend-admin/src/lib/api.ts            |  115 [32m++[m
+ artifacts/frontend-admin/src/lib/shared.tsx        |    2 [32m+[m[31m-[m
+ .../src/pages/AdminDatabaseBackup.tsx              |  205 [32m++++[m
+ .../frontend-admin/src/pages/ForgotPassword.tsx    |    2 [32m+[m[31m-[m
+ .../frontend-admin/src/pages/ResetPassword.tsx     |   10 [32m+[m[31m-[m
+ artifacts/frontend-admin/tsconfig.tsbuildinfo      |    2 [32m+[m[31m-[m
+ .../frontend-student/src/pages/ForgotPassword.tsx  |    2 [32m+[m[31m-[m
+ .../frontend-student/src/pages/ResetPassword.tsx   |   10 [32m+[m[31m-[m
+ artifacts/frontend-student/tsconfig.tsbuildinfo    |    2 [32m+[m[31m-[m
+ lib/api-client-react/tsconfig.tsbuildinfo          |    2 [32m+[m[31m-[m
+ lib/api-zod/tsconfig.tsbuildinfo                   |    2 [32m+[m[31m-[m
+ lib/db/tsconfig.tsbuildinfo                        |    2 [32m+[m[31m-[m
+ scripts/package.json                               |   10 [32m+[m[31m-[m
+ scripts/src/mysql-restore/convert.ts               |   68 [32m++[m
+ scripts/src/mysql-restore/generateSchema.ts        |  121 [32m+++[m
+ scripts/src/mysql-restore/restore.ts               |  277 [32m+++++[m
+ scripts/src/mysql-restore/schemaPrep.ts            |   35 [32m+[m
+ scripts/src/mysql-restore/tableMeta.ts             | 1104 [32m++++++++++++++++++++[m
+ scripts/src/mysql-restore/validate.ts              |  109 [32m++[m
+ scripts/tsconfig.json                              |    3 [32m+[m
+ 32 files changed, 3178 insertions(+), 18 deletions(-)
