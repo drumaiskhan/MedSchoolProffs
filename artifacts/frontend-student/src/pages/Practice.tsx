@@ -66,6 +66,12 @@ function Practice() {
   // v60: ?set=weak|mistakes&count=N builds a mixed set (weak topics / this device's mistakes).
   const studySet = ['weak', 'mistakes', 'flagged'].includes(params.get('set') ?? '') ? (params.get('set') as string) : null;
   const studyCount = [10, 20, 50].includes(Number(params.get('count'))) ? Number(params.get('count')) : 20;
+  // Drives the topic empty-state below: an unpaid/unactivated student sees a
+  // call to activate, while a paid member sees a loading message instead of
+  // an admission that there's genuinely nothing here yet. Same query/queryKey
+  // shared.tsx's paidMember check already runs, so this adds no extra request.
+  const dashboardQ = useGetStudentDashboard();
+  const paidMember = dashboardQ.data?.membershipStatus === 'ACTIVE';
   const baseQ = useListMcqs(studySet ? { mcqId: -1 } : mcqId ? { mcqId } : pastPaperId ? { pastPaperId } : topicId ? { topicId } : undefined);
   const setQ = useQuery({ queryKey: ['study-set', studySet, studyCount], queryFn: () => buildStudySet(studySet!, studyCount), enabled: !!studySet, staleTime: Infinity, gcTime: 0 });
   const q = studySet ? setQ : baseQ;
@@ -202,7 +208,13 @@ function Practice() {
   }, [mode, finished, paused]);
 
   if (!q.isLoading && !mcqs.length) {
-    return <div className="max-w-6xl"><SectionHeader eyebrow="Daily practice" title="Practice with purpose" action={<Link href={pastPaperId ? '/past-papers' : '/blocks'} className="text-xs font-bold text-primary" data-testid="link-practice-back-modules"><ArrowLeft size={13} className="mr-1 inline" /> {pastPaperId ? 'Past papers' : 'Blocks'}</Link>} /><EmptyState icon={Target} title={pastPaperId ? 'No questions in this paper yet' : topicId ? 'No questions here yet' : 'Pick a topic to practice'} body={pastPaperId ? "Your academic team hasn't uploaded questions for this past paper yet." : topicId ? "Your academic team hasn't published MCQs for this topic yet." : 'Head to Blocks → a module → a subject → a topic, then hit Start to begin a focused practice session.'} /></div>;
+    // Topic case only: an unpaid/unactivated student is told to activate;
+    // a paid member instead sees a loading message rather than "no
+    // questions", since for them an empty result here is treated as
+    // content still being fetched, not as truly having nothing to show.
+    const topicTitle = topicId ? (paidMember ? 'Loading data' : 'No questions here yet') : 'Pick a topic to practice';
+    const topicBody = topicId ? (paidMember ? '' : 'Activate your account to load content') : 'Head to Blocks → a module → a subject → a topic, then hit Start to begin a focused practice session.';
+    return <div className="max-w-6xl"><SectionHeader eyebrow="Daily practice" title="Practice with purpose" action={<Link href={pastPaperId ? '/past-papers' : '/blocks'} className="text-xs font-bold text-primary" data-testid="link-practice-back-modules"><ArrowLeft size={13} className="mr-1 inline" /> {pastPaperId ? 'Past papers' : 'Blocks'}</Link>} /><EmptyState icon={Target} title={pastPaperId ? 'No questions in this paper yet' : topicTitle} body={pastPaperId ? "Your academic team hasn't uploaded questions for this past paper yet." : topicBody} /></div>;
   }
   if (q.isLoading) return <SkeletonPage />;
 

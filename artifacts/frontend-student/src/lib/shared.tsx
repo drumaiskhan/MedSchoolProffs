@@ -676,15 +676,51 @@ export function Shell({ children }: { children: ReactNode }) {
 // index.html does it, so the two stay visually identical without needing
 // to share a build step.
 
+// Kept visually identical to index.html's raw-HTML .boot-loader (which
+// paints before React/JS has even downloaded) — see the comment above that
+// markup. Both got the same 2024 redesign: a vibrant multi-tone gradient
+// backdrop with slow-drifting blurred glow orbs, a glassmorphism card, and
+// a "3D" wave mark (blurred glow pass + offset dark shadow pass beneath the
+// gradient-stroked main pass) that gently tilts in place instead of sitting
+// flat.
 export function BrandedLoadingScreen() {
-  return <div className="grid min-h-[100dvh] place-items-center" style={{ background: '#0e2a38' }}>
+  return <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden" style={{ background: 'linear-gradient(160deg, #081420 0%, #0e2a38 42%, #12294a 72%, #1c2456 100%)' }}>
     <style>{`
       @keyframes boot-wave-draw { 0% { stroke-dashoffset: 190; opacity: .55; } 55% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: -190; opacity: .55; } }
       @keyframes boot-fade { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+      @keyframes boot-tilt { 0%, 100% { transform: perspective(600px) rotateX(8deg) rotateY(-10deg) translateY(0); } 50% { transform: perspective(600px) rotateX(-6deg) rotateY(10deg) translateY(-4px); } }
+      @keyframes boot-orb-a { 0%, 100% { transform: translate(-8%, -6%) scale(1); } 50% { transform: translate(4%, 6%) scale(1.15); } }
+      @keyframes boot-orb-b { 0%, 100% { transform: translate(6%, 8%) scale(1); } 50% { transform: translate(-6%, -4%) scale(1.2); } }
+      @keyframes boot-orb-c { 0%, 100% { transform: translate(0%, 0%) scale(1); } 50% { transform: translate(-5%, 8%) scale(1.1); } }
+      @keyframes boot-shimmer { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+      @keyframes boot-bar-sweep { 0% { transform: translateX(-110%); } 100% { transform: translateX(210%); } }
     `}</style>
-    <div className="flex flex-col items-center gap-3.5">
-      <svg width="64" height="40" viewBox="0 0 64 40" aria-hidden="true"><path d="M2 20 H14 L19 6 L27 34 L33 12 L38 20 H62" fill="none" stroke="#2dd9c4" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" style={{ strokeDasharray: 190, strokeDashoffset: 190, animation: 'boot-wave-draw 1.7s ease-in-out infinite' }} /></svg>
-      <div className="font-display text-xl font-bold tracking-[-.01em]" style={{ color: '#eaf6f4', animation: 'boot-fade 1.7s ease-in-out infinite' }}>MedschoolProffs</div>
+    <div className="pointer-events-none absolute -left-1/4 -top-1/4 size-[60vmax] rounded-full opacity-60 blur-3xl" style={{ background: 'radial-gradient(circle, rgba(45,217,196,.35), transparent 65%)', animation: 'boot-orb-a 9s ease-in-out infinite' }} />
+    <div className="pointer-events-none absolute -bottom-1/4 -right-1/4 size-[55vmax] rounded-full opacity-50 blur-3xl" style={{ background: 'radial-gradient(circle, rgba(167,139,250,.35), transparent 65%)', animation: 'boot-orb-b 11s ease-in-out infinite' }} />
+    <div className="pointer-events-none absolute bottom-0 left-1/3 size-[45vmax] rounded-full opacity-40 blur-3xl" style={{ background: 'radial-gradient(circle, rgba(79,216,255,.3), transparent 65%)', animation: 'boot-orb-c 13s ease-in-out infinite' }} />
+    <div className="relative flex flex-col items-center gap-5 rounded-[28px] border border-white/10 px-14 py-12 shadow-[0_30px_80px_-25px_rgba(0,0,0,.7)] backdrop-blur-xl" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02))' }}>
+      <div style={{ animation: 'boot-tilt 4.5s ease-in-out infinite' }}>
+        <svg width="88" height="55" viewBox="0 0 64 40" aria-hidden="true" style={{ overflow: 'visible' }}>
+          <defs>
+            <linearGradient id="boot-wave-grad" x1="0" y1="0" x2="1" y2="0.3">
+              <stop offset="0%" stopColor="#2dd9c4" />
+              <stop offset="55%" stopColor="#4fd8ff" />
+              <stop offset="100%" stopColor="#a78bfa" />
+            </linearGradient>
+            <filter id="boot-wave-blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.2" /></filter>
+          </defs>
+          {/* dark "extrusion" pass, offset for depth */}
+          <path d="M2 20 H14 L19 6 L27 34 L33 12 L38 20 H62" fill="none" stroke="#03131c" strokeOpacity=".55" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" transform="translate(2.5, 3.5)" />
+          {/* soft glow pass */}
+          <path d="M2 20 H14 L19 6 L27 34 L33 12 L38 20 H62" fill="none" stroke="url(#boot-wave-grad)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" filter="url(#boot-wave-blur)" opacity=".8" />
+          {/* crisp gradient pass on top, with the draw-on animation */}
+          <path d="M2 20 H14 L19 6 L27 34 L33 12 L38 20 H62" fill="none" stroke="url(#boot-wave-grad)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" style={{ strokeDasharray: 190, strokeDashoffset: 190, animation: 'boot-wave-draw 1.7s ease-in-out infinite' }} />
+        </svg>
+      </div>
+      <div className="bg-clip-text font-display text-2xl font-bold tracking-[-.01em] text-transparent" style={{ backgroundImage: 'linear-gradient(90deg, #eaf6f4, #4fd8ff, #a78bfa, #eaf6f4)', backgroundSize: '200% auto', animation: 'boot-shimmer 3.2s linear infinite, boot-fade 1.7s ease-in-out infinite' }}>MedschoolProffs</div>
+      <div className="relative h-1 w-36 overflow-hidden rounded-full bg-white/10">
+        <div className="absolute inset-y-0 w-1/3 rounded-full" style={{ background: 'linear-gradient(90deg, transparent, #4fd8ff, #a78bfa, transparent)', animation: 'boot-bar-sweep 1.6s ease-in-out infinite' }} />
+      </div>
     </div>
   </div>;
 }
