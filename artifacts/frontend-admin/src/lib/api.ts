@@ -35,8 +35,31 @@ export function resolveUploadUrl(pathOrUrl: string | null | undefined): string |
   return `${API_ORIGIN}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
 }
 
+// Wraps a fetch() call that can fail before any Response ever comes back
+// (DNS/TLS failure, the connection being reset mid-request, or the browser
+// blocking the response as a CORS violation). fetch() rejects in all of
+// these cases with a bare `TypeError: Failed to fetch` — no status, no
+// body — which every call site here used to let bubble up unwrapped, so
+// the UI's `err instanceof ApiRequestError ? err.message : 'Something went
+// wrong.'` fallback always landed on the generic message with zero
+// diagnostic value (exactly what showed for the full-backup restore: a
+// network-level failure, not a server error, so there was never a JSON
+// body to read a real message from). status 0 distinguishes this from any
+// real HTTP response the server sent.
+async function fetchOrThrow(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (err) {
+    throw new ApiRequestError(
+      0,
+      "The request never reached the server (or the connection dropped mid-request) — this is a network/CORS-level failure, not something the server returned. Usually means: the API is unreachable, a proxy/firewall in front of it rejected or timed out the request, or the server process restarted mid-request. Check the API server's own logs for this request; if there's nothing there at all, the request never arrived.",
+      { originalError: err instanceof Error ? err.message : String(err) },
+    );
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchOrThrow(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
@@ -156,7 +179,7 @@ export const flashcardImportApi = {
   parse: async (file: File): Promise<FlashcardParseResult> => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_ORIGIN}/api/admin/flashcard-import/parse`, { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_ORIGIN}/api/admin/flashcard-import/parse`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not parse this file', data);
     return data;
@@ -177,7 +200,7 @@ export const flashcardBackupApi = {
   // downloadBackup: needs the admin's session cookie and a real error
   // message instead of a bare failed navigation if it fails.
   downloadBackup: async (scope?: BackupScope | null): Promise<void> => {
-    const res = await fetch(`${API_BASE}/admin/flashcard-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
+    const res = await fetchOrThrow(`${API_BASE}/admin/flashcard-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
@@ -197,7 +220,7 @@ export const flashcardBackupApi = {
   importBackup: async (file: File, mode: 'append' | 'replace'): Promise<{ restored: number; mode: 'append' | 'replace'; deletedFirst: number; scope: BackupScope | null }> => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/admin/flashcard-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_BASE}/admin/flashcard-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
     return data;
@@ -543,7 +566,7 @@ export const mcqImportApi = {
     const form = new FormData();
     form.append('file', file);
     if (profileId) form.append('profileId', String(profileId));
-    const res = await fetch('/api/admin/mcq-import/parse', { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow('/api/admin/mcq-import/parse', { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not parse this file', data);
     return data;
@@ -575,7 +598,7 @@ export const mcqBackupApi = {
   // navigation if the export fails — fetch it as a blob and trigger the
   // save ourselves.
   downloadBackup: async (scope?: BackupScope | null): Promise<void> => {
-    const res = await fetch(`${API_BASE}/admin/mcq-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
+    const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
@@ -595,7 +618,7 @@ export const mcqBackupApi = {
   importBackup: async (file: File, mode: 'append' | 'replace'): Promise<{ restored: number; mode: 'append' | 'replace'; deletedFirst: number; scope: BackupScope | null }> => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/admin/mcq-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
     return data;
@@ -635,7 +658,7 @@ export const fullBackupApi = {
   // pattern as mcqBackupApi.downloadBackup above — a plain <a href> can't
   // carry the admin's session cookie.
   downloadBackup: async (scope: FullBackupScope): Promise<void> => {
-    const res = await fetch(`${API_BASE}/admin/full-backup/export?scope=${scope}`, { credentials: 'include' });
+    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/export?scope=${scope}`, { credentials: 'include' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
@@ -657,7 +680,7 @@ export const fullBackupApi = {
   validate: async (file: File): Promise<FullBackupValidation> => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/admin/full-backup/validate`, { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/validate`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not validate this backup', data);
     return data;
@@ -665,7 +688,7 @@ export const fullBackupApi = {
   importBackup: async (file: File, mode: 'restore-empty' | 'wipe-and-restore'): Promise<FullBackupRestoreResult> => {
     const form = new FormData();
     form.append('file', file);
-    const res = await fetch(`${API_BASE}/admin/full-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
     return data;
@@ -861,7 +884,7 @@ export const booksAdminApi = {
 export async function uploadFile(file: File, kind: 'payment-proof' | 'profile-picture' | 'resource' | 'favicon' | 'book'): Promise<{ storagePath: string; url: string | null }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials: 'include', body: form });
+  const res = await fetchOrThrow(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials: 'include', body: form });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Upload failed', data);
   return data;
