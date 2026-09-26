@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { hashPassword } from "./auth";
 import { logger } from "./logger";
+import { REDACTED_SECRET_PLACEHOLDER } from "./fullBackup";
 
 const DEFAULT_ADMIN_EMAIL = "umais0khan@gmail.com";
 const DEFAULT_ADMIN_PASSWORD = "Umaiskhan000";
@@ -22,13 +23,34 @@ const DEFAULT_ADMIN_PASSWORD = "Umaiskhan000";
  *
  * Called after normalizeLegacyRoles(), so any legacy "superadmin" row has
  * already become "admin" by the time this checks for an existing admin.
+ *
+ * Restore repair: a full-backup restore brings the admin row back with its
+ * passwordHash replaced by the literal string "__REDACTED__" (backups never
+ * contain real password hashes — see lib/fullBackup.ts). That row does
+ * count as "an admin exists", so without the check below this function
+ * would return early and leave that admin permanently unable to log in —
+ * on local dev and on a live deploy alike, since this runs on every boot.
+ * Instead, whenever the *first* admin row found still has that placeholder,
+ * this resets it back to DEFAULT_ADMIN_EMAIL/DEFAULT_ADMIN_PASSWORD (or the
+ * env vars, if set) so the default admin login works again immediately
+ * after a restore, wherever the app is running.
  */
 export async function seedDefaultAdmin(): Promise<void> {
-  const [existingAdmin] = await db.select().from(usersTable).where(eq(usersTable.role, "admin"));
-  if (existingAdmin) return;
-
   const email = (process.env.DEFAULT_ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL).toLowerCase().trim();
   const password = process.env.DEFAULT_ADMIN_PASSWORD || DEFAULT_ADMIN_PASSWORD;
+
+  const [existingAdmin] = await db.select().from(usersTable).where(eq(usersTable.role, "admin"));
+  if (existingAdmin) {
+    if (existingAdmin.passwordHash === REDACTED_SECRET_PLACEHOLDER) {
+      const passwordHash = await hashPassword(password);
+      await db.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, existingAdmin.id));
+      logger.info(
+        { email: existingAdmin.email },
+        "[seed] Restored admin had a redacted password hash — reset it to DEFAULT_ADMIN_EMAIL/DEFAULT_ADMIN_PASSWORD so login works again. Change it from Admin -> Platform settings -> Your account.",
+      );
+    }
+    return;
+  }
 
   const [emailTaken] = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (emailTaken) {

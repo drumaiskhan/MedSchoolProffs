@@ -53,7 +53,7 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { ProfileHero, MembershipPass } from '@/components/profile/ProfileVisuals';
-import { Badge, ErrorState, Footer, IconField, SectionHeader, SkeletonPage, TeamSection, initials } from '@/lib/shared';
+import { Badge, ErrorState, Footer, IconField, PasswordStrength, SectionHeader, SkeletonPage, TeamSection, initials } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
 
 function Profile() {
@@ -92,6 +92,23 @@ function Profile() {
   const [pictureUploading, setPictureUploading] = useState(false);
   const [pictureError, setPictureError] = useState<string | null>(null);
   const update = useMutation({ mutationFn: authApi.updateMe, onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetCurrentUserQueryKey() }); setEditing(false); setPendingPicture(null); } });
+  // Password change — its own form and its own mutation, separate from
+  // the name/phone/picture form above, since /auth/change-password is a
+  // distinct endpoint (it verifies currentPassword server-side and, on
+  // success, revokes every session for this account — see auth.ts — so
+  // this one has to end in a redirect to /login rather than staying on
+  // the page like the details save does).
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const changePassword = useMutation({
+    mutationFn: () => authApi.changePassword(currentPassword, newPassword),
+    onSuccess: () => { queryClient.clear(); window.location.href = '/login'; },
+    onError: (err: unknown) => setPasswordError(err instanceof ApiRequestError ? err.message : 'Could not change password.'),
+  });
+  const resetPasswordFields = () => { setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPasswordError(null); };
   const dashboard = useGetStudentDashboard();
   if (q.isLoading) return <SkeletonPage />;
   if (!q.data) return <ErrorState retry={() => q.refetch()} />;
@@ -118,8 +135,8 @@ function Profile() {
   return <div className="max-w-4xl"><SectionHeader eyebrow="Your account" title="Profile & access" description="Your details, password and membership status." />
   <div className="grid gap-5 md:grid-cols-2"><ProfileHero name={u.name} programYear={programYearLabel} avatarUrl={avatarUrl} isActive={dashboard.data?.membershipStatus === 'ACTIVE'} streak={dashboard.data?.streak ?? 0} progress={dashboard.data?.progress ?? 0} days={daysRemaining} /><MembershipPass name={u.name} manageHref="/payments" /></div>
   <div className="mt-5 grid gap-5">
-    <div className="rounded-2xl border border-border bg-card p-6"><div className="flex items-center justify-between"><h3 className="font-bold">Personal details</h3><button onClick={() => { setEditing((v) => !v); setPendingPicture(null); setPictureError(null); }} className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:opacity-80" data-testid="button-edit-profile"><Pencil size={13} /> {editing ? 'Cancel' : 'Edit'}</button></div>
-      {editing ? <form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); update.mutate({ name: String(f.get('name')), phone: String(f.get('phone') || ''), ...(pendingPicture ? { profilePicturePath: pendingPicture.storagePath } : {}) }); }} className="pf-edit mt-6 grid gap-4 sm:grid-cols-2">
+    <div className="rounded-2xl border border-border bg-card p-6"><div className="flex items-center justify-between"><h3 className="font-bold">Personal details</h3><button onClick={() => { setEditing((v) => !v); setPendingPicture(null); setPictureError(null); resetPasswordFields(); }} className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:opacity-80" data-testid="button-edit-profile"><Pencil size={13} /> {editing ? 'Cancel' : 'Edit'}</button></div>
+      {editing ? <><form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); update.mutate({ name: String(f.get('name')), phone: String(f.get('phone') || ''), ...(pendingPicture ? { profilePicturePath: pendingPicture.storagePath } : {}) }); }} className="pf-edit mt-6 grid gap-4 sm:grid-cols-2">
         {/* Optional — a student can save name/phone changes without ever picking a photo. */}
         <label className="text-xs font-bold sm:col-span-2">Profile picture <span className="font-normal text-muted-foreground">(optional)</span>
           <div className="mt-2 flex items-center gap-3">
@@ -133,6 +150,15 @@ function Profile() {
         <label className="text-xs font-bold">Phone<div className="mt-2"><IconField icon={Phone} name="phone" defaultValue={(u as { phone?: string }).phone ?? ''} data-testid="input-edit-phone" /></div></label>
         <div className="flex items-end sm:col-span-2"><button disabled={update.isPending || pictureUploading} className="rounded-xl bg-primary px-5 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-save-profile">{update.isPending ? 'Saving…' : 'Save changes'}</button></div>
       </form>
+      <form onSubmit={(e) => { e.preventDefault(); setPasswordError(null); if (newPassword !== confirmPassword) { setPasswordError('New passwords do not match.'); return; } changePassword.mutate(); }} className="mt-6 grid gap-4 border-t border-border pt-6 sm:grid-cols-2">
+        <div className="sm:col-span-2"><h4 className="text-xs font-bold">Password</h4><p className="mt-1 text-[11px] text-muted-foreground">Changing your password signs you out everywhere — you'll need to log back in with the new one.</p></div>
+        <label className="text-xs font-bold sm:col-span-2">Current password<div className="mt-2"><IconField icon={LockKeyhole} required type={showPassword ? 'text' : 'password'} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="current-password" data-testid="input-current-password" /></div></label>
+        <label className="text-xs font-bold">New password<div className="mt-2"><IconField icon={LockKeyhole} required minLength={8} type={showPassword ? 'text' : 'password'} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" data-testid="input-new-password" /></div><PasswordStrength value={newPassword} /></label>
+        <label className="text-xs font-bold">Confirm new password<div className="mt-2"><IconField icon={LockKeyhole} required minLength={8} type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" data-testid="input-confirm-password" /></div></label>
+        <label className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground sm:col-span-2"><input type="checkbox" checked={showPassword} onChange={(e) => setShowPassword(e.target.checked)} data-testid="checkbox-show-password" />{showPassword ? <EyeOff size={13} /> : <Eye size={13} />} Show passwords</label>
+        {passwordError && <p className="text-[11px] font-semibold text-destructive sm:col-span-2" data-testid="text-password-error">{passwordError}</p>}
+        <div className="flex items-end sm:col-span-2"><button disabled={changePassword.isPending || !currentPassword || !newPassword} className="rounded-xl border border-border bg-background px-5 py-2.5 text-xs font-extrabold disabled:opacity-50" data-testid="button-change-password">{changePassword.isPending ? 'Updating…' : 'Update password'}</button></div>
+      </form></>
       : <div className="mt-6 grid gap-5 sm:grid-cols-2">{[['Full name', u.name], ['Email address', u.email], ['Institution', u.institution || 'Not added'], ['Programme', u.programKind || u.program || 'Not added'], ['Academic year', u.academicYear || 'Not added']].map(([label, value]) => <div key={label} className="pf-row"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-muted-foreground">{label}</div><div className="mt-2 text-sm font-semibold">{value}</div></div>)}</div>}
     </div></div>
   <TeamSection />

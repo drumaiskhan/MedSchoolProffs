@@ -34,7 +34,23 @@ export async function extractFileContent(buffer: Buffer, originalName: string, m
   }
 
   if (ext === ".pdf" || mimeType === "application/pdf") {
-    const pdfParse = (await import("pdf-parse")).default;
+    // Import the package's internal implementation file, NOT its index.js.
+    // pdf-parse's index.js has a leftover debug block:
+    //   let isDebugMode = !module.parent;
+    //   if (isDebugMode) { fs.readFileSync('./test/data/05-versions-space.pdf') ... }
+    // meant to only run when the package is executed directly for its own
+    // tests. Under a normal (unbundled) `require`, module.parent is set
+    // correctly and this never fires — which is why this works locally.
+    // But api-server's build.mjs bundles the whole backend into one file
+    // with esbuild, and pdf-parse wasn't in its `external` list — once
+    // esbuild inlines a CJS module like that, there's no real module.parent
+    // chain, isDebugMode evaluates true, and it tries to read a test
+    // fixture that doesn't exist in the production dist/ folder, throwing
+    // ENOENT and rejecting the import on every PDF parse on live. Importing
+    // straight from lib/pdf-parse.js skips index.js (and its debug block)
+    // entirely — same parsing function, none of the side effects, works
+    // the same whether esbuild bundles it or not.
+    const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
     const result = await pdfParse(buffer);
     return { kind: "text", text: result.text };
   }

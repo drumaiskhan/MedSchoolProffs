@@ -200,6 +200,17 @@ function AdminDatabaseBackup() {
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
         {Object.entries(lastResult.restored).map(([key, count]) => <div key={key} className="flex justify-between gap-2 border-b border-border/60 py-1"><span className="text-muted-foreground">{key}</span><span className="font-bold">{count.toLocaleString()}</span></div>)}
       </div>
+      {/* A restore can complete without error and still be missing entire
+          tables of data — e.g. every module dropped because its blockId
+          didn't resolve within this file. dropped is only ever populated
+          when that happened, so this box is silent on a clean restore. */}
+      {lastResult.dropped && Object.keys(lastResult.dropped).length > 0 && <div className="mt-4 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-destructive" data-testid="warning-dropped-rows">
+        <div className="flex items-center gap-2 font-extrabold"><AlertTriangle size={14} /> Some rows could not be restored</div>
+        <p className="mt-1 text-[11px] leading-5">These rows referenced something (like a parent block or topic) that wasn't present in this backup file, so they were skipped rather than breaking the whole restore. Check whether the source data was actually included in the export you restored from.</p>
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+          {Object.entries(lastResult.dropped).map(([key, count]) => <div key={key} className="flex justify-between gap-2 border-b border-destructive/20 py-1"><span>{key}</span><span className="font-bold">{count.toLocaleString()}</span></div>)}
+        </div>
+      </div>}
     </div>}
 
     <div className="mt-6 rounded-2xl border border-dashed border-border p-5 text-[11px] leading-5 text-muted-foreground">

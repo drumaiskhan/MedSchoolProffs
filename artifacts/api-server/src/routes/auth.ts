@@ -28,6 +28,7 @@ import {
 } from "../lib/auth";
 import { createDeviceSession, DeviceLimitError, revokeAllForUser, revokeByTokenId } from "../lib/deviceSessions";
 import { sendEmail, otpEmailHtml, resetPasswordEmailHtml, welcomeEmailHtml } from "../lib/email";
+import { logger } from "../lib/logger";
 import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middlewares/auth";
 import { banIfTrialExpired } from "../lib/trial";
@@ -260,11 +261,27 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     tokenHash: hash,
     expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
   });
-  await sendEmail(email, "Verify your MedschoolProffs account", otpEmailHtml(created.name, code));
+  // Email delivery (e.g. SMTP_PASS still "__REDACTED__" after a restore, or
+  // just a misconfigured mail server) must never turn an otherwise-successful
+  // signup into a 500 — the account and payment row above are already
+  // committed. Swallow the failure, log it, and tell the user plainly so
+  // they know to use "Resend code" once SMTP is fixed.
+  let emailSent = true;
+  try {
+    await sendEmail(email, "Verify your MedschoolProffs account", otpEmailHtml(created.name, code));
+  } catch (err) {
+    emailSent = false;
+    logger.error({ err, email }, "[auth] Failed to send signup OTP email — account was still created");
+  }
 
   await db.insert(auditLogsTable).values({ actorId: created.id, action: "USER_REGISTERED", entity: "user", entityId: created.id });
 
-  res.status(201).json({ user: await userPublicView(created), message: "Account created and payment submitted. Enter the verification code we emailed you — an admin will review your payment shortly and activate your access." });
+  res.status(201).json({
+    user: await userPublicView(created),
+    message: emailSent
+      ? "Account created and payment submitted. Enter the verification code we emailed you — an admin will review your payment shortly and activate your access."
+      : "Account created and payment submitted, but the verification email couldn't be sent. Use \"Resend code\" once you're ready, or contact an admin.",
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -579,7 +596,11 @@ router.post("/auth/resend-verification", async (req, res): Promise<void> => {
   if (user && !user.emailVerified) {
     const { code, hash } = generateOtp();
     await db.insert(emailVerificationTokensTable).values({ userId: user.id, tokenHash: hash, expiresAt: new Date(Date.now() + OTP_EXPIRY_MS) });
-    await sendEmail(email, "Verify your MedschoolProffs account", otpEmailHtml(user.name, code));
+    try {
+      await sendEmail(email, "Verify your MedschoolProffs account", otpEmailHtml(user.name, code));
+    } catch (err) {
+      logger.error({ err, email }, "[auth] Failed to send resend-verification OTP email");
+    }
   }
   res.json({ message: "If that email is registered and unverified, a new verification code has been sent." });
 });
@@ -606,7 +627,11 @@ router.post("/auth/forgot-password", async (req, res): Promise<void> => {
   if (user) {
     const { raw, hash } = generateOneTimeToken();
     await db.insert(passwordResetTokensTable).values({ userId: user.id, tokenHash: hash, expiresAt: new Date(Date.now() + 60 * 60 * 1000) });
-    await sendEmail(email, "Reset your MedschoolProffs password", resetPasswordEmailHtml(user.name, `${APP_URL}/reset-password?token=${raw}`));
+    try {
+      await sendEmail(email, "Reset your MedschoolProffs password", resetPasswordEmailHtml(user.name, `${APP_URL}/reset-password?token=${raw}`));
+    } catch (err) {
+      logger.error({ err, email }, "[auth] Failed to send password-reset email");
+    }
   }
   res.json({ message: "If that email is registered, a password reset link has been sent." });
 });

@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, platformSettingsTable } from "@workspace/db";
+import { REDACTED_SECRET_PLACEHOLDER } from "./fullBackup";
 
 // Design & Branding — stored as plain hex strings (admin UI uses native
 // <input type="color">), applied client-side as CSS vars (see each
@@ -25,7 +26,13 @@ export async function getSetting(key: string, fallback: string | null = null): P
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
   const [row] = await db.select().from(platformSettingsTable).where(eq(platformSettingsTable.key, key));
-  const value = row?.value ?? fallback;
+  // A restored backup writes "__REDACTED__" in place of any secret-shaped
+  // value (see lib/fullBackup.ts) so the export file never contains real
+  // secrets. Treat that placeholder as if the setting were never saved, so
+  // callers fall through to `fallback` instead of trying to use the literal
+  // string "__REDACTED__" as a real invite code / SMTP password / API key.
+  const raw = row?.value;
+  const value = raw !== undefined && raw !== REDACTED_SECRET_PLACEHOLDER ? raw : fallback;
   if (value !== null) cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -52,7 +59,12 @@ let allSettingsCache: { value: Record<string, string>; expiresAt: number } | nul
 export async function getAllSettings(): Promise<Record<string, string>> {
   if (allSettingsCache && allSettingsCache.expiresAt > Date.now()) return allSettingsCache.value;
   const rows = await db.select().from(platformSettingsTable);
-  const value = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  // Same redaction guard as getSetting() above: a restored row whose value
+  // is still "__REDACTED__" is dropped rather than surfaced to
+  // /api/site-content or the settings admin page as if it were real.
+  const value = Object.fromEntries(
+    rows.filter((row) => row.value !== REDACTED_SECRET_PLACEHOLDER).map((row) => [row.key, row.value]),
+  );
   allSettingsCache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
   return value;
 }

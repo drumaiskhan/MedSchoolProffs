@@ -651,6 +651,10 @@ export interface FullBackupRestoreResult {
   mode: 'restore-empty' | 'wipe-and-restore';
   restored: Record<string, number>;
   wipedFirst: Record<string, number>;
+  // Rows dropped because a required reference (e.g. a module's blockId)
+  // didn't resolve within the restore — see lib/fullBackup.ts. Non-empty
+  // here means the restore "succeeded" but some data didn't come back.
+  dropped: Record<string, number>;
 }
 
 export const fullBackupApi = {

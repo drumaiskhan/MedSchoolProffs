@@ -696,6 +696,14 @@ export interface RestoreResult {
   mode: "restore-empty" | "wipe-and-restore";
   restored: Record<string, number>;
   wipedFirst: Record<string, number>;
+  // Rows that referenced a required (NOT NULL) foreign key which didn't
+  // resolve within this restore, and so had to be dropped rather than
+  // inserted (see sanitizeRow below). Previously only logged server-side —
+  // a restore could silently drop every row of a table (e.g. all modules,
+  // because their blockId didn't resolve) and still report as a clean,
+  // fully-successful restore in the admin UI. Surfaced here so that's
+  // visible without having to go read the server log.
+  dropped: Record<string, number>;
 }
 
 const INSERT_BATCH_SIZE = 500;
@@ -787,6 +795,7 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
   await ensureSchemaIfMissing(specs[0]);
   const restored: Record<string, number> = {};
   const wipedFirst: Record<string, number> = {};
+  const dropped: Record<string, number> = {};
   const idsBySpec = new Map<string, Set<number>>();
   for (const spec of specs) {
     const ids = new Set<number>();
@@ -924,6 +933,7 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
         return [convertTimestamps(spec.key, sanitized)];
       });
       if (droppedForDanglingRequiredRef > 0) {
+        dropped[spec.key] = droppedForDanglingRequiredRef;
         logger.warn(
           { table: spec.key, dropped: droppedForDanglingRequiredRef },
           "[full-backup] dropped row(s) with a dangling required reference (see validate warnings) — could not restore without violating a not-null constraint",
@@ -985,5 +995,5 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
   }
   logger.info({ ms: Date.now() - restoreStarted }, "[full-backup] restore complete");
 
-  return { scope: file.scope, mode, restored, wipedFirst };
+  return { scope: file.scope, mode, restored, wipedFirst, dropped };
 }
