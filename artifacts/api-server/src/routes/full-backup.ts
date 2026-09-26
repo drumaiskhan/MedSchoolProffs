@@ -119,22 +119,39 @@ router.post("/admin/full-backup/import", requireAdmin, upload.single("file"), as
     return;
   }
 
+  let result: Awaited<ReturnType<typeof restoreFullBackup>>;
   try {
     const file = raw as FullBackupFile;
-    const result = await restoreFullBackup(file, mode);
+    result = await restoreFullBackup(file, mode);
+  } catch (err) {
+    logger.error({ err }, "[full-backup] restore failed");
+    res.status(422).json({ error: `Could not restore this backup: ${dbErrorMessage(err, "unknown database error")}` });
+    return;
+  }
 
+  // The restore above already committed — everything from here on is
+  // best-effort bookkeeping, not part of the restore's correctness. This
+  // used to be inside the same try/catch as restoreFullBackup(), so an
+  // audit-log insert failure (a transient connection blip right after a
+  // multi-minute restore, say) made the route respond 422 "Could not
+  // restore this backup" even though every row had already been committed —
+  // telling the admin the restore failed when it hadn't, and inviting a
+  // needless (and, on wipe-and-restore, destructive) retry. A failed audit
+  // log entry is worth logging loudly, but it must never make a successful
+  // restore look like a failure to the caller.
+  const file = raw as FullBackupFile;
+  try {
     await db.insert(auditLogsTable).values({
       actorId: req.user!.id,
       action: "FULL_DATABASE_RESTORED",
       entity: file.scope === "content" ? "platform_content" : "student_data",
       metadata: JSON.stringify({ scope: file.scope, mode, restored: result.restored, wipedFirst: result.wipedFirst, sourceExportedAt: file.exportedAt }),
     });
-
-    res.status(201).json({ ...result, application: APPLICATION_NAME });
   } catch (err) {
-    logger.error({ err }, "[full-backup] restore failed");
-    res.status(422).json({ error: `Could not restore this backup: ${dbErrorMessage(err, "unknown database error")}` });
+    logger.error({ err }, "[full-backup] restore succeeded but writing the audit log entry failed — data was restored, only the log entry is missing");
   }
+
+  res.status(201).json({ ...result, application: APPLICATION_NAME });
 });
 
 export default router;

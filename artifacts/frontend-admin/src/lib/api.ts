@@ -609,7 +609,7 @@ export const mcqBackupApi = {
 // student's account + activity, exported separately since it's a bigger
 // deal to restore/share; "full" is both together, in one file — the single-
 // download migration path (PostgreSQL/Supabase -> a fresh PostgreSQL/
-// Supabase, or -> MySQL via the mysql/* routes below, same JSON either way).
+// Supabase database).
 // ---------------------------------------------------------------------------
 
 export type FullBackupScope = 'content' | 'users' | 'full';
@@ -672,50 +672,12 @@ export const fullBackupApi = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// MySQL restore target — same JSON backup files as fullBackupApi above, but
-// restored into an admin-supplied MySQL database instead of this app's own
-// PostgreSQL database. The connection string is sent per-request and never
-// stored server-side. This is a future-migration tool, not a live second
-// database: PostgreSQL/Supabase stays the database this application reads
-// and writes during normal operation.
-// ---------------------------------------------------------------------------
-
-export interface MysqlFullBackupValidation extends FullBackupValidation {}
-export interface MysqlFullBackupRestoreResult extends FullBackupRestoreResult {}
-
-export const mysqlBackupApi = {
-  testConnection: async (url: string): Promise<{ ok: boolean; error?: string }> => {
-    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/test-connection`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not test this connection', data);
-    return data;
-  },
-  validate: async (file: File, url: string): Promise<MysqlFullBackupValidation> => {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('url', url);
-    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/validate`, { method: 'POST', credentials: 'include', body: form });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not validate this backup', data);
-    return data;
-  },
-  importBackup: async (file: File, url: string, mode: 'restore-empty' | 'wipe-and-restore'): Promise<MysqlFullBackupRestoreResult> => {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('url', url);
-    form.append('mode', mode);
-    const res = await fetch(`${API_BASE}/admin/full-backup/mysql/import`, { method: 'POST', credentials: 'include', body: form });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
-    return data;
-  },
-};
+// The MySQL-target restore option (routes/full-backup-mysql.ts on the
+// backend) has been removed — MedSchoolProffs is PostgreSQL/Supabase-only,
+// and that route's mysql2 dependency was causing the API server to crash on
+// startup (mysql2 was only ever a dependency of the standalone
+// scripts/mysql-restore CLI tool, never of api-server itself). See
+// AdminDatabaseBackup.tsx's top-of-file comment for the full story.
 
 export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; archived?: boolean; displayOrder: number; mcqCount: number; programId: number | null; academicYearId: number | null; programTargetKind: string | null; yearTargetNumber: number | null }
 export interface NotebookEntry { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }

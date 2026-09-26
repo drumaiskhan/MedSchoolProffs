@@ -44,6 +44,19 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Lightweight liveness check — intentionally registered before pinoHttp/
+// attachUser/the DB-touching router below, and does nothing but return 200.
+// This must stay cheap and dependency-free: its only job is to tell a
+// deploy/monitoring check "the Node process is alive and accepting
+// connections" without that answer depending on the database, auth, or any
+// other subsystem being healthy. A DB-backed health check would make a
+// transient Postgres blip look like the whole API is down, which is exactly
+// the "Server listening but not actually reachable" confusion this is meant
+// to rule out.
+app.get("/api/health", (_req: Request, res: Response) => {
+  res.status(200).json({ status: "ok" });
+});
+
 app.use(
   pinoHttp({
     logger,

@@ -1,7 +1,9 @@
-import { sql } from "drizzle-orm";
+import { sql, getTableColumns } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgTable } from "drizzle-orm/pg-core";
 import {
   db,
+  pool,
   ensureSchema,
   institutionsTable,
   programsTable,
@@ -54,6 +56,7 @@ import {
   ospeExamAnswersTable,
   aiVisualizerLogsTable,
 } from "@workspace/db";
+import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
 // Whole-database JSON backup/restore — distinct from mcqBackup.ts/
@@ -299,10 +302,260 @@ const FK_CHECKS: Record<string, Array<[string, string]>> = {
   examAnswers: [["attemptId", "examAttempts"], ["mcqId", "mcqs"]],
   ospeExamAttempts: [["examId", "ospeExams"], ["userId", "users"]],
   ospeExamAnswers: [["attemptId", "ospeExamAttempts"], ["stationId", "ospeStations"]],
+  // A student's institution/program/academicYear/batch pointers were never
+  // checked here — every other table that points at content (modules,
+  // subjects, mcqs, ...) has an entry above, but "users" was missing one.
+  // That gap meant a "users"-scope restore silently kept whatever
+  // institutionId/programId/academicYearId/batchId the backup had, even
+  // when those ids no longer match anything in the target database (e.g.
+  // the content side was wiped-and-restored from a different export, or
+  // freshly reseeded, after this backup was taken) — students would land
+  // on the wrong institution/program/year/batch, or a nonexistent one,
+  // with zero warning from validate and zero error from restore, because
+  // med_users.institution_id/program_id/academic_year_id/batch_id are
+  // plain integer columns with no Postgres-level foreign key (see
+  // schema/medschool.ts's usersTable) to catch it either.
+  users: [["institutionId", "institutions"], ["programId", "programs"], ["academicYearId", "academicYears"], ["batchId", "batches"]],
 };
+
+// FK_CHECKS' targets are usually restored in the same file (e.g. "programs"
+// checks against "institutions", both in CONTENT_TABLES together). But
+// "users" checks against institutions/programs/academicYears/batches, which
+// live in CONTENT_TABLES while users lives in USER_TABLES — on a
+// "users"-scope restore (the common case: restoring student data into a
+// database that already has its content), those target tables are never
+// part of `specs`, so idsBySpec never gets an entry for them and the check
+// above silently no-ops. This looks up a TableSpec by key across both
+// groups so callers can fetch "what ids actually exist right now" for a
+// target that isn't part of the current restore/validate scope.
+const TABLE_SPEC_BY_KEY = new Map(ALL_TABLES.map((spec) => [spec.key, spec] as const));
+
+// For every FK_CHECKS target that isn't already in idsBySpec (i.e. isn't
+// part of the specs being restored/validated), query the live database for
+// the ids that currently exist and add them — so a "users"-scope restore
+// can actually catch/drop a dangling institution/program/academicYear/batch
+// pointer instead of silently keeping it. Queried once per target table,
+// via whichever runner (the plain db, or an in-transaction client) the
+// caller is using, so restore sees this within its own transaction.
+async function loadExternalIdSets(
+  specs: TableSpec[],
+  idsBySpec: Map<string, Set<number>>,
+  runner: { execute: (q: ReturnType<typeof sql.raw>) => Promise<{ rows: unknown[] }> },
+): Promise<void> {
+  const neededKeys = new Set<string>();
+  for (const spec of specs) {
+    const checks = FK_CHECKS[spec.key];
+    if (!checks) continue;
+    for (const [, targetKey] of checks) {
+      if (!idsBySpec.has(targetKey)) neededKeys.add(targetKey);
+    }
+  }
+  for (const targetKey of neededKeys) {
+    const targetSpec = TABLE_SPEC_BY_KEY.get(targetKey);
+    if (!targetSpec || NO_SERIAL_ID.has(targetSpec.key)) continue;
+    try {
+      const result = await runner.execute(sql.raw(`select id from ${targetSpec.sqlName}`));
+      const ids = new Set<number>();
+      for (const row of result.rows as Array<{ id: number }>) ids.add(row.id);
+      idsBySpec.set(targetKey, ids);
+    } catch {
+      // Target table doesn't exist yet (e.g. brand-new database with only
+      // this restore's tables created so far) — leave it unset, same as
+      // before this fix, rather than failing the whole validate/restore
+      // over a table this scope doesn't even touch.
+    }
+  }
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// Auto-derived from lib/db/src/schema/medschool.ts (same idea as
+// scripts/src/mysql-restore/tableMeta.ts's ColumnMeta, generated the same
+// way): every JS property, per table key, backed by a real `timestamp(...)`
+// column (Postgres `timestamp with time zone`, Drizzle's default Date mode).
+// buildFullBackup serializes those as plain ISO-8601 strings (JSON has no
+// Date type); a restore has to turn them back into JS `Date` objects before
+// handing rows to Drizzle, or every insert throws
+// "TypeError: value.toISOString is not a function" (PgTimestamp expects a
+// Date, not a string). Columns built with `date(..., { mode: "string" })`
+// (lastPracticeDate, paymentDate) are NOT in this map on purpose — those
+// stay plain "YYYY-MM-DD" strings all the way through; converting them would
+// be the same bug in the other direction. Regenerate this list by hand if a
+// table gains/loses a timestamp column.
+const TIMESTAMP_COLUMNS: Record<string, string[]> = {
+  academicYears: ["createdAt", "updatedAt"],
+  aiVisualizerLogs: ["createdAt", "updatedAt"],
+  batches: ["createdAt", "updatedAt"],
+  blocks: ["createdAt", "updatedAt"],
+  bookHighlights: ["createdAt", "updatedAt"],
+  bookPurchases: ["createdAt", "reviewedAt", "updatedAt"],
+  bookReadingProgress: ["updatedAt"],
+  books: ["createdAt", "updatedAt"],
+  challengeAttempts: ["completedAt", "createdAt", "updatedAt"],
+  challenges: ["createdAt", "expiresAt", "updatedAt"],
+  coupons: ["createdAt", "expiresAt", "updatedAt"],
+  examAnswers: ["createdAt", "updatedAt"],
+  examAttempts: ["createdAt", "resultsReleasedAt", "startedAt", "submittedAt", "updatedAt"],
+  examQuestions: ["createdAt", "updatedAt"],
+  exams: ["createdAt", "endAt", "startAt", "updatedAt"],
+  feedback: ["createdAt", "updatedAt"],
+  feedbackReplies: ["createdAt", "updatedAt"],
+  flaggedMcqs: ["createdAt", "updatedAt"],
+  flashcards: ["createdAt", "updatedAt"],
+  institutions: ["createdAt", "updatedAt"],
+  mcqImportProfiles: ["createdAt", "updatedAt"],
+  mcqs: ["createdAt", "updatedAt"],
+  membershipPlans: ["createdAt", "updatedAt"],
+  memberships: ["createdAt", "expiresAt", "startsAt", "updatedAt"],
+  modules: ["createdAt", "updatedAt"],
+  notebookEntries: ["createdAt", "updatedAt"],
+  notificationDismissals: ["createdAt", "updatedAt"],
+  notifications: ["createdAt", "updatedAt"],
+  ospeBlocks: ["createdAt", "updatedAt"],
+  ospeExamAnswers: ["aiGradedAt", "createdAt", "updatedAt"],
+  ospeExamAttempts: ["createdAt", "resultsReleasedAt", "startedAt", "submittedAt", "updatedAt"],
+  ospeExamStations: ["createdAt", "updatedAt"],
+  ospeExams: ["createdAt", "endAt", "startAt", "updatedAt"],
+  ospeLearningMaterials: ["createdAt", "updatedAt"],
+  ospeModules: ["createdAt", "updatedAt"],
+  ospeStations: ["createdAt", "updatedAt"],
+  pastPapers: ["createdAt", "updatedAt"],
+  payments: ["createdAt", "reviewedAt", "updatedAt"],
+  platformSettings: ["createdAt", "updatedAt"],
+  practiceAnswers: ["createdAt", "updatedAt"],
+  practiceAttempts: ["completedAt", "createdAt", "startedAt", "updatedAt"],
+  programs: ["createdAt", "updatedAt"],
+  resources: ["createdAt", "updatedAt"],
+  savedSessions: ["createdAt", "updatedAt"],
+  studentDocuments: ["createdAt", "updatedAt"],
+  studentProgress: ["createdAt", "lastActivityAt", "updatedAt"],
+  subjects: ["createdAt", "updatedAt"],
+  teamMembers: ["createdAt", "updatedAt"],
+  topics: ["createdAt", "updatedAt"],
+  users: ["createdAt", "lastLoginAt", "lockedUntil", "passwordChangedAt", "updatedAt"],
+};
+
+// Turns each of a row's ISO-string timestamp values into a JS Date, using
+// TIMESTAMP_COLUMNS above so date(mode:"string") columns are left untouched.
+// Throws on a value that isn't a valid date rather than silently handing
+// Drizzle an Invalid Date (validateFullBackup below catches this same case
+// ahead of time and reports it as an issue instead of an ISOString crash;
+// this is defense in depth for restoreFullBackup being callable directly).
+function convertTimestamps(specKey: string, row: Record<string, unknown>): Record<string, unknown> {
+  const keys = TIMESTAMP_COLUMNS[specKey];
+  if (!keys || keys.length === 0) return row;
+  let out = row;
+  for (const key of keys) {
+    const value = out[key];
+    if (value === null || value === undefined || value instanceof Date) continue;
+    if (typeof value !== "string") continue;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error(`Invalid "${key}" timestamp ("${value}") in a "${specKey}" row — cannot restore.`);
+    }
+    if (out === row) out = { ...row };
+    out[key] = date;
+  }
+  return out;
+}
+
+// Every column ensureSchema.ts adds via ALTER TABLE ... ADD COLUMN IF NOT
+// EXISTS (i.e. every column added to a table *after* that table's original
+// CREATE TABLE shipped) — kept in sync with lib/db/src/ensureSchema.ts by
+// hand. A populated database can have all its tables but still be missing
+// one of these if it hasn't restarted the API (which runs ensureSchema() at
+// boot) since a newer column was added — "the tables exist" does not mean
+// "the schema is current." Checking this cheaply is what lets validate/
+// restore tell a genuinely-behind-on-migrations database apart from a
+// current one, instead of assuming either "run the whole bootstrap every
+// time" (see the statement-timeout problem this replaced) or "tables exist,
+// must be fine" (silently missing columns → a confusing failure deep inside
+// the restore's INSERTs instead of a clear message up front).
+const ADDITIVE_COLUMNS: Array<[table: string, column: string]> = [
+  ["med_mcq_import_profiles", "hint_pattern"],
+  ["med_mcq_import_profiles", "reference_pattern"],
+  ["med_feedback", "rating"],
+  ["med_feedback", "featured"],
+  ["med_mcqs", "option_explanations"],
+  ["med_mcqs", "explanation_status"],
+  ["med_mcqs", "hint"],
+  ["med_mcqs", "exam_id"],
+  ["med_ai_visualizer_logs", "raw_response"],
+  ["med_membership_plans", "auto_renew"],
+  ["med_membership_plans", "eligibility"],
+  ["med_membership_plans", "original_price"],
+  ["med_membership_plans", "discount_label"],
+  ["med_modules", "block_id"],
+  ["med_modules", "icon_path"],
+  ["med_subjects", "icon_path"],
+  ["med_team_members", "category"],
+  ["med_institutions", "kind"],
+  ["med_past_papers", "program_target_kind"],
+  ["med_past_papers", "year_target_number"],
+  ["med_books", "program_target_kind"],
+  ["med_books", "year_target_number"],
+  ["med_books", "is_free"],
+  ["med_books", "price"],
+  ["med_books", "currency"],
+  ["med_payments", "coupon_code"],
+  ["med_payments", "discount_amount"],
+  ["med_memberships", "is_trial"],
+  ["med_challenges", "block_id"],
+  ["med_users", "status_message"],
+  ["med_users", "max_devices"],
+  ["med_ospe_stations", "label_points"],
+  ["med_ospe_stations", "block_id"],
+  ["med_ospe_learning_materials", "block_id"],
+  ["med_ospe_exam_answers", "label_answers"],
+];
+
+// One cheap catalog query (information_schema.columns — no locks, nothing
+// DDL) covering every additive column at once, rather than one to_regclass
+// call per column.
+async function findMissingAdditiveColumns(): Promise<Array<[string, string]>> {
+  const rows = (
+    await db.execute(sql`
+      select table_name, column_name
+      from information_schema.columns
+      where table_schema = 'public'
+        and (table_name, column_name) in (${sql.join(
+          ADDITIVE_COLUMNS.map(([t, c]) => sql`(${t}, ${c})`),
+          sql`, `,
+        )})
+    `)
+  ).rows as Array<{ table_name: string; column_name: string }>;
+  const present = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+  return ADDITIVE_COLUMNS.filter(([t, c]) => !present.has(`${t}.${c}`));
+}
+
+// Cheap catalog lookups (to_regclass + the information_schema query above)
+// instead of unconditionally re-running the whole ensureSchema() bootstrap.
+// ensureSchema() itself only ever runs when something is actually missing —
+// a brand-new database (no anchor table yet) or an existing one that's
+// behind on additive columns — and even then it's the same idempotent,
+// purely-additive script (CREATE TABLE/ADD COLUMN IF NOT EXISTS) the app
+// already runs at every boot, never anything destructive. See the long
+// comment at this function's call site in validateFullBackup for why
+// skipping it on an up-to-date database matters (this was the real cause of
+// validation's statement-timeout / 500s, not the JSON size).
+async function ensureSchemaIfMissing(anchor: TableSpec): Promise<void> {
+  const [{ exists }] = (
+    await db.execute(sql`select (to_regclass(${anchor.sqlName}) is not null) as exists`)
+  ).rows as Array<{ exists: boolean }>;
+  if (!exists) {
+    await ensureSchema();
+    return;
+  }
+  const missing = await findMissingAdditiveColumns();
+  if (missing.length > 0) {
+    logger.warn(
+      { missing: missing.map(([t, c]) => `${t}.${c}`) },
+      "[full-backup] schema is behind on additive columns — running ensureSchema() to catch it up before validating/restoring",
+    );
+    await ensureSchema();
+  }
 }
 
 export async function validateFullBackup(raw: unknown): Promise<ValidationResult> {
@@ -342,6 +595,8 @@ export async function validateFullBackup(raw: unknown): Promise<ValidationResult
       counts[spec.key] = rows.length;
       const ids = new Set<number>();
       const seenDuplicate = new Set<number>();
+      const tsKeys = TIMESTAMP_COLUMNS[spec.key];
+      const invalidTimestamps = new Map<string, number>();
       for (const row of rows) {
         if (!isPlainObject(row)) { issues.push({ level: "error", message: `"${spec.key}" contains a row that isn't an object.` }); continue; }
         const id = row.id;
@@ -349,15 +604,28 @@ export async function validateFullBackup(raw: unknown): Promise<ValidationResult
           if (ids.has(id) && !seenDuplicate.has(id)) { issues.push({ level: "error", message: `Duplicate id ${id} in "${spec.key}".` }); seenDuplicate.add(id); }
           ids.add(id);
         }
+        if (tsKeys) {
+          for (const key of tsKeys) {
+            const value = row[key];
+            if (typeof value !== "string" || value === "") continue;
+            if (Number.isNaN(Date.parse(value))) invalidTimestamps.set(key, (invalidTimestamps.get(key) ?? 0) + 1);
+          }
+        }
+      }
+      for (const [key, count] of invalidTimestamps) {
+        issues.push({ level: "error", message: `${count} row(s) in "${spec.key}" have an invalid "${key}" timestamp.` });
       }
       idsBySpec.set(spec.key, ids);
     }
+
+    await loadExternalIdSets(specs, idsBySpec, db);
 
     for (const spec of specs) {
       const checks = FK_CHECKS[spec.key];
       if (!checks) continue;
       const rows = file.data[spec.key];
       if (!Array.isArray(rows)) continue;
+      const notNullColumns = notNullFkColumns(spec);
       for (const check of checks) {
         const [column, targetKey] = check;
         const targetIds = idsBySpec.get(targetKey);
@@ -369,26 +637,44 @@ export async function validateFullBackup(raw: unknown): Promise<ValidationResult
           if (value === null || value === undefined) continue;
           if (typeof value === "number" && !targetIds.has(value)) missing++;
         }
-        if (missing > 0) issues.push({ level: "warning", message: `${missing} row(s) in "${spec.key}" reference a "${column}" not present in "${targetKey}" — those references will be dropped on restore.` });
+        if (missing > 0) {
+          // notNull: the column can't be cleared without violating the
+          // schema, so restoring these rows at all isn't possible — the
+          // whole row is skipped. Nullable: only the bad pointer is
+          // cleared, the rest of the row still restores.
+          const outcome = notNullColumns.has(column)
+            ? `${missing} row(s) in "${spec.key}" reference a "${column}" not present in "${targetKey}" — "${column}" can't be empty, so those rows will be skipped on restore.`
+            : `${missing} row(s) in "${spec.key}" reference a "${column}" not present in "${targetKey}" — that reference will be cleared on restore.`;
+          issues.push({ level: "warning", message: outcome });
+        }
       }
     }
 
-    // Does the target database already hold data for this scope? Checked
-    // against the first table in the scope's own dependency chain
-    // (institutions for content, users for user data) — enough to answer
-    // "empty or not" without scanning every table.
-    //
-    // On a brand-new/empty Supabase database, none of these tables exist
-    // yet, so this COUNT(*) would throw before anything useful happens.
-    // ensureSchema() (the same idempotent CREATE TABLE/ALTER ... IF NOT
-    // EXISTS script the app already runs at boot — see
-    // lib/db/src/ensureSchema.ts) creates whatever's missing first. It's a
-    // no-op against a database that already has the schema, so this is
-    // safe to call on every validate, not just the empty-database case.
+    // Does the target database already hold data for this scope? This used
+    // to check only the scope's first table (institutions for content/full,
+    // users for user data) on the theory that was "enough to answer empty
+    // or not" — but it isn't: seedDefaultAdmin() (see lib/seedAdmin.ts)
+    // always creates exactly one admin row in med_users on any boot with no
+    // existing admin, so med_users is never actually empty on a running
+    // server even when every other table genuinely is. For a "full" or
+    // "content" restore (anchor = institutions), that seeded admin row was
+    // invisible to this check — it reported "empty", the UI offered the
+    // non-destructive "Restore into this database" button, and the restore
+    // would run cleanly through every table until it reached users and hit
+    // a real Postgres "duplicate key value violates unique constraint
+    // med_users_pkey" (the backup's own admin row almost always also has id
+    // 1, since it was the first user in the source database too) —
+    // collision, whole transaction rolled back, nothing restored. Checking
+    // every table in the scope (not just the anchor) means that seeded
+    // admin row is correctly seen as "this target already has data", so the
+    // UI forces wipe-and-restore instead — which deletes it before
+    // restoring, so the collision can't happen.
     const anchor = specs[0];
-    await ensureSchema();
-    const [{ count }] = (await db.execute(sql`select count(*)::int as count from ${anchor.table}`)).rows as Array<{ count: number }>;
-    targetHasExistingData = count > 0;
+    await ensureSchemaIfMissing(anchor);
+    for (const spec of specs) {
+      const [{ count }] = (await db.execute(sql`select count(*)::int as count from ${spec.table}`)).rows as Array<{ count: number }>;
+      if (count > 0) { targetHasExistingData = true; break; }
+    }
   }
 
   return {
@@ -417,9 +703,20 @@ const INSERT_BATCH_SIZE = 500;
 // Drops a foreign-key-shaped value that no longer resolves within this
 // import (see FK_CHECKS above) rather than letting the whole row's insert
 // fail — matches the validator's warning ("those references will be
-// dropped on restore") instead of aborting an otherwise-good restore over
-// one dangling pointer.
-function sanitizeRow(specKey: string, row: Record<string, unknown>, idsBySpec: Map<string, Set<number>>): Record<string, unknown> {
+// A dangling FK reference (per FK_CHECKS) gets cleared here rather than
+// aborting an otherwise-good restore over one bad pointer — but only when
+// the column can actually hold null. Real incident this fixes: mcqId on
+// med_practice_answers is NOT NULL (a practice answer for no MCQ isn't
+// meaningful data), so when a backup's practiceAnswers row pointed at an
+// mcq id that had since been deleted from the live app (and so was never
+// captured in the mcqs data restored alongside it), setting mcqId to null
+// here just traded the FK problem for "null value in column \"mcq_id\" ...
+// violates not-null constraint" — turning an otherwise-clean restore into
+// a hard failure. For a NOT NULL column there's no value this function can
+// put there that's both truthful and satisfies the schema, so the row
+// itself can't be restored — this returns null (drop the whole row) for
+// case, and only nulls the column when the schema actually allows it.
+function sanitizeRow(specKey: string, row: Record<string, unknown>, idsBySpec: Map<string, Set<number>>, notNullColumns: Set<string>): Record<string, unknown> | null {
   const checks = FK_CHECKS[specKey];
   if (!checks) return row;
   let out = row;
@@ -427,9 +724,27 @@ function sanitizeRow(specKey: string, row: Record<string, unknown>, idsBySpec: M
     const value = out[column];
     if (typeof value !== "number") continue;
     const targetIds = idsBySpec.get(targetKey);
-    if (targetIds && !targetIds.has(value)) out = { ...out, [column]: null };
+    if (!targetIds || targetIds.has(value)) continue;
+    if (notNullColumns.has(column)) return null;
+    out = { ...out, [column]: null };
   }
   return out;
+}
+
+// Which of a table's FK_CHECKS columns are NOT NULL in the actual schema —
+// read from the Drizzle table definition itself (not hand-maintained)
+// specifically so this can never drift out of sync with schema/medschool.ts
+// the way the hand-picked NOT NULL assumption that caused the incident
+// above did.
+function notNullFkColumns(spec: TableSpec): Set<string> {
+  const checks = FK_CHECKS[spec.key];
+  if (!checks) return new Set();
+  const columns = getTableColumns(spec.table) as Record<string, { notNull?: boolean }>;
+  const result = new Set<string>();
+  for (const [column] of checks) {
+    if (columns[column]?.notNull) result.add(column);
+  }
+  return result;
 }
 
 // Tables keyed by something other than a serial `id` (platformSettings uses
@@ -462,13 +777,14 @@ async function resyncSerialSequence(spec: TableSpec): Promise<void> {
 
 export async function restoreFullBackup(file: FullBackupFile, mode: "restore-empty" | "wipe-and-restore"): Promise<RestoreResult> {
   // Defense in depth: the /admin/full-backup/import route always calls
-  // validateFullBackup() (which itself now calls ensureSchema()) first, but
-  // restoreFullBackup() is exported and callable on its own — this can't
-  // assume some other code path already prepared the schema on this
-  // connection.
-  await ensureSchema();
-
+  // validateFullBackup() (which itself now calls ensureSchemaIfMissing())
+  // first, but restoreFullBackup() is exported and callable on its own —
+  // this can't assume some other code path already prepared the schema on
+  // this connection. Same reasoning as validateFullBackup: only actually
+  // bootstrap the schema when the anchor table is genuinely missing, not
+  // unconditionally on every restore.
   const specs = specsFor(file.scope);
+  await ensureSchemaIfMissing(specs[0]);
   const restored: Record<string, number> = {};
   const wipedFirst: Record<string, number> = {};
   const idsBySpec = new Map<string, Set<number>>();
@@ -480,7 +796,114 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
     idsBySpec.set(spec.key, ids);
   }
 
-  await db.transaction(async (tx) => {
+  // Restoring ~30k+ rows across dozens of tables, each batch its own
+  // round-trip to Postgres, can legitimately take well over a minute —
+  // especially against a remote/pooled connection (Supabase) where each
+  // round-trip carries real network latency, not just query time. With no
+  // logging, that's indistinguishable from a genuine hang from the
+  // terminal. One line per table (row count + elapsed time) is enough to
+  // tell "it's working, just slow" apart from "it's stuck on X" — check
+  // this log live in the terminal running the API while a restore shows
+  // "Pending" in the browser; if it keeps advancing table by table, it's
+  // just slow and will finish; if it stops dead on one line, that table's
+  // insert (or a lock it's waiting on) is the actual problem.
+  const totalRows = specs.reduce((sum, spec) => sum + (file.data[spec.key]?.length ?? 0), 0);
+  logger.info({ scope: file.scope, mode, tables: specs.length, totalRows }, "[full-backup] restore starting");
+  const restoreStarted = Date.now();
+
+  // Manually-managed client/transaction instead of db.transaction(): if the
+  // underlying connection dies mid-restore (network blip, the provider's
+  // pooler killing a long-idle-in-transaction session, etc.), the client
+  // MUST be released with that error passed to release(err) — that's the
+  // node-postgres contract for telling the pool "this physical connection
+  // is broken, destroy it" rather than "it's healthy, hand it to the next
+  // request." drizzle-orm's own db.transaction() wrapper does not
+  // consistently guarantee that error-aware release, which is a known
+  // real-world failure mode: one dead connection gets quietly recycled back
+  // into the pool, and every subsequent request that happens to draw it
+  // fails with "Connection terminated unexpectedly" / "Connection
+  // terminated due to connection timeout" until the process is restarted —
+  // matching exactly what was seen after a restore here. Acquiring the
+  // client ourselves and calling release(err) explicitly on any failure
+  // closes that gap regardless of what drizzle's internals do.
+  const client = await pool.connect();
+  let released = false;
+  // pg-pool contract: a truthy argument to release() tells the pool this
+  // client is broken and to discard it instead of returning it to the idle
+  // list. Anything caught here — Error or not — means treat the connection
+  // as suspect; only a clean, no-argument release() on the success path
+  // marks it as safe to reuse.
+  const release = (err?: unknown) => {
+    if (released) return;
+    released = true;
+    client.release(err ? (err instanceof Error ? err : true) : undefined);
+  };
+  try {
+    const tx = drizzle(client);
+    await client.query("BEGIN");
+
+    // Nothing in this codebase ever set statement_timeout on the connection
+    // that runs this transaction — the earlier "canceling statement due to
+    // statement timeout" fix (see ensureSchemaIfMissing above) works by
+    // avoiding the expensive DDL, not by bounding the timeout, so it does
+    // NOT protect this transaction's own inserts. Left unset, this
+    // transaction runs with whatever statement_timeout the role/database
+    // defaults to — which can be unlimited (0) on a local/Docker Postgres —
+    // meaning a genuine lock wait here (e.g. another connection holding a
+    // lock on med_mcqs) would hang forever with no error, indistinguishable
+    // from JS just being slow. SET LOCAL scopes this to the current
+    // transaction only (resets automatically at COMMIT/ROLLBACK — never
+    // leaks to the pooled connection's next user), so this is safe without
+    // touching the database's or role's global setting. A bounded-but-
+    // generous timeout (not 0/unlimited) means a real stuck lock fails
+    // loudly with a clear Postgres error instead of hanging indefinitely.
+    const statementTimeoutMs = Number(process.env.RESTORE_STATEMENT_TIMEOUT_MS) || 600_000; // 10 min default
+    await tx.execute(sql.raw(`SET LOCAL statement_timeout = ${statementTimeoutMs}`));
+    logger.info({ statementTimeoutMs }, "[full-backup] transaction begin (BEGIN issued, statement_timeout set)");
+
+    // See loadExternalIdSets: for a "users"-scope restore this pulls in the
+    // institutions/programs/academicYears/batches ids that already exist in
+    // this database (they're not part of this file's own data), so the
+    // sanitizeRow() calls below can actually drop a dangling
+    // institution/program/academicYear/batch pointer on a student row
+    // instead of always leaving it untouched.
+    await loadExternalIdSets(specs, idsBySpec, tx);
+
+    // Hold a write lock on every table this restore touches, for the whole
+    // transaction, acquired up front in a fixed (alphabetical) order.
+    //
+    // Real incident this fixes: a "wipe-and-restore" of mcqs succeeded at
+    // wiping and at inserting the backup's own rows (which can never
+    // collide with each other — a live database can't have had two rows
+    // sharing a primary key for the export to have captured in the first
+    // place), and STILL hit "duplicate key value violates unique constraint
+    // med_mcqs_pkey". The only way that happens: something else inserted a
+    // new row into med_mcqs on a different connection while this
+    // transaction was still open (this restore logs "well over a minute"
+    // for 30k+ rows — plenty of time for the admin panel's Add MCQ, the AI
+    // MCQ generator, or the bulk MCQ importer to run concurrently). That
+    // insert draws its id from med_mcqs_id_seq, which isn't resynced until
+    // *after* this transaction commits (see resyncSerialSequence below) —
+    // so mid-restore it can still hand out a low id that the backup is
+    // also about to insert explicitly. Whichever commits first wins; the
+    // restore's own insert of that same id then hits a real Postgres
+    // unique-constraint violation, even though everything this
+    // transaction itself did was internally consistent.
+    //
+    // EXCLUSIVE mode blocks INSERT/UPDATE/DELETE from every other session
+    // (so nothing can hand out a colliding id, or observe a half-restored
+    // table, until COMMIT) while still allowing plain SELECTs to go
+    // through — students browsing MCQs mid-restore aren't blocked. Locks
+    // are released automatically at COMMIT/ROLLBACK; acquiring them in one
+    // fixed order (alphabetical by table name) up front, rather than
+    // per-table as each is wiped, means a second restore running at the
+    // same time will always request the same tables in the same order —
+    // it blocks and waits its turn instead of risking a deadlock.
+    const lockOrder = [...specs].sort((a, b) => a.sqlName.localeCompare(b.sqlName));
+    for (const spec of lockOrder) {
+      await tx.execute(sql.raw(`LOCK TABLE ${spec.sqlName} IN EXCLUSIVE MODE`));
+    }
+
     if (mode === "wipe-and-restore") {
       // Reverse dependency order so a table is always emptied before
       // whatever it points at.
@@ -489,20 +912,70 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
         wipedFirst[spec.key] = count;
         await tx.execute(sql`delete from ${spec.table}`);
       }
+      logger.info({ wipedFirst }, "[full-backup] wipe complete, starting inserts");
     }
 
     for (const spec of specs) {
-      const rows = (file.data[spec.key] ?? []).map((row) => sanitizeRow(spec.key, row as Record<string, unknown>, idsBySpec));
+      const notNullColumns = notNullFkColumns(spec);
+      let droppedForDanglingRequiredRef = 0;
+      const rows = (file.data[spec.key] ?? []).flatMap((row) => {
+        const sanitized = sanitizeRow(spec.key, row as Record<string, unknown>, idsBySpec, notNullColumns);
+        if (sanitized === null) { droppedForDanglingRequiredRef++; return []; }
+        return [convertTimestamps(spec.key, sanitized)];
+      });
+      if (droppedForDanglingRequiredRef > 0) {
+        logger.warn(
+          { table: spec.key, dropped: droppedForDanglingRequiredRef },
+          "[full-backup] dropped row(s) with a dangling required reference (see validate warnings) — could not restore without violating a not-null constraint",
+        );
+      }
+      if (rows.length === 0) continue;
+      const tableStarted = Date.now();
+      const totalBatches = Math.ceil(rows.length / INSERT_BATCH_SIZE);
       let created = 0;
       for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
         const batch = rows.slice(i, i + INSERT_BATCH_SIZE);
         if (!batch.length) continue;
+        const batchStarted = Date.now();
         await tx.insert(spec.table).values(batch as never[]);
         created += batch.length;
+        // Per-batch, not just per-table: on a large table (mcqs, flashcards,
+        // practiceAnswers) the old per-table-only log left a multi-minute gap
+        // with no line at all, which is indistinguishable from a genuine hang
+        // from the terminal. This makes a stall visible exactly at the batch
+        // it stopped on, instead of only after the whole table would have
+        // finished.
+        logger.info(
+          { table: spec.key, batch: Math.floor(i / INSERT_BATCH_SIZE) + 1, of: totalBatches, rows: created, total: rows.length, ms: Date.now() - batchStarted },
+          "[full-backup] batch inserted",
+        );
       }
       restored[spec.key] = created;
+      logger.info({ table: spec.key, rows: created, ms: Date.now() - tableStarted }, "[full-backup] table restored");
     }
-  });
+
+    await client.query("COMMIT");
+    // Healthy commit → release with no error, so this connection returns to
+    // the pool's idle list and can be reused normally.
+    release();
+  } catch (err) {
+    // Best-effort ROLLBACK. If the connection itself is what died (the
+    // exact failure mode this whole rewrite targets), this ROLLBACK will
+    // itself throw — that's expected and fine, it's swallowed here because
+    // the outer release(err) below is what actually matters at that point.
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackErr) {
+      logger.warn({ err: rollbackErr }, "[full-backup] ROLLBACK itself failed — connection is likely already dead, discarding it");
+    }
+    // The critical line: pass the real error to release() so node-postgres
+    // destroys this client instead of returning a possibly-broken
+    // connection to the pool for some unrelated future request to draw.
+    release(err);
+    logger.error({ err, ms: Date.now() - restoreStarted }, "[full-backup] transaction rolled back — restore failed, no rows committed");
+    throw err;
+  }
+  logger.info({ ms: Date.now() - restoreStarted }, "[full-backup] transaction committed, resyncing sequences");
 
   // Sequence resync happens outside the transaction (setval isn't
   // transactional in any way that matters here, and doing it after commit
@@ -510,6 +983,7 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
   for (const spec of specs) {
     await resyncSerialSequence(spec);
   }
+  logger.info({ ms: Date.now() - restoreStarted }, "[full-backup] restore complete");
 
   return { scope: file.scope, mode, restored, wipedFirst };
 }
