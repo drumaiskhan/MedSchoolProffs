@@ -566,7 +566,7 @@ export const mcqImportApi = {
     const form = new FormData();
     form.append('file', file);
     if (profileId) form.append('profileId', String(profileId));
-    const res = await fetchOrThrow('/api/admin/mcq-import/parse', { method: 'POST', credentials: 'include', body: form });
+    const res = await fetchOrThrow(`${API_ORIGIN}/api/admin/mcq-import/parse`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not parse this file', data);
     return data;
