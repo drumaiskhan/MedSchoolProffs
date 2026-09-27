@@ -1,5 +1,5 @@
 
-name: Build Android APK
+name: Build MedSchoolProffs Android APK
 
 on:
   workflow_dispatch:
@@ -8,51 +8,75 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-android:
+    name: Build Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      # 1. Download repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Install pnpm
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
-      - name: Setup Node
+      # 3. Install Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: pnpm
 
+      # 4. Install Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      # 5. Install Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0"
 
+      # 6. Install project dependencies
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 7. Build the student frontend
       - name: Build student frontend
         env:
           VITE_API_BASE_URL: https://api.medschoolproffs.live
+          VITE_STUDENT_URL: https://medschoolproffs.live
         run: pnpm --filter ./artifacts/frontend-student build
 
-      - name: Sync Android
+      # 8. Synchronize Capacitor
+      - name: Sync Capacitor Android
         working-directory: artifacts/frontend-student
         run: pnpm exec cap sync android
 
-      - name: Build APK
+      # 9. Build Android APK
+      - name: Build debug APK
         working-directory: artifacts/frontend-student/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon assembleDebug
 
-      - name: Upload APK
+      # 10. Rename APK
+      - name: Rename APK
+        run: |
+          cp \
+            artifacts/frontend-student/android/app/build/outputs/apk/debug/app-debug.apk \
+            MedSchoolProffs.apk
+
+      # 11. Upload APK to GitHub Actions
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: MedSchoolProffs-Android
-          path: artifacts/frontend-student/android/app/build/outputs/apk/debug/app-debug.apk
+          path: MedSchoolProffs.apk
+          retention-days: 30
+          if-no-files-found: error
