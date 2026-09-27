@@ -15,10 +15,10 @@
     "cap:open:android": "npx cap open android"
   },
   "devDependencies": {
-    "@capacitor/android": "^7.4.4",
+    "@capacitor/android": "^7.6.9",
     "@capacitor/app": "^7.1.0",
-    "@capacitor/cli": "^7.4.4",
-    "@capacitor/core": "^7.4.4",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
     "@capacitor/ios": "^7.4.4",
     "@capacitor/privacy-screen": "^1.1.4",
     "@hookform/resolvers": "^3.10.0",

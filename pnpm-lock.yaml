@@ -486,16 +486,16 @@ importers:
   artifacts/frontend-student:
     devDependencies:
       '@capacitor/android':
-        specifier: ^7.4.4
+        specifier: ^7.6.9
         version: 7.6.9(@capacitor/core@7.6.9)
       '@capacitor/app':
         specifier: ^7.1.0
         version: 7.1.2(@capacitor/core@7.6.9)
       '@capacitor/cli':
-        specifier: ^7.4.4
+        specifier: ^7.6.9
         version: 7.6.9
       '@capacitor/core':
-        specifier: ^7.4.4
+        specifier: ^7.6.9
         version: 7.6.9
       '@capacitor/ios':
         specifier: ^7.4.4
