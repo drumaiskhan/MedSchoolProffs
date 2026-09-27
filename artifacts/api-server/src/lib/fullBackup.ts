@@ -199,16 +199,14 @@ function redactSettingRow(row: Record<string, unknown>): Record<string, unknown>
   return { ...row, value: REDACTED_SECRET_PLACEHOLDER };
 }
 
-// Student login credentials never leave the database they were hashed in —
-// bcrypt hashes are portable in principle, but shipping them in a backup
-// file that might get emailed, committed, or restored somewhere less
-// trusted is not a trade worth making for a convenience export. Every user
-// row keeps its id/email/profile so accounts, progress, and payments all
-// still line up after a restore; passwordHash is replaced with a
-// placeholder and every student picks up where they left off via "Forgot
-// password" (or an admin resets it) on the restored install.
+// passwordHash is kept as-is (it's already a bcrypt hash, never plaintext)
+// so a restore brings every student's account back fully usable — no
+// forced "Forgot password" flow. This function is now a pass-through, kept
+// so callers/tests that reference it don't need to change, and as the one
+// place to reintroduce redaction later if this app's threat model changes
+// (e.g. backups start being stored/shared somewhere less trusted).
 function redactUserRow(row: Record<string, unknown>): Record<string, unknown> {
-  return { ...row, passwordHash: REDACTED_SECRET_PLACEHOLDER };
+  return row;
 }
 
 export interface FullBackupFile {

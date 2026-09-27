@@ -27,10 +27,14 @@ except the 5 below, which are excluded from `full` too, on purpose:
   anything ending `_PASS`, containing `SECRET`, or the admin signup code) are exported with
   their value replaced by `"__REDACTED__"`. Reconfigure those from Admin → Platform settings
   after a restore — never carry them cross-environment via this file.
-- **User password hashes** are always replaced with `"__REDACTED__"`. Every student's account,
-  id, and activity survives a restore intact; they sign in again via "Forgot password" (or an
-  admin resets it) afterward. This also means authentication on a future MySQL build is a
-  separate concern from this backup — see "Auth note" below.
+- **User password hashes are included as-is.** `med_users.password_hash` is a bcrypt hash (the
+  app never stores or exports a plaintext password), and it's exported and restored like any
+  other column. Every student's account, id, activity, **and existing password** survive a
+  restore intact — nobody needs to use "Forgot password" just because the database was
+  restored. Treat backup files with the same care as a database dump: anyone who gets hold of
+  one has every user's password hash, so store/transmit them like you would a DB backup
+  (private storage, not emailed or committed to a public repo), and prefer `wipe-and-restore`
+  or `restore-empty` on trusted infrastructure only.
 
 ## File format
 
@@ -133,12 +137,13 @@ done.
 
 ### Auth note
 
-Student rows, ids, and all their activity migrate via this JSON. **Login credentials do not** —
-password hashes are redacted by design (see above). A MySQL build's importer needs its own plan
-for authentication: either force a password reset for every account after migration, or handle
-credential migration as a separate, explicit step outside this backup file. Nothing about how
-authentication works today (bcrypt hash in `med_users.password_hash`, JWT session cookies) was
-changed by this feature.
+Student rows, ids, all their activity, **and their login credentials** migrate via this JSON —
+`password_hash` is exported and restored like any other column, so accounts work immediately on
+the restored/migrated database with their original password. Nothing about how authentication
+works today (bcrypt hash in `med_users.password_hash`, JWT session cookies) was changed by this
+feature; the backup file is just no longer stripping that column. Because the file now carries
+real password hashes, handle it as sensitive: don't email it, don't commit it, store it
+somewhere with the same access controls as the production database itself.
 
 ### The MySQL importer (`scripts/src/mysql-restore/`)
 

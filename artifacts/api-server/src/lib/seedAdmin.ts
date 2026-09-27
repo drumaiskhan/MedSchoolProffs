@@ -24,16 +24,16 @@ const DEFAULT_ADMIN_PASSWORD = "Umaiskhan000";
  * Called after normalizeLegacyRoles(), so any legacy "superadmin" row has
  * already become "admin" by the time this checks for an existing admin.
  *
- * Restore repair: a full-backup restore brings the admin row back with its
- * passwordHash replaced by the literal string "__REDACTED__" (backups never
- * contain real password hashes — see lib/fullBackup.ts). That row does
- * count as "an admin exists", so without the check below this function
- * would return early and leave that admin permanently unable to log in —
- * on local dev and on a live deploy alike, since this runs on every boot.
- * Instead, whenever the *first* admin row found still has that placeholder,
- * this resets it back to DEFAULT_ADMIN_EMAIL/DEFAULT_ADMIN_PASSWORD (or the
- * env vars, if set) so the default admin login works again immediately
- * after a restore, wherever the app is running.
+ * Restore repair (legacy safety net): full-backup restores now carry real
+ * passwordHash values (see lib/fullBackup.ts), so a restored admin logs in
+ * with their original password and this branch normally never fires. It's
+ * kept in case an old backup file — from before passwords were included —
+ * gets restored and still has the literal string "__REDACTED__" in that
+ * column; without this check, that row would count as "an admin exists"
+ * and the app would boot with an admin permanently unable to log in. When
+ * that placeholder is found, this resets the row back to
+ * DEFAULT_ADMIN_EMAIL/DEFAULT_ADMIN_PASSWORD (or the env vars, if set) so
+ * there's still a way in.
  */
 export async function seedDefaultAdmin(): Promise<void> {
   const email = (process.env.DEFAULT_ADMIN_EMAIL || DEFAULT_ADMIN_EMAIL).toLowerCase().trim();

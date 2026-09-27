@@ -366,10 +366,21 @@ async function notifyOspeExamPublished(actorId: number, exam: typeof ospeExamsTa
 router.get("/admin/ospe/exams", requireAdmin, async (req, res): Promise<void> => {
   const examType = typeof req.query.examType === "string" ? req.query.examType : undefined;
   const rows = await db.select().from(ospeExamsTable).where(examType ? eq(ospeExamsTable.examType, examType) : undefined).orderBy(desc(ospeExamsTable.startAt));
-  const withCounts = await Promise.all(rows.map(async (exam) => {
-    const [{ value: stationCount }] = await db.select({ value: count() }).from(ospeExamStationsTable).where(eq(ospeExamStationsTable.examId, exam.id));
-    const [{ value: attemptCount }] = await db.select({ value: count() }).from(ospeExamAttemptsTable).where(eq(ospeExamAttemptsTable.examId, exam.id));
-    return { ...examView(exam), stationCount, attemptCount };
+  // Batched — same pool-exhaustion fix as getModuleCountsBatch in
+  // medschool.ts and the equivalent GET /admin/exams fix: 2 GROUP BY
+  // queries for every exam in `rows` at once instead of 2×N queries fired
+  // together via Promise.all.
+  const examIds = rows.map((r) => r.id);
+  const [stationCountRows, attemptCountRows] = examIds.length === 0 ? [[], []] : await Promise.all([
+    db.select({ examId: ospeExamStationsTable.examId, value: count() }).from(ospeExamStationsTable).where(inArray(ospeExamStationsTable.examId, examIds)).groupBy(ospeExamStationsTable.examId),
+    db.select({ examId: ospeExamAttemptsTable.examId, value: count() }).from(ospeExamAttemptsTable).where(inArray(ospeExamAttemptsTable.examId, examIds)).groupBy(ospeExamAttemptsTable.examId),
+  ]);
+  const stationCountByExam = new Map(stationCountRows.map((r) => [r.examId, r.value]));
+  const attemptCountByExam = new Map(attemptCountRows.map((r) => [r.examId, r.value]));
+  const withCounts = rows.map((exam) => ({
+    ...examView(exam),
+    stationCount: stationCountByExam.get(exam.id) ?? 0,
+    attemptCount: attemptCountByExam.get(exam.id) ?? 0,
   }));
   res.json(withCounts);
 });

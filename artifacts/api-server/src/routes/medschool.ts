@@ -86,16 +86,48 @@ const router: IRouter = Router();
 
 // Shared count helpers so module/subject cards never drift out of sync with
 // hardcoded 0s again (see section 4 of the fix notes).
-async function getModuleCounts(moduleId: number): Promise<{ subjectCount: number; topicCount: number; mcqCount: number }> {
-  // Bug fix: neither of these excluded archived (soft-deleted) subjects/
-  // topics, so a module's tile kept showing the count from before any
-  // deletes — e.g. "10 subjects" after the admin deleted down to 4. Same
-  // bug class as the GET /subjects and GET /topics list fix above, just in
-  // the separate count queries these tiles actually use.
-  const [subjectCount] = await db.select({ count: sql<number>`count(*)` }).from(subjectsTable).where(and(eq(subjectsTable.moduleId, moduleId), eq(subjectsTable.archived, false)));
-  const [topicCount] = await db.select({ count: sql<number>`count(*)` }).from(topicsTable).innerJoin(subjectsTable, eq(topicsTable.subjectId, subjectsTable.id)).where(and(eq(subjectsTable.moduleId, moduleId), eq(topicsTable.archived, false), eq(subjectsTable.archived, false)));
-  const [mcqCount] = await db.select({ count: sql<number>`count(*)` }).from(mcqsTable).where(and(eq(mcqsTable.moduleId, moduleId), eq(mcqsTable.status, "published")));
-  return { subjectCount: Number(subjectCount?.count ?? 0), topicCount: Number(topicCount?.count ?? 0), mcqCount: Number(mcqCount?.count ?? 0) };
+// Pool-exhaustion fix: this used to be called once per module inside a
+// `Promise.all(moduleRows.map(async (module) => { ...await getModuleCounts...
+// }))` at both call sites below (GET /modules and GET /student/dashboard) —
+// 3 sequential round trips per module, all fired at once. With N modules
+// that's up to 3N simultaneous connection checkouts from one request; the
+// pg Pool defaults to (and DB_POOL_MAX is commonly set to) far fewer than
+// that, so a page with even a few dozen modules could alone exhaust the
+// pool, before counting any other concurrent traffic or a long-running
+// full-backup restore holding one connection of its own for minutes (see
+// lib/fullBackup.ts). Connections past the pool's `max` queue behind
+// `connectionTimeoutMillis` (5s) and then reject — that's what surfaced as
+// modules loading with a count of 0 (or the whole list failing) under real
+// load, not a bug in the counts themselves.
+//
+// Fixed by batching: 3 GROUP BY queries total, covering every module in
+// the current list at once, regardless of how many modules that is. Same
+// result shape, same archived-subject/topic exclusion as before — just a
+// fixed, small number of round trips instead of one that scales with N.
+async function getModuleCountsBatch(moduleIds: number[]): Promise<Map<number, { subjectCount: number; topicCount: number; mcqCount: number }>> {
+  const counts = new Map<number, { subjectCount: number; topicCount: number; mcqCount: number }>();
+  for (const id of moduleIds) counts.set(id, { subjectCount: 0, topicCount: 0, mcqCount: 0 });
+  if (moduleIds.length === 0) return counts;
+
+  const [subjectRows, topicRows, mcqRows] = await Promise.all([
+    db.select({ moduleId: subjectsTable.moduleId, count: sql<number>`count(*)` })
+      .from(subjectsTable)
+      .where(and(inArray(subjectsTable.moduleId, moduleIds), eq(subjectsTable.archived, false)))
+      .groupBy(subjectsTable.moduleId),
+    db.select({ moduleId: subjectsTable.moduleId, count: sql<number>`count(*)` })
+      .from(topicsTable)
+      .innerJoin(subjectsTable, eq(topicsTable.subjectId, subjectsTable.id))
+      .where(and(inArray(subjectsTable.moduleId, moduleIds), eq(topicsTable.archived, false), eq(subjectsTable.archived, false)))
+      .groupBy(subjectsTable.moduleId),
+    db.select({ moduleId: mcqsTable.moduleId, count: sql<number>`count(*)` })
+      .from(mcqsTable)
+      .where(and(inArray(mcqsTable.moduleId, moduleIds), eq(mcqsTable.status, "published")))
+      .groupBy(mcqsTable.moduleId),
+  ]);
+  for (const row of subjectRows) if (row.moduleId != null) counts.get(row.moduleId)!.subjectCount = Number(row.count ?? 0);
+  for (const row of topicRows) if (row.moduleId != null) counts.get(row.moduleId)!.topicCount = Number(row.count ?? 0);
+  for (const row of mcqRows) if (row.moduleId != null) counts.get(row.moduleId)!.mcqCount = Number(row.count ?? 0);
+  return counts;
 }
 
 // Real hard delete (fix-notes section 1) — no DB-level FOREIGN KEY
@@ -234,16 +266,18 @@ router.get("/student/dashboard", requireAuth, async (req, res): Promise<void> =>
 
   let totalQuestions = 0;
   let totalAttemptedQuestions = 0;
-  const modules = await Promise.all(moduleRows.map(async (module) => {
-    const [subjectCount] = await db.select({ count: sql<number>`count(*)` }).from(subjectsTable).where(and(eq(subjectsTable.moduleId, module.id), eq(subjectsTable.archived, false)));
-    const [topicCount] = await db.select({ count: sql<number>`count(*)` }).from(topicsTable).innerJoin(subjectsTable, eq(topicsTable.subjectId, subjectsTable.id)).where(and(eq(subjectsTable.moduleId, module.id), eq(topicsTable.archived, false), eq(subjectsTable.archived, false)));
-    const [mcqCount] = await db.select({ count: sql<number>`count(*)` }).from(mcqsTable).where(and(eq(mcqsTable.moduleId, module.id), eq(mcqsTable.status, "published")));
-    const questions = Number(mcqCount?.count ?? 0);
+  // Batched (see getModuleCountsBatch) instead of one Promise.all round trip
+  // per module — this endpoint runs on every student login/dashboard load,
+  // so it was the single biggest contributor to pool pressure of the two
+  // call sites this pattern used to live in.
+  const moduleCounts = await getModuleCountsBatch(moduleRows.map((m) => m.id));
+  const modules = moduleRows.map((module) => {
+    const counts = moduleCounts.get(module.id)!;
     const attempted = attemptedQuestionsByModule.get(module.id)?.size ?? 0;
-    totalQuestions += questions;
+    totalQuestions += counts.mcqCount;
     totalAttemptedQuestions += attempted;
-    return { id: module.id, name: module.name, subtitle: module.subtitle, subjectCount: Number(subjectCount?.count ?? 0), topicCount: Number(topicCount?.count ?? 0), progress: questions ? Math.round((attempted / questions) * 100) : 0, active: module.active };
-  }));
+    return { id: module.id, name: module.name, subtitle: module.subtitle, subjectCount: counts.subjectCount, topicCount: counts.topicCount, progress: counts.mcqCount ? Math.round((attempted / counts.mcqCount) * 100) : 0, active: module.active };
+  });
 
   const activeMembership = membership[0];
 
@@ -606,8 +640,14 @@ router.get("/modules", requireAuth, async (req, res): Promise<void> => {
     attemptedQuestionsByModule.get(r.moduleId)!.add(r.mcqId);
   }
 
-  const withCounts = await Promise.all(rows.map(async (row) => {
-    const counts = await getModuleCounts(row.id);
+  // Batched (see getModuleCountsBatch) — this is the exact endpoint that used
+  // to fire 3 queries per module via Promise.all, which is what exhausted
+  // the connection pool under load and made the module list come back
+  // showing counts of 0 (or fail outright). Now a fixed 3 round trips no
+  // matter how many modules `rows` contains.
+  const moduleCounts = await getModuleCountsBatch(rows.map((row) => row.id));
+  const withCounts = rows.map((row) => {
+    const counts = moduleCounts.get(row.id)!;
     const attempted = attemptedQuestionsByModule.get(row.id)?.size ?? 0;
     const progress = counts.mcqCount ? Math.round((attempted / counts.mcqCount) * 100) : 0;
     return {
@@ -619,7 +659,7 @@ router.get("/modules", requireAuth, async (req, res): Promise<void> => {
       iconUrl: resolveFileUrl(row.iconPath),
       ...(isAdmin ? { programTargetKind: row.programTargetKind, yearTargetNumber: row.yearTargetNumber, targetingLabel: describeModuleTargeting(row.programTargetKind, row.yearTargetNumber) } : {}),
     };
-  }));
+  });
   res.json(withCounts);
 });
 
@@ -661,7 +701,7 @@ router.patch("/modules/:id", requireAdmin, async (req, res): Promise<void> => {
   }).where(eq(modulesTable.id, id)).returning();
   if (!module) { res.status(404).json({ error: "Module not found" }); return; }
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "MODULE_UPDATED", entity: "module", entityId: module.id });
-  const moduleCounts = await getModuleCounts(module.id);
+  const moduleCounts = (await getModuleCountsBatch([module.id])).get(module.id)!;
   res.json({ id: module.id, name: module.name, subtitle: module.subtitle, subjectCount: moduleCounts.subjectCount, topicCount: moduleCounts.topicCount, progress: 0, active: module.active, blockId: module.blockId, displayOrder: module.displayOrder, iconUrl: resolveFileUrl(module.iconPath, { transform: THUMBNAIL_TRANSFORM }), programTargetKind: module.programTargetKind, yearTargetNumber: module.yearTargetNumber, targetingLabel: describeModuleTargeting(module.programTargetKind, module.yearTargetNumber) });
 });
 
@@ -709,7 +749,8 @@ router.get("/student/practice-overview", requireAuth, async (req, res): Promise<
     visibleIds = await getVisibleModuleIds(targeting);
   }
   const moduleRows = await db.select({ id: modulesTable.id }).from(modulesTable).where(and(isAdmin ? undefined : eq(modulesTable.active, true), visibleIds ? inArray(modulesTable.id, visibleIds) : undefined));
-  const counts = await Promise.all(moduleRows.map((m) => getModuleCounts(m.id)));
+  const countsByModule = await getModuleCountsBatch(moduleRows.map((m) => m.id));
+  const counts = [...countsByModule.values()];
   const totalTopics = counts.reduce((sum, c) => sum + c.topicCount, 0);
   const totalQuestions = counts.reduce((sum, c) => sum + c.mcqCount, 0);
   const avgQuestions = moduleRows.length ? Math.round(totalQuestions / moduleRows.length) : 0;

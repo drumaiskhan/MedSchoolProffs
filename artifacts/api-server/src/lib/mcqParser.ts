@@ -61,13 +61,19 @@ export const DEFAULT_IMPORT_PATTERNS: ImportPatternSet = {
   // 5th option ("E") is recognized, not just the classic A-D.
   optionPattern: "^\\s*\\(?([A-Ea-e])\\)?[\\.\\):]\\s+(.+)$",
   // Matches "Answer: B", "Ans - C", "Correct Answer: D", "Key: A" (also E)
-  answerPattern: "^\\s*(?:Answer|Ans|Correct\\s*Answer|Key)\\s*[:\\-]\\s*\\(?([A-Ea-e])\\)?",
-  // Matches "Explanation: ...", "Rationale: ...", "Explain: ..."
-  explanationPattern: "^\\s*(?:Explanation|Rationale|Explain)\\s*[:\\-]\\s*(.+)$",
-  // Matches "Hint: ...", "Tip: ...", "Clue: ..."
-  hintPattern: "^\\s*(?:Hint|Tip|Clue)\\s*[:\\-]\\s*(.+)$",
-  // Matches "Reference: ...", "Ref: ...", "Source: ...", "Citation: ..."
-  referencePattern: "^\\s*(?:Reference|Ref|Source|Citation)\\s*[:\\-]\\s*(.+)$",
+  answerPattern: "^\\s*(?:Answer|Ans|Correct\\s*Answer|Correct\\s*Option|Correct\\s*Choice|Key)\\s*[:\\-]\\s*\\(?([A-Ea-e])\\)?",
+  // Matches "Explanation: ...", "Rationale: ...", "Explain: ..." — and also
+  // a bare "Explanation:" label with nothing after it, when the source puts
+  // the actual explanation text on the next line(s) instead of inline (the
+  // capture group is `(.*)$`, zero-or-more, not `(.+)$`). A label-only match
+  // still flips parsing into explanation/option-explanation mode so the
+  // following continuation lines get appended to the right place instead of
+  // being swallowed into the preceding option's own text.
+  explanationPattern: "^\\s*(?:Explanation|Rationale|Explain|Reason|Why|Feedback|Discussion|Teaching\\s*Point|Note)\\s*[:\\-]\\s*(.*)$",
+  // Matches "Hint: ...", "Tip: ...", "Clue: ..." (same label-only allowance as explanation, above)
+  hintPattern: "^\\s*(?:Hint|Tip|Clue|Nudge)\\s*[:\\-]\\s*(.*)$",
+  // Matches "Reference: ...", "Ref: ...", "Source: ...", "Citation: ..." (same label-only allowance)
+  referencePattern: "^\\s*(?:Reference|Ref\\.?|Source|Citation|Bibliography)\\s*[:\\-]\\s*(.*)$",
 };
 
 // A second built-in preset for sources that number their options (1./1))
@@ -81,8 +87,56 @@ export const NUMBERED_IMPORT_PATTERNS: ImportPatternSet = {
   referencePattern: DEFAULT_IMPORT_PATTERNS.referencePattern,
 };
 
+// ---------------------------------------------------------------------------
+// Fallback patterns — tried, in order, only when the admin/profile pattern
+// (or DEFAULT_IMPORT_PATTERNS/NUMBERED_IMPORT_PATTERNS) doesn't match a
+// line. These exist to auto-detect *structurally* different layouts (not
+// just label wording) so one upload doesn't require a hand-written custom
+// profile for every source's quirks: bulleted options, "Option A:"-style
+// options, bracketed options, parenthesized/word-prefixed question numbers,
+// etc. Every option-style entry keeps its capture groups in the same
+// (key, text) order as DEFAULT_IMPORT_PATTERNS.optionPattern so the call
+// site can read optMatch[1]/optMatch[2] the same way regardless of which
+// pattern actually matched. Every question-style entry keeps the question's
+// text as its LAST capture group, matching how the call site reads it
+// (qMatch[qMatch.length - 1]).
+const FALLBACK_QUESTION_PATTERNS = [
+  // "(1) text" / "(1). text"
+  "^\\s*\\(\\s*(\\d{1,3})\\s*\\)\\.?\\s*(.+)$",
+  // "Question 1:", "Que 1.", "Ques. 1 -", "Case 1:", "Item No. 1)"
+  "^\\s*(?:Question|Que|Ques|Case|Item|Vignette|Scenario)\\.?\\s*(?:No\\.?|#)?\\s*(\\d{1,3})\\s*[\\.\\):\\-–—]?\\s*(.+)$",
+  // "1/ text" or "1 - text" or "1 — text" (no dot/paren/colon delimiter, dash or slash instead)
+  "^\\s*(\\d{1,3})\\s*[\\/\\-–—]\\s+(.+)$",
+];
+
+const FALLBACK_OPTION_PATTERNS = [
+  // Bulleted options: "• A) text", "- A. text", "* A: text" — the bullet
+  // itself is the signal, so the letter's own delimiter is optional.
+  "^\\s*[-•*·‣▪◦]\\s*\\(?([A-Ea-e])\\)?[\\.\\):]?\\s+(.+)$",
+  // "Option A:", "Choice A)", "Opt A -"
+  "^\\s*(?:Option|Choice|Opt)\\.?\\s+([A-Ea-e])\\s*[\\.\\):]?\\s*[-–—]?\\s*(.+)$",
+  // Bracketed: "[A] text"
+  "^\\s*\\[([A-Ea-e])\\]\\s*(.+)$",
+  // Numbered with a bullet, same idea as the lettered bullet form above
+  "^\\s*[-•*·‣▪◦]\\s*\\(?([1-5])\\)?[\\.\\):]?\\s+(.+)$",
+];
+
 function buildRegex(pattern: string): RegExp {
   return new RegExp(pattern, "i");
+}
+
+function buildRegexList(patterns: string[]): RegExp[] {
+  return patterns.map(buildRegex);
+}
+
+// Tries each regex in order against `line`, returning the first match (or
+// null if none match). Used for the fallback pattern lists above.
+function matchAny(line: string, regexes: RegExp[]): RegExpMatchArray | null {
+  for (const re of regexes) {
+    const m = line.match(re);
+    if (m) return m;
+  }
+  return null;
 }
 
 // Inline correct-answer markers next to the option itself, instead of a
@@ -98,7 +152,13 @@ function stripInlineCorrectMarker(text: string): string {
 // Loosen "Answer" line label variants beyond what a single regex easily
 // captures (Ans., Ans -, Correct option, Correct choice, etc.), and allow
 // the key to be the full option text instead of a letter/number.
-const ANSWER_LABEL_LINE = /^\s*(?:answer|ans\.?|correct\s*answer|correct\s*option|correct\s*choice|key)\s*[:\-]\s*(.+)$/i;
+const ANSWER_LABEL_LINE = /^\s*(?:answer|ans\.?|correct\s*answer|correct\s*option|correct\s*choice|correct|key)\s*[:\-]\s*(.+)$/i;
+// A bare answer label with nothing after it on the same line ("Answer:" on
+// its own line, value given on the next line) — same idea as the
+// label-only allowance on explanation/hint/reference above, but answer
+// needs its own handling since its value isn't freeform text collected
+// into a `*Lines` array, it's resolved into a single key immediately.
+const ANSWER_LABEL_ONLY = /^\s*(?:answer|ans\.?|correct\s*answer|correct\s*option|correct\s*choice|correct|key)\s*[:\-]\s*$/i;
 const TRUE_FALSE_OPTION = /^\s*(true|false|t|f)\s*[.):]?\s*$/i;
 
 function optionLetterOrNumber(raw: string): string | null {
@@ -106,13 +166,60 @@ function optionLetterOrNumber(raw: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+// The letter/number that should come right after `lastKey` in a
+// conventional A-E / 1-5 option sequence, or null if `lastKey` is the last
+// one in its scheme (E, or 5) — meaning no further option is expected.
+function nextExpectedOptionKey(lastKey: string): string | null {
+  const letterIdx = "ABCDE".indexOf(lastKey);
+  if (letterIdx !== -1) return letterIdx + 1 < 5 ? "ABCDE"[letterIdx + 1] : null;
+  const numIdx = "12345".indexOf(lastKey);
+  if (numIdx !== -1) return numIdx + 1 < 5 ? "12345"[numIdx + 1] : null;
+  return null;
+}
+
+// Guards the broader FALLBACK_OPTION_PATTERNS (bullets, brackets,
+// "Option A:") against misreading a bullet used inside ordinary
+// explanation/hint/reference prose — e.g. "- A key point is..." — as a
+// brand-new option. Unlike the primary/numbered patterns (which require an
+// unambiguous delimiter like "A)" or "A."), a bare bullet is common enough
+// in body text that we only trust it when the letter/number is either the
+// very first option of the block, or exactly the next one expected in
+// sequence after the last option already parsed.
+function isPlausibleNextOptionKey(optionLines: { key: string }[], key: string): boolean {
+  if (optionLines.length === 0) return true;
+  if (optionLines.some((o) => o.key === key)) return false; // no repeated letters within one block
+  const last = optionLines[optionLines.length - 1].key;
+  return key === nextExpectedOptionKey(last);
+}
+
+// Shared by the inline "Answer: X" match and the label-only-then-next-line
+// case: resolves a raw answer value (a letter, a number, or the full text
+// of an option) against the options parsed so far, returning the option's
+// key ("A", "B", ...) or null if it can't be resolved.
+function resolveAnswerValue(rawValue: string, optionLines: { key: string; text: string }[]): string | null {
+  const value = rawValue.trim();
+  if (!value) return null;
+  const asKeyOrNumber = optionLetterOrNumber(value);
+  if (asKeyOrNumber) return asKeyOrNumber;
+  const normalizedValue = value.toLowerCase();
+  const matchByText = optionLines.find((o) => o.text.trim().toLowerCase() === normalizedValue);
+  if (matchByText) return matchByText.key;
+  if (/^true$/i.test(value)) return "A";
+  if (/^false$/i.test(value)) return "B";
+  return null;
+}
+
 /**
  * Splits raw extracted text into MCQ candidates. Tries the given (or
- * admin-saved) pattern set first; for option/answer lines it doesn't match,
- * it also checks a few common variants per line (numbered options, inline
- * "*"/"✓" correct markers, True/False, loosened answer labels, full-text
- * answer keys) so one parse pass auto-detects mixed/varied formats rather
- * than requiring a perfectly uniform file.
+ * admin-saved) pattern set first; for lines it doesn't match, it also
+ * checks, in order: the numbered-option/numeric-answer preset, a broad set
+ * of built-in FALLBACK_* structural variants (bulleted/bracketed/"Option A:"
+ * options, parenthesized/worded question numbers, etc.), then a handful of
+ * one-off loosenings (inline "*"/"✓" correct markers, True/False, loosened
+ * answer labels, full-text answer keys, label-only lines whose value is on
+ * the next line). One parse pass therefore auto-detects a wide range of
+ * mixed/varied source formats rather than requiring a perfectly uniform
+ * file or a hand-written custom profile for every quirk.
  */
 export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet = DEFAULT_IMPORT_PATTERNS): ParsedMcqCandidate[] {
   const primaryOptionRe = buildRegex(patterns.optionPattern);
@@ -125,6 +232,10 @@ export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet 
   // two fields (see ImportPatternSet's own comment).
   const hintRe = buildRegex(patterns.hintPattern ?? DEFAULT_IMPORT_PATTERNS.hintPattern!);
   const referenceRe = buildRegex(patterns.referencePattern ?? DEFAULT_IMPORT_PATTERNS.referencePattern!);
+  // Structural fallbacks — compiled once per call, tried only when none of
+  // the admin/profile/numbered patterns above match a line.
+  const fallbackQuestionRes = buildRegexList(FALLBACK_QUESTION_PATTERNS);
+  const fallbackOptionRes = buildRegexList(FALLBACK_OPTION_PATTERNS);
 
   const lines = rawText.replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 
@@ -136,11 +247,14 @@ export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet 
   // above it (per-option format), so continuation lines should keep
   // appending to THAT option's explanation rather than to a whole-block
   // explanation or the option's own text. "hint" and "reference" are their
-  // own whole-block modes, same shape as "explanation".
-  let mode: "question" | "option" | "option-explanation" | "explanation" | "hint" | "reference" = "question";
+  // own whole-block modes, same shape as "explanation". "answer-pending"
+  // means a bare "Answer:" label (no value on the same line) was just seen
+  // — the next non-structural line is consumed as that answer's value
+  // instead of being appended anywhere as free text.
+  let mode: "question" | "option" | "option-explanation" | "explanation" | "hint" | "reference" | "answer-pending" = "question";
 
   for (const line of lines) {
-    const qMatch = line.match(questionRe);
+    const qMatch = line.match(questionRe) ?? matchAny(line, fallbackQuestionRes);
     if (qMatch) {
       if (current) blocks.push(current);
       current = { questionLines: [qMatch[qMatch.length - 1] ?? line], optionLines: [], answerKey: null, explanationLines: [], hintLines: [], referenceLines: [], raw: [line] };
@@ -150,10 +264,21 @@ export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet 
     if (!current) continue; // ignore preamble text before the first recognized question
     current.raw.push(line);
 
-    // Try the configured option pattern first, then fall back to the
-    // numbered-option preset — lets one parse pass auto-detect either
-    // lettered ("A)") or numbered ("1)") option styles per block.
-    const optMatch = line.match(primaryOptionRe) ?? line.match(numberedOptionRe);
+    // Try the configured option pattern first, then the numbered-option
+    // preset, then the broader structural fallbacks (bullets, "Option A:",
+    // brackets, ...) — lets one parse pass auto-detect many option styles
+    // per block instead of just lettered ("A)") or numbered ("1)"). The
+    // fallback match is additionally required to be a plausible next
+    // option (see isPlausibleNextOptionKey) since its patterns (especially
+    // the bare-bullet ones) are loose enough to otherwise catch a bullet
+    // point inside ordinary explanation/hint prose.
+    let optMatch = line.match(primaryOptionRe) ?? line.match(numberedOptionRe);
+    if (!optMatch) {
+      const fallbackMatch = matchAny(line, fallbackOptionRes);
+      if (fallbackMatch && isPlausibleNextOptionKey(current.optionLines, fallbackMatch[1].toUpperCase())) {
+        optMatch = fallbackMatch;
+      }
+    }
     if (optMatch) {
       const inlineCorrect = hasInlineCorrectMarker(line);
       const text = stripInlineCorrectMarker(optMatch[2]);
@@ -175,6 +300,16 @@ export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet 
       continue;
     }
 
+    // A bare "Answer:" label with a value waiting on the line(s) below —
+    // resolved as soon as we see the next real content line (below).
+    if (ANSWER_LABEL_ONLY.test(line)) { mode = "answer-pending"; continue; }
+    if (mode === "answer-pending") {
+      const resolved = resolveAnswerValue(line, current.optionLines);
+      if (resolved) current.answerKey = resolved;
+      mode = "explanation";
+      continue;
+    }
+
     const ansMatch = line.match(answerRe) ?? line.match(numberedAnswerRe);
     if (ansMatch) {
       current.answerKey = ansMatch[1].toUpperCase();
@@ -185,19 +320,8 @@ export function extractMcqsFromText(rawText: string, patterns: ImportPatternSet 
     // pattern above might miss, and full-option-text answer keys).
     const looseAns = line.match(ANSWER_LABEL_LINE);
     if (looseAns) {
-      const value = looseAns[1].trim();
-      const asKeyOrNumber = optionLetterOrNumber(value);
-      if (asKeyOrNumber) {
-        current.answerKey = asKeyOrNumber;
-      } else {
-        // Full option text given as the answer — resolve by comparing
-        // (case-insensitively, trimmed) against parsed option text.
-        const normalizedValue = value.toLowerCase();
-        const matchByText = current.optionLines.find((o) => o.text.trim().toLowerCase() === normalizedValue);
-        if (matchByText) current.answerKey = matchByText.key;
-        else if (/^true$/i.test(value)) current.answerKey = "A";
-        else if (/^false$/i.test(value)) current.answerKey = "B";
-      }
+      const resolved = resolveAnswerValue(looseAns[1], current.optionLines);
+      if (resolved) current.answerKey = resolved;
       mode = "explanation";
       continue;
     }

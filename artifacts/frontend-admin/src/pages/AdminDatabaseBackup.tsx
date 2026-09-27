@@ -30,7 +30,7 @@ import { toast } from '@/hooks/use-toast';
 const SCOPES: Array<{ scope: FullBackupScope; title: string; description: string; icon: typeof Database }> = [
   { scope: 'full', title: 'Full Database Backup', description: 'Everything in one portable JSON file — platform content and student data together (50 of the app\'s 55 tables; the other 5 are live sessions, one-time tokens, raw webhook events, and the audit log, none of which a restore needs). This is the file to use for a complete migration to a new empty PostgreSQL/Supabase database.', icon: Archive },
   { scope: 'content', title: 'Platform content', description: 'Colleges, courses, modules, subjects, topics, MCQs, flashcards, books, past papers, exams, OSPE/OSCE, team, plans, coupons, MCQ import profiles, and platform settings (secrets redacted). No student accounts or activity.', icon: Database },
-  { scope: 'users', title: 'Student data', description: 'Every student account and their activity — payments, memberships, progress, attempts, notebook, flags, feedback, notifications. Password hashes are never included; students sign in again with "Forgot password" after a restore.', icon: Users },
+  { scope: 'users', title: 'Student data', description: 'Every student account and their activity — payments, memberships, progress, attempts, notebook, flags, feedback, notifications. Password hashes are included, so students can sign in with their existing password right after a restore.', icon: Users },
 ];
 
 function BackupCard({ scope, title, description, icon: Icon, onImported }: { scope: FullBackupScope; title: string; description: string; icon: typeof Database; onImported: (r: FullBackupRestoreResult) => void }) {

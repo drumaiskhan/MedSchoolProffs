@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db, examsTable, examQuestionsTable, examAttemptsTable, examAnswersTable, mcqsTable, usersTable, auditLogsTable } from "@workspace/db";
 import { requireAuth, requireAdmin, requireMembershipFor, isAdminRole } from "../middlewares/auth";
@@ -48,10 +48,24 @@ async function notifyExamPublished(actorId: number, exam: typeof examsTable.$inf
 
 router.get("/admin/exams", requireAdmin, async (_req, res): Promise<void> => {
   const rows = await db.select().from(examsTable).orderBy(desc(examsTable.startAt));
-  const withCounts = await Promise.all(rows.map(async (exam) => {
-    const [{ value: questionCount }] = await db.select({ value: count() }).from(examQuestionsTable).where(eq(examQuestionsTable.examId, exam.id));
-    const [{ value: attemptCount }] = await db.select({ value: count() }).from(examAttemptsTable).where(eq(examAttemptsTable.examId, exam.id));
-    return { ...exam, negativeMarkPerWrong: Number(exam.negativeMarkPerWrong), passingPercent: exam.passingPercent ? Number(exam.passingPercent) : null, questionCount, attemptCount };
+  // Batched instead of a Promise.all round trip per exam — same
+  // pool-exhaustion fix as getModuleCountsBatch in medschool.ts: 2 GROUP BY
+  // queries covering every exam at once, instead of 2×N queries fired
+  // simultaneously (N = number of exams) that scale with the exam list and
+  // can exhaust the shared pg Pool under load.
+  const examIds = rows.map((r) => r.id);
+  const [questionCountRows, attemptCountRows] = examIds.length === 0 ? [[], []] : await Promise.all([
+    db.select({ examId: examQuestionsTable.examId, value: count() }).from(examQuestionsTable).where(inArray(examQuestionsTable.examId, examIds)).groupBy(examQuestionsTable.examId),
+    db.select({ examId: examAttemptsTable.examId, value: count() }).from(examAttemptsTable).where(inArray(examAttemptsTable.examId, examIds)).groupBy(examAttemptsTable.examId),
+  ]);
+  const questionCountByExam = new Map(questionCountRows.map((r) => [r.examId, r.value]));
+  const attemptCountByExam = new Map(attemptCountRows.map((r) => [r.examId, r.value]));
+  const withCounts = rows.map((exam) => ({
+    ...exam,
+    negativeMarkPerWrong: Number(exam.negativeMarkPerWrong),
+    passingPercent: exam.passingPercent ? Number(exam.passingPercent) : null,
+    questionCount: questionCountByExam.get(exam.id) ?? 0,
+    attemptCount: attemptCountByExam.get(exam.id) ?? 0,
   }));
   res.json(withCounts);
 });
