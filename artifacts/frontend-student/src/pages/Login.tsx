@@ -54,6 +54,7 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // queries that didn't specify anything.
 import { AuthLayout, BrandSpinner } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
+import { isNativeApp, setNativeAuthToken } from '@/lib/native-auth';
 
 function Login() {
   const [, setLocation] = useLocation();
@@ -63,7 +64,19 @@ function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const login = useMutation({
     mutationFn: authApi.login,
-    onSuccess: (res) => { queryClient.invalidateQueries(); setLocation('/dashboard'); },
+    onSuccess: async (res) => {
+      // Native app: the WebView can't be trusted to keep the session cookie,
+      // so persist the bearer token BEFORE anything else runs — it is then
+      // immediately available to both API clients (see lib/native-auth.ts).
+      // Browser: cookie-based exactly as before, nothing stored.
+      if (isNativeApp()) {
+        try { await setNativeAuthToken(res.token); }
+        catch (err) { console.warn('Could not persist native auth token:', err); }
+      }
+      const refreshed = queryClient.invalidateQueries();
+      if (isNativeApp()) await refreshed;
+      setLocation('/dashboard');
+    },
     onError: (err: unknown, vars) => {
       setResendDone(false);
       if (err instanceof ApiRequestError) {

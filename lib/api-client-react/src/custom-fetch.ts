@@ -44,6 +44,18 @@ export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
 }
 
+// True only inside a Capacitor native shell. Read from the global that
+// Capacitor's runtime injects (window.Capacitor) so this shared library does
+// not depend on @capacitor/core; in any browser it is false or absent.
+function isNativeCapacitor(): boolean {
+  const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  try {
+    return cap?.isNativePlatform?.() === true;
+  } catch {
+    return false;
+  }
+}
+
 function isRequest(input: RequestInfo | URL): input is Request {
   return typeof Request !== "undefined" && input instanceof Request;
 }
@@ -368,9 +380,16 @@ export async function customFetch<T = unknown>(
   // though login had just succeeded. "include" sends the cookie cross-origin
   // (the API already answers with Access-Control-Allow-Credentials: true and a
   // specific allowed origin). A caller can still override it via options.
+  //
+  // Native Capacitor app: when a bearer-token getter is configured the token
+  // is the credential, and WebView cookies are unreliable (and a stale one
+  // would take precedence over the token server-side), so send none.
+  // Browsers never configure a getter, so they keep "include".
+  const defaultCredentials: RequestCredentials =
+    _authTokenGetter && isNativeCapacitor() ? "omit" : "include";
   const response = await fetch(input, {
     ...init,
-    credentials: init.credentials ?? "include",
+    credentials: init.credentials ?? defaultCredentials,
     method,
     headers,
   });

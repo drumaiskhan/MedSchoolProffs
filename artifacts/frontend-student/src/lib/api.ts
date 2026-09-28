@@ -8,6 +8,8 @@
 // on Vercel/Netlify, backend on Railway/Render) need VITE_API_BASE_URL set
 // to the backend's origin (e.g. https://your-api.up.railway.app — no /api
 // suffix; it's added automatically, matching setBaseUrl() in main.tsx).
+import { isNativeApp, getNativeAuthToken, peekNativeAuthToken } from '@/lib/native-auth';
+
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
 const API_BASE = `${API_ORIGIN}/api`;
 
@@ -32,12 +34,34 @@ export class ApiRequestError extends Error {
   }
 }
 
+// Native (Capacitor) builds authenticate with the stored bearer token; the
+// browser keeps using the HttpOnly session cookie. The backend reads the
+// cookie before the Authorization header, so native requests also skip
+// cookies — a stale WebView cookie must never shadow the valid token.
+async function authInit(): Promise<{ credentials: RequestCredentials; authHeaders: Record<string, string> }> {
+  if (!isNativeApp()) return { credentials: 'include', authHeaders: {} };
+  const token = await getNativeAuthToken();
+  return { credentials: 'omit', authHeaders: token ? { Authorization: `Bearer ${token}` } : {} };
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
+  // Browser: the original call, untouched (cookie auth). Native: same call
+  // plus the bearer token and no cookies.
+  let res: Response;
+  if (!isNativeApp()) {
+    res = await fetch(`${API_BASE}${path}`, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options,
+    });
+  } else {
+    const { credentials, authHeaders } = await authInit();
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials,
+      headers: { 'Content-Type': 'application/json', ...authHeaders, ...(options.headers || {}) },
+    });
+  }
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const data = isJson ? await res.json().catch(() => null) : null;
   if (!res.ok) {
@@ -202,7 +226,8 @@ export const booksApi = {
   // Fetched with the session cookie and drawn straight onto a <canvas>; no
   // object URL is kept, so there's nothing to "save image as".
   pageImage: async (id: number, page: number, width: number): Promise<Blob> => {
-    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials: 'include', cache: 'no-store' });
+    const { credentials, authHeaders } = await authInit();
+    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials, headers: authHeaders, cache: 'no-store' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || `Request failed (${res.status})`, data);
@@ -220,7 +245,10 @@ export const booksApi = {
   // before its 1.2s timer fires. Fire-and-forget on purpose: there's no tab
   // left to show an error to.
   saveProgressOnExit: (id: number, page: number): void => {
-    try { void fetch(`${API_BASE}/books/${id}/progress`, { method: 'PUT', credentials: 'include', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page }) }); } catch { /* best effort */ }
+    try {
+      const token = peekNativeAuthToken();
+      void fetch(`${API_BASE}/books/${id}/progress`, { method: 'PUT', credentials: isNativeApp() ? 'omit' : 'include', keepalive: true, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ page }) });
+    } catch { /* best effort */ }
   },
   list: () => request<AdminBookStudent[]>('/books'),
   purchase: (bookId: number, body: { method: string; reference: string; paymentDate: string; proofPath?: string | null }) => request<BookPurchase>(`/books/${bookId}/purchases`, { method: 'POST', body: JSON.stringify(body) }),
@@ -369,7 +397,8 @@ export const mcqImportApi = {
     const form = new FormData();
     form.append('file', file);
     if (profileId) form.append('profileId', String(profileId));
-    const res = await fetch(`${API_ORIGIN}/api/admin/mcq-import/parse`, { method: 'POST', credentials: 'include', body: form });
+    const { credentials, authHeaders } = await authInit();
+    const res = await fetch(`${API_ORIGIN}/api/admin/mcq-import/parse`, { method: 'POST', credentials, headers: authHeaders, body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not parse this file', data);
     return data;
@@ -475,7 +504,8 @@ export const auditApi = {
 export async function uploadFile(file: File, kind: 'payment-proof' | 'payment-proof-signup' | 'profile-picture' | 'resource' | 'favicon'): Promise<{ storagePath: string; url: string | null }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials: 'include', body: form });
+  const { credentials, authHeaders } = await authInit();
+  const res = await fetch(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials, headers: authHeaders, body: form });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Upload failed', data);
   return data;

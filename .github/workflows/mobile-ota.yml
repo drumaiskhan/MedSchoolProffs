@@ -1,0 +1,80 @@
+name: Mobile OTA
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "artifacts/frontend-student/**"
+      - "lib/**"
+      - "pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/mobile-ota.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: mobile-ota
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build student frontend
+        env:
+          VITE_API_BASE_URL: https://api.medschoolproffs.live
+          VITE_STUDENT_URL: https://medschoolproffs.live
+        run: pnpm --filter @workspace/frontend-student build
+
+      - name: Create OTA bundle
+        shell: bash
+        run: |
+          mkdir -p ota/mobile-ota
+
+          cd artifacts/frontend-student/dist/public
+          zip -r ../../../../ota/mobile-ota/latest.zip .
+          cd ../../../..
+
+          BUNDLE_ID="${GITHUB_SHA}"
+          CHECKSUM=$(sha256sum ota/mobile-ota/latest.zip | awk '{print $1}')
+
+          cat > ota/mobile-ota/version.json <<EOF
+          {
+            "bundleId": "${BUNDLE_ID}",
+            "url": "https://drumaiskhan.github.io/MedSchoolProffs/mobile-ota/latest.zip",
+            "checksum": "${CHECKSUM}"
+          }
+          EOF
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ota
+
+      - name: Deploy Pages
+        uses: actions/deploy-pages@v4

@@ -8,6 +8,7 @@ import './index.css';
 import './profile3d.css';
 import { initFx } from '@/lib/fx';
 import { initializeGithubLiveUpdate } from '@/lib/github-live-update';
+import { initNativeAuth, isNativeApp } from '@/lib/native-auth';
 
 // v43: stamps <html data-fx="full|lite"> before first paint (see lib/fx.ts).
 initFx();
@@ -21,13 +22,23 @@ if (import.meta.env.VITE_API_BASE_URL) {
   setBaseUrl(import.meta.env.VITE_API_BASE_URL);
 }
 
-createRoot(document.getElementById('root')!, {
-  // Keeps caught errors off reportError(), which would raise the dev overlay.
-  onCaughtError: (error, errorInfo) => {
-    console.error(error, errorInfo.componentStack);
-  },
-}).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>,
-);
+async function bootstrap() {
+  // Native app only: restore the saved bearer token and register it with the
+  // generated API client BEFORE first render, so the first /auth/me already
+  // carries it (no false 401). On the web this branch is skipped entirely, so
+  // rendering stays synchronous and cookie-only.
+  if (isNativeApp()) await initNativeAuth();
+
+  createRoot(document.getElementById('root')!, {
+    // Keeps caught errors off reportError(), which would raise the dev overlay.
+    onCaughtError: (error, errorInfo) => {
+      console.error(error, errorInfo.componentStack);
+    },
+  }).render(
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>,
+  );
+}
+
+void bootstrap();

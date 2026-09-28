@@ -19,6 +19,7 @@ import { applyThemeVars } from '@/lib/theme';
 import { Aurora, AuthShowcase } from '@/lib/landing-visuals';
 import { SubjectIcon, resolveSubjectIcon } from '@/lib/subject-icons';
 import { queryClient } from '@/lib/query-client';
+import { isNativeApp, clearNativeAuthToken } from '@/lib/native-auth';
 import { SidebarNav, SidebarProfile, type SidebarGroup } from '@/components/nav/SidebarNav';
 import {
   getListMembershipPlansQueryKey, getListPaymentsQueryKey, getListMcqsQueryKey, getListModulesQueryKey, getListStudentsQueryKey, getListNotificationsQueryKey, getGetCurrentUserQueryKey,
@@ -281,7 +282,19 @@ export function SideNav({ user, onClose }: { user: User; onClose: () => void }) 
   };
   const notifQ = useListNotifications();
   const unreadCount = (notifQ.data ?? []).filter((n) => !n.read).length;
-  const logout = useMutation({ mutationFn: authApi.logout, onSuccess: () => { queryClient.clear(); window.location.href = '/login'; } });
+  // Browser: unchanged — the backend clears the HttpOnly cookie.
+  // Native app: call the backend while the bearer token still exists, then
+  // always drop the local token (even if the network call failed, so the
+  // user is never stuck "signed in" with a token the server may have revoked).
+  const finishLogout = () => { queryClient.clear(); window.location.href = '/login'; };
+  const logout = useMutation({
+    mutationFn: async () => {
+      if (!isNativeApp()) return authApi.logout();
+      try { await authApi.logout(); } finally { await clearNativeAuthToken(); }
+    },
+    onSuccess: finishLogout,
+    onError: () => { if (isNativeApp()) finishLogout(); },
+  });
   const navView: SidebarGroup[] = groups.map((group) => ({
     label: group.label,
     items: group.items.map(([href, label, Icon]) => ({

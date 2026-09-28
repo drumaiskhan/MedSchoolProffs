@@ -21,6 +21,7 @@
     "@capacitor/cli": "^7.6.9",
     "@capacitor/core": "^7.6.9",
     "@capacitor/ios": "^7.4.4",
+    "@capacitor/preferences": "^7.0.4",
     "@capacitor/privacy-screen": "^1.1.4",
     "@hookform/resolvers": "^3.10.0",
     "@radix-ui/react-accordion": "^1.2.4",
