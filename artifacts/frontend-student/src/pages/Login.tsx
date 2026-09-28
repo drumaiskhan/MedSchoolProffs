@@ -1,5 +1,245 @@
+// Auto-extracted route page — code-split via React.lazy() in App.tsx.
+import {
+  type ReactNode,
+  type ComponentProps,
+  type TouchEvent,
+  useState,
+  useEffect,
+  useRef,
+  createContext,
+  useContext,
+} from 'react';
+
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+
+import {
+  Link,
+  Route,
+  Switch,
+  useLocation,
+  useParams,
+  useSearch,
+  Router as WouterRouter,
+} from 'wouter';
+
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  CreditCard,
+  FileText,
+  Flame,
+  FolderOpen,
+  LayoutDashboard,
+  Library,
+  LockKeyhole,
+  LogOut,
+  Menu,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  ReceiptText,
+  Search,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  Stethoscope,
+  Target,
+  Trash2,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Users,
+  X,
+  Zap,
+  Bell,
+  SlidersHorizontal,
+  FileStack,
+  NotebookPen,
+  Bookmark,
+  Flag,
+  Trophy,
+  MessageSquare,
+  Landmark,
+  Copy,
+  QrCode,
+  User as UserIcon,
+  Mail,
+  Phone,
+  Hash,
+  GraduationCap,
+  Eye,
+  EyeOff,
+  Smartphone,
+  UploadCloud,
+  ImageOff,
+  RotateCcw,
+  ThumbsUp,
+  ThumbsDown,
+  CheckCheck,
+  ClipboardCheck,
+  AlertTriangle,
+  Link2 as LinkIcon,
+  Lightbulb,
+  LayoutGrid,
+  Presentation,
+  Wand2,
+  Crown,
+  Globe,
+  Star,
+  Activity,
+} from 'lucide-react';
+
+import { applyThemeVars } from '@/lib/theme';
+
+import {
+  getListMembershipPlansQueryKey,
+  getListPaymentsQueryKey,
+  getListMcqsQueryKey,
+  getListModulesQueryKey,
+  getListStudentsQueryKey,
+  getListNotificationsQueryKey,
+  getGetCurrentUserQueryKey,
+  useApprovePayment,
+  useCreateMembershipPlan,
+  useCreateMcq,
+  useCreateModule,
+  useGetAdminDashboard,
+  useGetCurrentUser,
+  useGetStudentDashboard,
+  useListFlashcards,
+  useListMembershipPlans,
+  useListMcqs,
+  useListModules,
+  useListNotifications,
+  useListPayments,
+  useListResources,
+  useListStudents,
+  useListSubjects,
+  useListTopics,
+  useRejectPayment,
+  useSubmitPayment,
+  useUpdateMembershipPlan,
+} from '@workspace/api-client-react';
+
+import type {
+  AdminDashboard,
+  Flashcard,
+  Mcq,
+  MembershipPlan,
+  Module,
+  Notification,
+  Payment,
+  Resource,
+  Student,
+  Subject,
+  Topic,
+  User,
+} from '@workspace/api-client-react';
+
+import { ErrorBoundary } from '@/components/error-boundary';
+import { Toaster } from '@/components/ui/toaster';
+import { toast } from '@/hooks/use-toast';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import NotFound from '@/pages/not-found';
+
+import {
+  authApi,
+  academicApi,
+  settingsApi,
+  uploadFile,
+  resolveUploadUrl,
+  ApiRequestError,
+  publicApi,
+  pastPapersApi,
+  notebookApi,
+  savedSessionsApi,
+  flaggedMcqsApi,
+  feedbackApi,
+  type MyFeedbackEntry,
+  analyticsApi,
+  type ProgressTrend,
+  mcqImportApi,
+  studentsAdminApi,
+  paymentsAdminApi,
+  membershipPlansAdminApi,
+  mcqAdminApi,
+  notificationsApi,
+  siteContentApi,
+  teamApi,
+  moduleAdminApi,
+  blocksApi,
+  type Block,
+  examsAdminApi,
+  examsApi,
+  explanationsApi,
+  booksApi,
+  type AdminBookStudent,
+  DEFAULT_IMPORT_PATTERNS,
+  STUDENT_STATUSES,
+  type Institution,
+  type Program,
+  type AcademicYear,
+  type Batch,
+  type PastPaper,
+  type NotebookEntry,
+  type SavedSession,
+  type FlaggedMcq,
+  type FeedbackEntry,
+  type McqCandidate,
+  type StudentDetail,
+  type SiteContent,
+  type TeamMember,
+  TEAM_CATEGORIES,
+  TEAM_CATEGORY_LABELS,
+  type AdminModule,
+  type AdminExam,
+  type StudentExam,
+  type ExamAttemptRow,
+  type ExamStartResponse,
+  type ExamResult,
+  type Exam,
+  type ExplanationStatus,
+  type PaymentDetails,
+  type PaymentMethodConfig,
+  aiVisualizerApi,
+  type VisualizationSpec,
+  LeaderboardRow,
+} from '@/lib/api';
+
+import {
+  VisualizationRenderer,
+  isStepBased,
+} from '@/components/visualizer/VisualizationRenderer';
+
+import { StepControls } from '@/components/visualizer/StepControls';
+import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
+
+import { AuthLayout, BrandSpinner } from '@/lib/shared';
+import { queryClient } from '@/lib/query-client';
+
+// Android/Capacitor authentication.
+// This is a no-op on the normal website.
+import {
+  isNativeApp,
+  setNativeAuthToken,
+} from '@/lib/native-auth';
+
 function Login() {
   const [, setLocation] = useLocation();
+
   const [error, setError] = useState<string | null>(null);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resendDone, setResendDone] = useState(false);
@@ -9,12 +249,8 @@ function Login() {
     mutationFn: authApi.login,
 
     onSuccess: async (res) => {
-      // Native Android app:
-      // Persist the bearer token before navigating so subsequent API
-      // requests can authenticate even if the WebView does not retain cookies.
-      //
-      // Browser:
-      // Continue using the existing cookie-based authentication.
+      // Android/iOS Capacitor app:
+      // Save the token returned by the login endpoint before navigating.
       if (isNativeApp()) {
         try {
           await setNativeAuthToken(res.token);
@@ -23,11 +259,8 @@ function Login() {
         }
       }
 
-      const refreshed = queryClient.invalidateQueries();
-
-      if (isNativeApp()) {
-        await refreshed;
-      }
+      // Refresh authenticated queries after authentication is available.
+      await queryClient.invalidateQueries();
 
       setLocation('/dashboard');
     },
@@ -44,29 +277,22 @@ function Login() {
           code === 'EMAIL_NOT_VERIFIED' ? vars.email : null
         );
       } else {
-        // Diagnostic behavior:
-        // Show the real Android/native/network error instead of hiding it
-        // behind "Something went wrong".
-        setError(
-          err instanceof Error
-            ? `${err.name}: ${err.message}`
-            : String(err)
-        );
-
+        setError('Something went wrong. Please try again.');
         setUnverifiedEmail(null);
       }
     },
   });
 
   const resend = useMutation({
-    mutationFn: (email: string) => authApi.resendVerification(email),
+    mutationFn: (email: string) =>
+      authApi.resendVerification(email),
+
     onSuccess: () => setResendDone(true),
   });
 
   return (
     <AuthLayout>
       <div className="w-full">
-
         <div className="font-mono-app text-[10px] uppercase tracking-[.16em] text-primary">
           Welcome back
         </div>
@@ -95,12 +321,10 @@ function Login() {
           }}
           className="mt-8 space-y-4"
         >
-
           <label className="block text-xs font-bold">
             Email
 
             <div className="relative mt-2">
-
               <Mail
                 size={15}
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground"
@@ -115,7 +339,6 @@ function Login() {
                 className="h-12 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
                 data-testid="input-login-email"
               />
-
             </div>
           </label>
 
@@ -123,7 +346,6 @@ function Login() {
             Password
 
             <div className="relative mt-2">
-
               <LockKeyhole
                 size={15}
                 className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground"
@@ -152,12 +374,10 @@ function Login() {
                   <Eye size={15} />
                 )}
               </button>
-
             </div>
           </label>
 
           <div className="flex justify-end">
-
             <Link
               href="/forgot-password"
               className="text-xs font-bold text-primary hover:underline"
@@ -165,7 +385,6 @@ function Login() {
             >
               Forgot password?
             </Link>
-
           </div>
 
           {error && (
@@ -173,12 +392,10 @@ function Login() {
               className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive"
               data-testid="text-login-error"
             >
-
               {error}
 
               {unverifiedEmail && (
                 <div className="mt-2">
-
                   {resendDone ? (
                     <span className="font-bold text-primary">
                       Verification email sent — check your inbox.
@@ -186,7 +403,9 @@ function Login() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => resend.mutate(unverifiedEmail)}
+                      onClick={() =>
+                        resend.mutate(unverifiedEmail)
+                      }
                       disabled={resend.isPending}
                       className="font-bold text-primary underline disabled:opacity-50"
                       data-testid="button-resend-verification"
@@ -196,10 +415,8 @@ function Login() {
                         : 'Resend verification email'}
                     </button>
                   )}
-
                 </div>
               )}
-
             </div>
           )}
 
@@ -208,17 +425,17 @@ function Login() {
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-xs font-extrabold text-primary-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
             data-testid="button-login-submit"
           >
+            {login.isPending && (
+              <BrandSpinner size={14} />
+            )}
 
-            {login.isPending && <BrandSpinner size={14} />}
-
-            {login.isPending ? 'Signing in…' : 'Sign in'}
-
+            {login.isPending
+              ? 'Signing in…'
+              : 'Sign in'}
           </button>
-
         </form>
 
         <p className="mt-7 text-center text-xs text-muted-foreground">
-
           New to the desk?{' '}
 
           <Link
@@ -228,10 +445,10 @@ function Login() {
           >
             Create a student account
           </Link>
-
         </p>
-
       </div>
     </AuthLayout>
   );
 }
+
+export default Login;
