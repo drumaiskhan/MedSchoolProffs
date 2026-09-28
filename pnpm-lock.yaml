@@ -484,6 +484,10 @@ importers:
         version: 4.4.3
 
   artifacts/frontend-student:
+    dependencies:
+      '@capawesome/capacitor-live-update':
+        specifier: ^7.5.2
+        version: 7.5.2(@capacitor/core@7.6.9)
     devDependencies:
       '@capacitor/android':
         specifier: ^7.6.9
@@ -1065,6 +1069,11 @@ packages:
 
   '@capacitor/privacy-screen@1.1.4':
     resolution: {integrity: sha512-/bwBOmhXgkXdLJEYsUDwc3rbo6iJF2CoQsg0epkjiBKUpoN0wmGJ52t5A8GdDpvgNJc9YatPDXN2piDH7xKR7g==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capawesome/capacitor-live-update@7.5.2':
+    resolution: {integrity: sha512-Y5LR8o1ZNmIpX1Av2t3nZ4NfC4k8gPaZX2Fn0FacScfJBMPnrG6RNuFg403J5mOoxC6cg9fiY+QDqPkx0jBQGA==}
     peerDependencies:
       '@capacitor/core': '>=7.0.0'
 
@@ -4775,6 +4784,10 @@ snapshots:
       '@capacitor/core': 7.6.9
 
   '@capacitor/privacy-screen@1.1.4(@capacitor/core@7.6.9)':
+    dependencies:
+      '@capacitor/core': 7.6.9
+
+  '@capawesome/capacitor-live-update@7.5.2(@capacitor/core@7.6.9)':
     dependencies:
       '@capacitor/core': 7.6.9
 
