@@ -45,34 +45,71 @@ async function authInit(): Promise<{ credentials: RequestCredentials; authHeader
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  // Browser: the original call, untouched (cookie auth). Native: same call
-  // plus the bearer token and no cookies.
   let res: Response;
+
   if (!isNativeApp()) {
     res = await fetch(`${API_BASE}${path}`, {
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
       ...options,
     });
   } else {
     const { credentials, authHeaders } = await authInit();
-    res = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      credentials,
-      headers: { 'Content-Type': 'application/json', ...authHeaders, ...(options.headers || {}) },
-    });
+    const requestUrl = `${API_BASE}${path}`;
+
+    try {
+      res = await fetch(requestUrl, {
+        ...options,
+        credentials,
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+          ...(options.headers || {}),
+        },
+      });
+    } catch (error) {
+      const reason =
+        error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+
+      console.error('Native API fetch failed:', {
+        requestUrl,
+        origin: window.location.origin,
+        path,
+        reason,
+      });
+
+      throw new Error(
+        `Native fetch failed: ${requestUrl} | origin=${window.location.origin} | ${reason}`
+      );
+    }
   }
+
   const isJson = res.headers.get('content-type')?.includes('application/json');
-  const data = isJson ? await res.json().catch(() => null) : null;
+
+  const data = isJson
+    ? await res.json().catch(() => null)
+    : null;
+
   if (!res.ok) {
-    // A non-JSON error body on a 502/503/504 means the request never made
-    // it to our API at all — it was killed by a proxy/gateway in front of
-    // it (e.g. a slow AI generation call outliving the reverse-proxy
-    // timeout). "Request failed (504)" is technically true but useless to
-    // a student staring at a spinner; this is the actionable version.
-    const gatewayMessage = !isJson && [502, 503, 504].includes(res.status) ? 'This is taking longer than expected. Try again — if it keeps happening, try a shorter or simpler request.' : null;
-    throw new ApiRequestError(res.status, (data && (data.error || data.message)) || gatewayMessage || `Request failed (${res.status})`, data);
+    const gatewayMessage =
+      !isJson && [502, 503, 504].includes(res.status)
+        ? 'This is taking longer than expected. Try again — if it keeps happening, try a shorter or simpler request.'
+        : null;
+
+    throw new ApiRequestError(
+      res.status,
+      (data && (data.error || data.message)) ||
+        gatewayMessage ||
+        `Request failed (${res.status})`,
+      data
+    );
   }
+
   return data as T;
 }
 
