@@ -249,8 +249,8 @@ function Login() {
     mutationFn: authApi.login,
 
     onSuccess: async (res) => {
-      // Android/iOS Capacitor app:
-      // Save the token returned by the login endpoint before navigating.
+      // Native Android/iOS app:
+      // persist the JWT before loading authenticated pages.
       if (isNativeApp()) {
         try {
           await setNativeAuthToken(res.token);
@@ -259,7 +259,6 @@ function Login() {
         }
       }
 
-      // Refresh authenticated queries after authentication is available.
       await queryClient.invalidateQueries();
 
       setLocation('/dashboard');
@@ -274,10 +273,21 @@ function Login() {
         const code = (err.data as { code?: string } | null)?.code;
 
         setUnverifiedEmail(
-          code === 'EMAIL_NOT_VERIFIED' ? vars.email : null
+          code === 'EMAIL_NOT_VERIFIED'
+            ? vars.email
+            : null
         );
       } else {
-        setError('Something went wrong. Please try again.');
+        // Temporarily expose the real Android/network/runtime error
+        // instead of hiding it behind the generic message.
+        const message =
+          err instanceof Error
+            ? `${err.name}: ${err.message}`
+            : `Unknown login error: ${String(err)}`;
+
+        console.error('Login failed:', err);
+
+        setError(message);
         setUnverifiedEmail(null);
       }
     },
@@ -308,7 +318,6 @@ function Login() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-
             setError(null);
             setUnverifiedEmail(null);
 
@@ -364,7 +373,9 @@ function Login() {
               <button
                 type="button"
                 tabIndex={-1}
-                onClick={() => setShowPassword((v) => !v)}
+                onClick={() =>
+                  setShowPassword((v) => !v)
+                }
                 className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                 data-testid="button-toggle-login-password"
               >
