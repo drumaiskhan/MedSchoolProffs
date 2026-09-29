@@ -1049,6 +1049,20 @@ export function analyzeMcqRows(rows: AdminMcqRow[]) {
   return { total: rows.length, easy, moderate, hard, explained };
 }
 
+// Mixes the order of the questions in a scope (block / module / subject / topic).
+export function useShuffleSequence(rows: AdminMcqRow[], label: string) {
+  return useMutation({
+    mutationFn: () => mcqAdminApi.shuffleSequence(rows.map((r) => r.id)),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-mcqs-tree'] });
+      queryClient.invalidateQueries({ queryKey: getListMcqsQueryKey() });
+      toast({ title: `Mixed the sequence of ${res.shuffled} questions in "${label}"` });
+    },
+    onError: (err: unknown) => toast({ title: 'Could not shuffle the sequence', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
+  });
+}
+const SEQ_BTN = 'inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50';
+
 export function AnalysisPanel({ rows, label, filters }: { rows: AdminMcqRow[]; label: string; filters: { moduleId?: number; subjectId?: number; topicId?: number; pastPaperId?: number } }) {
   const a = analyzeMcqRows(rows);
   // AI re-classification calls the model per question. The server still
@@ -1130,6 +1144,7 @@ export function AnalysisPanel({ rows, label, filters }: { rows: AdminMcqRow[]; l
     },
     onError: (err: unknown) => toast({ title: 'Could not shuffle options', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
   });
+  const shuffleSeq = useShuffleSequence(rows, label);
   if (!a.total) return <p className="text-[11px] text-muted-foreground">No questions here yet to analyze.</p>;
   return <div>
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1142,6 +1157,7 @@ export function AnalysisPanel({ rows, label, filters }: { rows: AdminMcqRow[]; l
       <button type="button" disabled={classify.isPending} onClick={(e) => { e.stopPropagation(); classify.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-classify-difficulty" title={`Re-runs AI difficulty classification on every question in "${label}" (${a.total} total) — one click, processed in the background in small batches`}>{classify.isPending ? 'Classifying…' : <><Wand2 size={12} /> AI: classify difficulty (all {a.total})</>}</button>
       <button type="button" disabled={generateOptionExplanations.isPending} onClick={(e) => { e.stopPropagation(); generateOptionExplanations.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-generate-option-explanations" title={`Generates per-option explanations for every question in "${label}" that's missing them — one click, processed in the background in small batches`}>{generateOptionExplanations.isPending ? 'Generating…' : <><Wand2 size={12} /> AI: generate option explanations (all)</>}</button>
       <button type="button" disabled={shuffle.isPending} onClick={(e) => { e.stopPropagation(); shuffle.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-shuffle-options" title="Randomly reorders every question's options in this scope, so the correct answer isn't always the same letter — the correct option moves with its text, it stays correct wherever it lands">{shuffle.isPending ? 'Shuffling…' : <><Shuffle size={12} /> Shuffle option order (all {a.total})</>}</button>
+      <button type="button" disabled={shuffleSeq.isPending || rows.length < 2} onClick={(e) => { e.stopPropagation(); shuffleSeq.mutate(); }} className={SEQ_BTN} data-testid="button-shuffle-sequence" title={`Mixes the order of all ${rows.length} questions in "${label}" so they no longer appear grouped by import.`}><Shuffle size={12} /> {shuffleSeq.isPending ? 'Mixing…' : 'Shuffle MCQ sequence'}</button>
     </div>
   </div>;
 }
@@ -1253,11 +1269,13 @@ export function PublishDraftsButton({ moduleId, draftCount }: { moduleId: number
 // not a whole block's worth of modules at once; classify from the module
 // row below instead).
 
-export function BlockAnalysisToggle({ rows }: { rows: AdminMcqRow[] }) {
+export function BlockAnalysisToggle({ rows, label = 'this block' }: { rows: AdminMcqRow[]; label?: string }) {
   const [open, setOpen] = useState(false);
+  const shuffleSeq = useShuffleSequence(rows, label);
   return <>
     <button type="button" onClick={() => setOpen((v) => !v)} className={cn('rounded-lg p-1', open ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted')} data-testid="button-toggle-block-analysis" aria-label="Analyze this block"><BarChart3 size={13} /></button>
-    {open && <div className="w-full basis-full pt-1"><AnalysisStats rows={rows} /></div>}
+    {open && <div className="w-full basis-full pt-1"><AnalysisStats rows={rows} />
+      <div className="mt-2"><button type="button" disabled={shuffleSeq.isPending || rows.length < 2} onClick={() => shuffleSeq.mutate()} className={SEQ_BTN} data-testid="button-shuffle-sequence-block" title={`Mixes the order of all ${rows.length} questions across this block's modules.`}><Shuffle size={12} /> {shuffleSeq.isPending ? 'Mixing…' : 'Shuffle MCQ sequence'}</button></div></div>}
   </>;
 }
 
@@ -1535,7 +1553,7 @@ export function McqTreeYearGroup({ programLabel, yearLabel, groups, showBlockLab
     </button>
     {open && <div className="space-y-5 border-t border-border p-4">
       {groups.map((g) => { const blockRows = rows.filter((r) => r.moduleId != null && g.mods.some((m) => m.id === r.moduleId)); return <div key={g.key} className="space-y-3">
-        {showBlockLabel && <div className="flex flex-wrap items-center justify-between gap-1"><p className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground" data-testid={`text-mcq-block-group-${g.key}`}>{g.name}</p>{!!blockRows.length && <BlockAnalysisToggle rows={blockRows} />}</div>}
+        {showBlockLabel && <div className="flex flex-wrap items-center justify-between gap-1"><p className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground" data-testid={`text-mcq-block-group-${g.key}`}>{g.name}</p>{!!blockRows.length && <BlockAnalysisToggle rows={blockRows} label={g.name} />}</div>}
         {g.mods.map((m) => <McqTreeModule key={m.id} moduleId={m.id} name={m.name} mcqCount={countByModule.get(m.id) ?? 0} mcqsByTopic={mcqsByTopic} selectedIds={selectedIds} onToggleSelect={onToggleSelect} />)}
       </div>; })}
     </div>}

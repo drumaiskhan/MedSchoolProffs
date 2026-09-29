@@ -537,6 +537,9 @@ export const mcqAdminApi = {
   // without touching which option is marked correct. Fixes banks (e.g.
   // bulk-imported from an AI generator) where the correct answer is
   // always the same letter.
+  // Mixes the order of the questions themselves (POST /admin/mcqs/shuffle-sequence).
+  shuffleSequence: (ids: number[]) =>
+    request<{ ok: true; shuffled: number }>('/admin/mcqs/shuffle-sequence', { method: 'POST', body: JSON.stringify({ ids }) }),
   shuffleOptions: (body: { ids: number[] } | { all: true; filters?: { search?: string; moduleId?: number; subjectId?: number; topicId?: number; difficulty?: string; pastPaperId?: number } }) =>
     request<{ ok: true; shuffled: number; skipped: number }>('/admin/mcqs/shuffle-options', { method: 'POST', body: JSON.stringify(body) }),
   // "AI Fix All" (Content Quality Center): rewrites the second question in
