@@ -62,6 +62,54 @@ export function generateOtp(): { code: string; hash: string } {
 }
 
 export const SESSION_COOKIE_NAME = "medschool_session";
+export const ADMIN_SESSION_COOKIE_NAME = "medschool_admin_session";
+
+// The admin site and the student site both call this one API host, so a single
+// cookie name meant logging into one app (e.g. registering a test student)
+// silently replaced the other app's session. Each app now gets its own cookie.
+// The calling app is identified from the request's Origin (falling back to
+// Referer for plain navigations/downloads): an origin listed in ADMIN_APP_URL
+// (comma-separated, e.g. https://admin.medschoolproffs.live) — or, when that
+// env var is unset, any host whose name starts with "admin." — is the admin app.
+// Anything else (including no Origin/Referer at all) is treated as "unknown".
+function requestOriginHost(req: import("express").Request): { origin: string; host: string } | null {
+  const raw = (req.headers.origin as string | undefined) || (req.headers.referer as string | undefined);
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return { origin: u.origin, host: u.hostname };
+  } catch {
+    return null;
+  }
+}
+
+export function isAdminAppRequest(req: import("express").Request): boolean {
+  const o = requestOriginHost(req);
+  if (!o) return false;
+  const configured = (process.env.ADMIN_APP_URL || "").split(",").map((v) => v.trim().replace(/\/$/, "")).filter(Boolean);
+  if (configured.length > 0) return configured.includes(o.origin);
+  return o.host.startsWith("admin.");
+}
+
+/** True when the request clearly comes from a browser page that is NOT the admin app. */
+function isKnownStudentAppRequest(req: import("express").Request): boolean {
+  return requestOriginHost(req) !== null && !isAdminAppRequest(req);
+}
+
+/** The cookie name this request's app should use for reading, setting and clearing its session. */
+export function sessionCookieNameFor(req: import("express").Request): string {
+  return isAdminAppRequest(req) ? ADMIN_SESSION_COOKIE_NAME : SESSION_COOKIE_NAME;
+}
+
+/** The session cookie value for this request's app. A request with no Origin/Referer
+ * (e.g. typing an API URL into the address bar) can't be attributed to an app, so
+ * it accepts either cookie. */
+export function readSessionCookie(req: import("express").Request): string | null {
+  const cookies = req.cookies ?? {};
+  if (isAdminAppRequest(req)) return cookies[ADMIN_SESSION_COOKIE_NAME] || null;
+  if (isKnownStudentAppRequest(req)) return cookies[SESSION_COOKIE_NAME] || null;
+  return cookies[SESSION_COOKIE_NAME] || cookies[ADMIN_SESSION_COOKIE_NAME] || null;
+}
 
 // This deployment is always split-domain: the frontend(s) run on Netlify
 // and the API server runs on a separate host (Railway/Render). Cross-site

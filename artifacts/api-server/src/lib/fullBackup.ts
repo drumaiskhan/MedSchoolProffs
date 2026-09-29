@@ -225,7 +225,11 @@ export async function buildFullBackup(scope: BackupScopeName): Promise<FullBacku
   const counts: Record<string, number> = {};
   for (const spec of specs) {
     const rows = (await db.select().from(spec.table)) as Record<string, unknown>[];
-    const cleaned = spec.redactSettingSecrets
+    // A "full" backup is the disaster-recovery copy: it keeps saved provider
+    // keys/secrets exactly as stored so a restore brings the platform back
+    // as it was, with nothing to re-enter. That makes the FILE sensitive —
+    // treat it like a password. The shareable "content" scope still redacts.
+    const cleaned = spec.redactSettingSecrets && scope !== "full"
       ? rows.map(redactSettingRow)
       : spec.key === "users"
         ? rows.map(redactUserRow)
@@ -911,6 +915,16 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
       await tx.execute(sql.raw(`LOCK TABLE ${spec.sqlName} IN EXCLUSIVE MODE`));
     }
 
+    // If the backup carries "__REDACTED__" for a secret setting (a "content"
+    // scope backup, or one made by an older version), keep whatever real
+    // value this database already has instead of overwriting it with the
+    // placeholder. Must be read BEFORE the wipe below deletes those rows.
+    const existingSettings = new Map<string, string>();
+    if (specs.some((sp) => sp.key === "platformSettings")) {
+      const current = (await tx.execute(sql.raw(`select key, value from med_platform_settings`))).rows as Array<{ key: string; value: string }>;
+      for (const r of current) if (r.value && r.value !== REDACTED_SECRET_PLACEHOLDER) existingSettings.set(r.key, r.value);
+    }
+
     if (mode === "wipe-and-restore") {
       // Reverse dependency order so a table is always emptied before
       // whatever it points at.
@@ -928,6 +942,12 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
       const rows = (file.data[spec.key] ?? []).flatMap((row) => {
         const sanitized = sanitizeRow(spec.key, row as Record<string, unknown>, idsBySpec, notNullColumns);
         if (sanitized === null) { droppedForDanglingRequiredRef++; return []; }
+        if (spec.key === "platformSettings") {
+          const r = sanitized as { key?: unknown; value?: unknown };
+          if (r.value === REDACTED_SECRET_PLACEHOLDER && typeof r.key === "string" && existingSettings.has(r.key)) {
+            return [convertTimestamps(spec.key, { ...sanitized, value: existingSettings.get(r.key) })];
+          }
+        }
         return [convertTimestamps(spec.key, sanitized)];
       });
       if (droppedForDanglingRequiredRef > 0) {

@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
-import { SESSION_COOKIE_NAME, verifySession } from "../lib/auth";
+import { readSessionCookie, verifySession } from "../lib/auth";
 import { banIfTrialExpired, trialGrantsAccess, type TrialFeature } from "../lib/trial";
 import { isSessionActive } from "../lib/deviceSessions";
 
@@ -30,7 +30,7 @@ export function isAdminRole(role: string): boolean {
 }
 
 function extractToken(req: Request): string | null {
-  const cookieToken = req.cookies?.[SESSION_COOKIE_NAME];
+  const cookieToken = readSessionCookie(req);
   if (cookieToken) return cookieToken;
   const header = req.headers.authorization;
   if (header?.startsWith("Bearer ")) return header.slice("Bearer ".length);
@@ -51,7 +51,7 @@ function debugAuth(req: Request, reason: string, extra?: Record<string, unknown>
 /** Populates req.user when a valid session is present, but never rejects the request. */
 export async function attachUser(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const hasCookieHeader = Boolean(req.headers.cookie);
-  const cookieToken = req.cookies?.[SESSION_COOKIE_NAME];
+  const cookieToken = readSessionCookie(req);
   const token = extractToken(req);
 
   if (!token) {

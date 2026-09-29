@@ -175,6 +175,16 @@ export async function studentIsTrialOnly(userId: number, feature: TrialFeature |
     .where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.status, "ACTIVE"), eq(membershipsTable.isTrial, false), gt(membershipsTable.expiresAt, new Date())))
     .limit(1);
   if (paidActive) return false;
+  // A per-student trial (POST /students/:id/trial) is an ACTIVE membership row
+  // with isTrial = true. It must count as trial-only too — before this, only
+  // General Trial Mode did, so students granted an individual trial were
+  // never capped whenever General Trial Mode was off.
+  const [studentTrial] = await db
+    .select({ id: membershipsTable.id })
+    .from(membershipsTable)
+    .where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.status, "ACTIVE"), eq(membershipsTable.isTrial, true), gt(membershipsTable.expiresAt, new Date())))
+    .limit(1);
+  if (studentTrial) return true;
   return trialGrantsAccess(userId, feature);
 }
 

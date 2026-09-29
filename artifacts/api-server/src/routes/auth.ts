@@ -23,7 +23,8 @@ import {
   generateOtp,
   hashToken,
   verifySession,
-  SESSION_COOKIE_NAME,
+  readSessionCookie,
+  sessionCookieNameFor,
   sessionCookieOptions,
 } from "../lib/auth";
 import { createDeviceSession, DeviceLimitError, revokeAllForUser, revokeByTokenId } from "../lib/deviceSessions";
@@ -91,7 +92,7 @@ async function userPublicView(user: typeof usersTable.$inferSelect) {
 
 /** The session id (`sid`) carried by the request's cookie/bearer token, if it verifies. */
 function requestSession(req: import("express").Request): { sid: string | null; userId: number | null } {
-  const raw = req.cookies?.[SESSION_COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+  const raw = readSessionCookie(req) || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
   const payload = raw ? verifySession(raw) : null;
   return { sid: payload?.sid ?? null, userId: payload?.sub ?? null };
 }
@@ -112,7 +113,7 @@ async function setSessionCookie(req: import("express").Request, res: import("exp
     passwordChangedAt: Math.floor(user.passwordChangedAt.getTime() / 1000),
     sid,
   });
-  res.cookie(SESSION_COOKIE_NAME, token, sessionCookieOptions);
+  res.cookie(sessionCookieNameFor(req), token, sessionCookieOptions);
   return token;
 }
 
@@ -427,7 +428,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
 router.post("/auth/logout", async (req, res): Promise<void> => {
   const { sid } = requestSession(req);
   if (sid) await revokeByTokenId(sid).catch(() => undefined);
-  res.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
+  res.clearCookie(sessionCookieNameFor(req), { ...sessionCookieOptions, maxAge: undefined });
   res.status(204).send();
 });
 
