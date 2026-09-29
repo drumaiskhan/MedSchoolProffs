@@ -1,0 +1,59 @@
+/* ===========================================================================
+   PERFORMANCE LAYER — imported LAST (main.tsx) so it wins over every effect
+   defined earlier. Unlayered on purpose: unlayered rules beat @layer rules.
+
+   Why the student app felt laggy on phones:
+   • blurred orbs (filter: blur 34–60px) that also animate forever
+   • backdrop-filter on the sticky header, tab bar, cards, dialogs — the GPU
+     re-blurs the pixels behind them on EVERY scroll frame
+   • ~25 infinite decorative animations (shimmer, shine sweeps, floaty orbs,
+     drop-shadow flames) that keep the compositor busy while idle
+   • hover lifts / brightness that "stick" after a tap on touch screens
+
+   Everything below is scoped to html[data-fx="lite"], which phones/tablets get
+   by default (lib/fx.ts). Desktop keeps the full look. `?fx=full` / `?fx=lite`
+   in the URL flips it manually and is remembered.
+   =========================================================================== */
+
+/* ---- 1. Touch screens never "hover": no lift/brighten that sticks after a tap ---- */
+@media (hover: none) {
+  .card-lift:hover, .btn-pop:hover:not(:disabled) { transform: none; filter: none; }
+  button:hover:not(:disabled) { filter: none; }
+}
+
+/* ---- 2. Lite mode ---- */
+
+/* 2a. Blur is the single most expensive thing on a phone GPU. */
+html[data-fx="lite"] :is(.orb, .pf-orb) { display: none; }
+html[data-fx="lite"] :is(.dash-hero__orb, .dash-hero__ring, .crown-float, .flame, .pf-chip) { filter: none; }
+html[data-fx="lite"] [class*="backdrop-blur"]:not([data-testid^="veil"]),
+html[data-fx="lite"] :is(.glass-card, .dash-eyebrow--glass, .dash-streak, .cp-scrim, .bk-stats > div, .bk-corner, .bk-chip, .pf-chip) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* The frosted header/tab bar lose their blur, so make them a touch more opaque instead. */
+html[data-fx="lite"] .student-header { background-color: hsl(var(--background) / .97); }
+html[data-fx="lite"] .tabbar-dock { background-color: hsl(var(--card)); }
+
+/* 2b. Endless decorative animation off (state changes / progress still animate). */
+html[data-fx="lite"] :is(
+  .float-slow, .float-med, .float-fast, .text-shimmer, .pulse-dot, .crown-float, .flame, .flame-core, .streak-alert,
+  .dash-hero__glyph, .dash-hero__orb, .dash-hero__ring, .dash-feed__dot.is-unread, .pf-avatar
+) { animation: none !important; }
+html[data-fx="lite"] :is(.shine-btn, .podium-front, .dash-meter__fill, .pf-avatar)::after { animation: none !important; }
+
+/* 2c. Skeletons: sliding a gradient repaints every skeleton every frame. Pulse opacity instead (compositor only). */
+html[data-fx="lite"] .skeleton { background: hsl(var(--muted)); animation: perfPulse 1.4s ease-in-out infinite; }
+@keyframes perfPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* 2d. Page + card entrance: quick opacity fade only (no per-card staggered rises to lay out while data loads). */
+html[data-fx="lite"] .page-enter { animation: perfFade .16s ease backwards; }
+@keyframes perfFade { from { opacity: 0; } to { opacity: 1; } }
+html[data-fx="lite"] :is(.dash > *, .dash-tile, .dash-row, .dash-feed__item, .dash-range-tile, .dash-coin, .dash-bar-col__bar, .tab-key svg, .dash-flash) { animation: none !important; }
+
+/* 2e. No transition bookkeeping on cards (there is no hover on touch anyway). */
+html[data-fx="lite"] .card-lift { transition: none; }
+
+/* ---- 3. Free win for every device ---- */
+/* Taps respond instantly (no 300 ms double-tap-zoom wait on phones). */
+a, button, [role="button"], label, select, summary { touch-action: manipulation; }
