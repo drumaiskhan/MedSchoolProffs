@@ -163,3 +163,21 @@ p { text-wrap: pretty; }
 /* Resume pill on the hero: guaranteed solid fill in BOTH modes (stronger
    selector so nothing else can turn it see-through). */
 .dash-hero .dash-key.dash-key--light { background: linear-gradient(180deg, #ffffff, #E8FBF7); color: #12294A; box-shadow: 0 3px 0 hsl(0 0% 0% / .3), 0 12px 20px -10px hsl(0 0% 0% / .6), inset 0 1px 0 #fff; }
+
+/* ---- Dark mode: Practice setup page ---------------------------------------
+   The header panel used light Tailwind gradient stops (indigo-50 / blue-50)
+   that dark-compat.css didn't cover, leaving a pale slab with faint text. */
+.dark .from-indigo-50 { --tw-gradient-from: hsl(230 42% 19%); }
+.dark .via-indigo-50 { --tw-gradient-via: hsl(226 40% 16%); }
+.dark .to-blue-50 { --tw-gradient-to: hsl(214 46% 15%); }
+.dark .text-blue-600 { color: hsl(213 92% 72%); }
+.dark .text-blue-500 { color: hsl(213 92% 70%); }
+.dark .text-green-600 { color: hsl(145 65% 60%); }
+.dark .text-amber-500 { color: hsl(38 95% 64%); }
+.dark .text-red-500 { color: hsl(2 90% 70%); }
+.dark .text-indigo-400 { color: hsl(232 90% 78%); }
+.dark .hover\:border-blue-300:hover { border-color: hsl(213 70% 55%); }
+/* Option tiles (difficulty / question count / timer): visible resting state */
+.dark .student-shell button.card-lift.border.bg-card:not(:disabled):not(.border-2) { background: hsl(var(--secondary) / .55); border-color: hsl(var(--border) / 1); }
+.dark .student-shell button.card-lift.border-2.border-blue-500 { border-color: hsl(213 92% 62%); box-shadow: 0 0 0 3px hsl(213 92% 62% / .18), 0 10px 22px -12px hsl(213 92% 62% / .6); }
+.dark .student-shell button.card-lift.border.bg-card:disabled { opacity: .4; }

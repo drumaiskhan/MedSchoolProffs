@@ -421,14 +421,14 @@ function Practice() {
             <button
               onClick={startSession}
               disabled={effectiveCount === 0}
-              className="flex items-center justify-center gap-2 rounded-full bg-[#0f1e3d] px-8 py-3.5 text-xs font-extrabold text-white shadow-sm transition-transform active:scale-[0.99] disabled:opacity-40"
+              className="dash-key !rounded-full !px-8 !py-3.5 !text-xs disabled:opacity-40 disabled:hover:translate-y-0"
               data-testid="button-start-session"
-            ><Play size={13} className="fill-white" /> Start Test {pendingMode === 'timed' ? `(${effectiveMinutes} min)` : ''}</button>
+            ><Play size={13} fill="currentColor" /> Start Test {pendingMode === 'timed' ? `(${effectiveMinutes} min)` : ''}</button>
           </div>
           <button
             onClick={() => saveSession.mutate({ name: `Practice — ${new Date().toLocaleDateString()}`, config: { topicId, pastPaperId } })}
             disabled={saveSession.isPending}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="card-lift mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
             data-testid="button-save-session"
           ><Bookmark size={14} /> {saveSession.isPending ? 'Saving…' : 'Save this filter for later'}</button>
         </div>
