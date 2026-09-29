@@ -135,3 +135,31 @@ p { text-wrap: pretty; }
   .page-enter, .student-shell [role="dialog"] { animation: none !important; }
   html { scroll-behavior: auto; }
 }
+
+/* Fix: the sheen rule above replaces `background-image`, which wiped the
+   gradient that gave .dash-key its fill — leaving white text on nothing
+   (invisible "Resume" button). Give these buttons a real solid fill. */
+.dash-key:not(.dash-key--light), .d3-key { background-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.dash-key--light { background-color: hsl(var(--primary-foreground)); color: hsl(var(--primary)); }
+
+/* ---- Dark mode: dashboard hero (navy > indigo, teal + violet glows) ------
+   Tokens are re-scoped inside the hero so every rule that reads --primary /
+   --primary-foreground follows: deep surface, light text, light Resume pill. */
+.dark .dash-hero {
+  --primary: 210 62% 22%;
+  --primary-foreground: 210 30% 97%;
+  --edge-color: hsl(222 55% 10%);
+  --hero-deep: hsl(232 44% 22%);
+  background: linear-gradient(155deg, #0E2A38 0%, #12294A 55%, #1C2456 100%);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .1), 0 24px 40px -24px hsl(0 0% 0% / .8);
+  border: 1px solid hsl(0 0% 100% / .1);
+}
+.dark .dash-hero__orb--a { background: radial-gradient(closest-side, rgba(45,217,196,.32), transparent); filter: none; }
+.dark .dash-hero__orb--b { background: radial-gradient(closest-side, rgba(167,139,250,.22), transparent); }
+.dark .dash-hero__ring { border-color: hsl(0 0% 100% / .05); }
+.dark .dash-hero .dash-key--light { background-color: #E8FBF7; background-image: none; color: #12294A; box-shadow: 0 3px 0 hsl(0 0% 0% / .35), 0 12px 20px -10px hsl(0 0% 0% / .7); }
+.dark .dash-hero .dash-streak { background: hsl(0 0% 100% / .07); border-color: hsl(0 0% 100% / .14); }
+
+/* Resume pill on the hero: guaranteed solid fill in BOTH modes (stronger
+   selector so nothing else can turn it see-through). */
+.dash-hero .dash-key.dash-key--light { background: linear-gradient(180deg, #ffffff, #E8FBF7); color: #12294A; box-shadow: 0 3px 0 hsl(0 0% 0% / .3), 0 12px 20px -10px hsl(0 0% 0% / .6), inset 0 1px 0 #fff; }
