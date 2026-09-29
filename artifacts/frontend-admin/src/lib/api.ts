@@ -145,6 +145,7 @@ export interface StudentSummary { id: number; name: string; email: string; insti
 export interface StudentDetail {
   id: number; name: string; email: string; phone: string | null; rollNumber: string | null; status: string; statusMessage: string | null; emailVerified: boolean;
   institution: string | null; program: string | null; academicYear: string | null; batch: string | null;
+  institutionId?: number | null; programKind?: 'MBBS' | 'BDS' | null; yearNumber?: number | null;
   currentStreak: number; longestStreak: number; lastLoginAt: string | null; joinedAt: string;
   payments: PaymentRow[]; activeMembership: { expiresAt: string; isTrial: boolean } | null;
 }
@@ -459,7 +460,7 @@ export const examsApi = {
 export const studentsAdminApi = {
   detail: (id: number) => request<StudentDetail>(`/students/${id}`),
   challenges: (id: number) => request<{ sent: StudentChallengeRow[]; received: StudentChallengeRow[] }>(`/students/${id}/challenges`),
-  update: (id: number, body: Partial<{ name: string; phone: string; rollNumber: string }>) => request<{ ok: true }>(`/students/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  update: (id: number, body: Partial<{ name: string; email: string; phone: string; rollNumber: string; institutionId: number; programKind: 'MBBS' | 'BDS'; yearNumber: number }>) => request<{ ok: true }>(`/students/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   updateStatus: (id: number, status: string, emailVerified?: boolean, message?: string) => request<{ ok: true; status: string; emailVerified: boolean; statusMessage: string | null }>(`/students/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, ...(emailVerified !== undefined ? { emailVerified } : {}), ...(message !== undefined ? { message } : {}) }) }),
   verifyEmail: (id: number) => request<{ ok: true; status: string; emailVerified: boolean }>(`/students/${id}/verify-email`, { method: 'POST' }),
   startTrial: (id: number, durationDays: number) => request<{ ok: true; expiresAt: string }>(`/students/${id}/trial`, { method: 'POST', body: JSON.stringify({ durationDays }) }),

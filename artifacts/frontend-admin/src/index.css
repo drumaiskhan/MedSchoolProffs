@@ -206,3 +206,103 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   .admin-shell .card-lift:hover { transform: none; }
   .page-enter, .btn-pop, button { animation: none !important; transition: none !important; }
 }
+
+/* ===========================================================================
+   Modern layer (admin redesign) — loaded last so it refines the depth layer
+   above: flatter, calmer surfaces with hairline borders and soft shadows,
+   solid primary buttons, clean inputs, and a phone-first responsive pass.
+   Everything is driven by the theme variables, so Design & Branding colours
+   still apply. Scoped to .admin-shell so the sign-in pages are untouched.
+   =========================================================================== */
+:root {
+  --radius: .85rem;
+  --soft-1: 0 1px 2px hsl(215 30% 15% / .05), 0 1px 1px hsl(215 30% 15% / .03);
+  --soft-2: 0 4px 12px -2px hsl(215 30% 15% / .08), 0 2px 4px hsl(215 30% 15% / .04);
+  --soft-3: 0 12px 28px -8px hsl(215 30% 15% / .14), 0 4px 8px hsl(215 30% 15% / .05);
+}
+.dark {
+  --soft-1: 0 1px 2px hsl(0 0% 0% / .4);
+  --soft-2: 0 4px 12px -2px hsl(0 0% 0% / .45);
+  --soft-3: 0 12px 28px -8px hsl(0 0% 0% / .55);
+}
+
+@layer components {
+  /* calm background instead of the tilted ambient glow */
+  .admin-shell {
+    background-image: radial-gradient(52rem 26rem at 8% -10%, hsl(var(--primary) / .05), transparent 65%);
+    background-attachment: fixed;
+  }
+  .admin-content { perspective: none; }
+
+  /* flat, bordered cards with a soft shadow (no gradient / inner bevel / 3D tilt) */
+  .admin-shell [class~="bg-card"][class*="rounded-"]:not([class*="fixed"]):not([class*="absolute"]):not(input):not(select):not(button) {
+    background-image: none;
+    box-shadow: var(--soft-1);
+    border-color: hsl(var(--border));
+  }
+  .admin-shell .card-lift { transform-style: flat; will-change: auto; }
+  .admin-shell .card-lift:hover { transform: translateY(-2px); box-shadow: var(--soft-3); border-color: hsl(var(--primary) / .35); }
+
+  /* solid, confident primary buttons */
+  .admin-shell button[class~="bg-primary"]:not(:disabled), .admin-shell a[class~="bg-primary"] {
+    background-image: none;
+    box-shadow: 0 1px 2px hsl(var(--primary) / .35), 0 4px 10px -4px hsl(var(--primary) / .45);
+  }
+  .admin-shell button[class~="bg-primary"]:hover:not(:disabled) { box-shadow: 0 2px 4px hsl(var(--primary) / .35), 0 8px 16px -6px hsl(var(--primary) / .5); }
+  .admin-shell button[class~="bg-primary"]:active:not(:disabled) { box-shadow: 0 1px 2px hsl(var(--primary) / .3); }
+
+  /* clean inputs: crisp border, soft focus ring (no inset bevel) */
+  .admin-shell input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), .admin-shell textarea, .admin-shell select {
+    box-shadow: none;
+    border-color: hsl(var(--input));
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .admin-shell input:focus-visible, .admin-shell textarea:focus-visible, .admin-shell select:focus-visible {
+    box-shadow: 0 0 0 3px hsl(var(--primary) / .16);
+    border-color: hsl(var(--primary) / .6);
+    outline: none;
+  }
+
+  /* flatter sidebar (no sheen) */
+  .admin-shell aside { background-image: none; box-shadow: none; }
+  @media (max-width: 767px) { .admin-shell aside { box-shadow: var(--soft-3); } }
+
+  /* tables: calmer header, tighter rows */
+  .admin-shell table thead th { font-weight: 700; letter-spacing: .08em; }
+  .admin-shell table tbody tr:hover { background-color: hsl(var(--muted) / .45); }
+
+  /* page-level section headings a touch tighter */
+  .admin-shell h2 { text-wrap: balance; }
+}
+
+/* Phone-first pass ---------------------------------------------------------- */
+@media (max-width: 767px) {
+  html, body { overflow-x: hidden; }
+  .admin-main { max-width: 100vw; overflow-x: clip; }
+
+  /* 16px form text stops iOS Safari zooming the page when a field is focused */
+  .admin-shell input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+  .admin-shell textarea, .admin-shell select { font-size: 16px !important; }
+
+  /* comfortable tap targets for text buttons and selects */
+  .admin-shell button:not(.grid):not([class*="size-"]), .admin-shell select { min-height: 40px; }
+  .admin-shell input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]) { min-height: 40px; }
+
+  /* every table scrolls sideways inside its own box instead of stretching the page */
+  .admin-content :where(table) { min-width: 640px; }
+  .admin-content :where(div):has(> table) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* side drawers (student profile etc.) go full-width; dialogs get breathing room */
+  .admin-shell .max-w-xl.fixed, .admin-shell [class*="max-w-xl"][class*="h-full"] { max-width: 100vw; }
+  .admin-shell [role="dialog"] { max-width: calc(100vw - 1.5rem); max-height: 90dvh; overflow-y: auto; }
+
+  /* headings and long words never force horizontal scroll */
+  .admin-content h1, .admin-content h2, .admin-content h3, .admin-content p { overflow-wrap: anywhere; }
+
+  /* no hover-lift on touch: it sticks after a tap */
+  .admin-shell .card-lift:hover { transform: none; box-shadow: var(--soft-1); }
+}
+@media (max-width: 380px) {
+  .admin-content { padding-left: 10px; padding-right: 10px; }
+}
+@media (min-width: 768px) { .admin-bottom-nav { display: none; } }

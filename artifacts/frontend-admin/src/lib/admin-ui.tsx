@@ -193,7 +193,7 @@ export function Button({ variant = 'secondary', size = 'md', icon: Icon, loading
 /** Sticky footer that appears only while there are unsaved changes, so an
  * admin never has to scroll to the bottom of a long tab to find Save. */
 export function SaveBar({ dirty, saving, saved, onSave, onDiscard, testId = 'button-save-settings' }: { dirty: boolean; saving: boolean; saved: boolean; onSave: () => void; onDiscard: () => void; testId?: string }) {
-  return <div className="pointer-events-none sticky bottom-4 z-20 mt-6 flex justify-center px-2">
+  return <div className="pointer-events-none sticky bottom-20 z-20 md:bottom-4 mt-6 flex justify-center px-2">
     <div className={cn('pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-2xl border bg-card/95 px-4 py-3 shadow-[var(--shadow-lg)] backdrop-blur transition-all duration-200', dirty || saving ? 'translate-y-0 border-primary/40 opacity-100' : saved ? 'translate-y-0 border-border opacity-100' : 'pointer-events-none translate-y-3 border-border opacity-0')}>
       <div className="min-w-0 flex-1 text-xs">
         {dirty || saving

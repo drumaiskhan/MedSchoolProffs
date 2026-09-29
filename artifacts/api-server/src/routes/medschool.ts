@@ -57,6 +57,7 @@ import {
   auditLogsTable,
   academicYearsTable,
   programsTable,
+  institutionsTable,
   batchesTable,
   emailVerificationTokensTable,
   passwordResetTokensTable,
@@ -1359,12 +1360,14 @@ router.get("/students/:id", requireAdmin, async (req, res): Promise<void> => {
   if (!student) { res.status(404).json({ error: "Student not found" }); return; }
   const [academicYear] = student.academicYearId ? await db.select().from(academicYearsTable).where(eq(academicYearsTable.id, student.academicYearId)) : [];
   const [batch] = student.batchId ? await db.select().from(batchesTable).where(eq(batchesTable.id, student.batchId)) : [];
+  const [programRow] = student.programId ? await db.select().from(programsTable).where(eq(programsTable.id, student.programId)) : [];
   const payments = await db.select().from(paymentsTable).where(eq(paymentsTable.userId, id)).orderBy(desc(paymentsTable.createdAt));
   const memberships = await db.select().from(membershipsTable).where(eq(membershipsTable.userId, id)).orderBy(desc(membershipsTable.expiresAt));
   res.json({
     id: student.id, name: student.name, email: student.email, phone: student.phone, rollNumber: student.rollNumber,
     status: student.status, statusMessage: student.statusMessage, emailVerified: student.emailVerified,
     institution: student.institution, program: student.program, academicYear: academicYear?.label ?? null, batch: batch?.label ?? null,
+    institutionId: student.institutionId ?? null, programKind: programRow?.kind ?? null, yearNumber: academicYear?.yearNumber ?? null,
     currentStreak: student.currentStreak, longestStreak: student.longestStreak,
     lastLoginAt: student.lastLoginAt?.toISOString() ?? null, joinedAt: student.createdAt.toISOString(),
     payments: await Promise.all(payments.map(paymentView)),
@@ -1377,11 +1380,72 @@ router.get("/students/:id", requireAdmin, async (req, res): Promise<void> => {
 
 router.patch("/students/:id", requireAdmin, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
-  const parsed = z.object({ name: z.string().min(2).max(120).optional(), phone: z.string().max(30).optional(), rollNumber: z.string().max(60).optional() }).safeParse(req.body);
-  if (!parsed.success || Number.isNaN(id)) { res.status(400).json({ error: "Invalid request" }); return; }
-  const [row] = await db.update(usersTable).set(parsed.data).where(and(eq(usersTable.id, id), eq(usersTable.role, "student"))).returning();
-  if (!row) { res.status(404).json({ error: "Student not found" }); return; }
-  await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "STUDENT_UPDATED", entity: "user", entityId: row.id });
+  const parsed = z.object({
+    name: z.string().trim().min(2).max(120).optional(),
+    email: z.string().trim().email().max(200).optional(),
+    phone: z.string().trim().max(30).optional(),
+    rollNumber: z.string().trim().max(60).optional(),
+    institutionId: z.number().int().positive().optional(),
+    programKind: z.enum(["MBBS", "BDS"]).optional(),
+    yearNumber: z.number().int().min(1).max(5).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success || Number.isNaN(id)) { res.status(400).json({ error: parsed.success ? "Invalid request" : (parsed.error.issues[0]?.message ?? "Invalid request") }); return; }
+  const { name, email, phone, rollNumber, institutionId, programKind, yearNumber } = parsed.data;
+
+  const [student] = await db.select().from(usersTable).where(and(eq(usersTable.id, id), eq(usersTable.role, "student")));
+  if (!student) { res.status(404).json({ error: "Student not found" }); return; }
+
+  const changes: Partial<typeof usersTable.$inferInsert> = {};
+  if (name !== undefined) changes.name = name;
+  if (phone !== undefined) changes.phone = phone;
+  if (rollNumber !== undefined) changes.rollNumber = rollNumber === "" ? null : rollNumber;
+
+  if (email !== undefined) {
+    const lowered = email.toLowerCase();
+    if (lowered !== student.email.toLowerCase()) {
+      const [taken] = await db.select({ id: usersTable.id }).from(usersTable).where(and(eq(usersTable.email, lowered), ne(usersTable.id, id)));
+      if (taken) { res.status(409).json({ error: "Another account already uses that email" }); return; }
+      changes.email = lowered;
+    }
+  }
+
+  // College / program (MBBS|BDS) / year: same find-or-create of the
+  // Program + AcademicYear rows that sign-up does (auth.ts /auth/register),
+  // so what the admin sets here is exactly what content visibility reads.
+  if (institutionId !== undefined || programKind !== undefined || yearNumber !== undefined) {
+    const [currentProgram] = student.programId ? await db.select().from(programsTable).where(eq(programsTable.id, student.programId)) : [];
+    const [currentYear] = student.academicYearId ? await db.select().from(academicYearsTable).where(eq(academicYearsTable.id, student.academicYearId)) : [];
+    const targetInstitutionId = institutionId ?? student.institutionId ?? undefined;
+    const targetKind = (programKind ?? currentProgram?.kind) as "MBBS" | "BDS" | undefined;
+    const targetYear = yearNumber ?? currentYear?.yearNumber ?? undefined;
+    if (!targetInstitutionId || !targetKind || !targetYear) {
+      res.status(400).json({ error: "Choose a college, program (MBBS/BDS) and year together — this student has no existing value to fall back on for one of them." });
+      return;
+    }
+    const maxYear = targetKind === "MBBS" ? 5 : 4;
+    if (targetYear > maxYear) { res.status(400).json({ error: `${targetKind} only goes up to year ${maxYear}` }); return; }
+    const [institution] = await db.select().from(institutionsTable).where(eq(institutionsTable.id, targetInstitutionId));
+    if (!institution) { res.status(400).json({ error: "That college does not exist" }); return; }
+    let [program] = await db.select().from(programsTable).where(and(eq(programsTable.institutionId, institution.id), eq(programsTable.kind, targetKind)));
+    if (!program) [program] = await db.insert(programsTable).values({ institutionId: institution.id, name: targetKind, kind: targetKind, active: true }).returning();
+    let [academicYear] = await db.select().from(academicYearsTable).where(and(eq(academicYearsTable.programId, program.id), eq(academicYearsTable.yearNumber, targetYear)));
+    if (!academicYear) {
+      const ordinal: Record<number, string> = { 1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th" };
+      const label = `${ordinal[targetYear]} Year${targetYear === maxYear ? " (Final)" : ""}`;
+      [academicYear] = await db.insert(academicYearsTable).values({ programId: program.id, label, yearNumber: targetYear, active: true }).returning();
+    }
+    changes.institutionId = institution.id;
+    changes.programId = program.id;
+    changes.academicYearId = academicYear.id;
+    changes.institution = institution.name;
+    changes.program = program.name;
+    // A batch belongs to one specific year, so it no longer applies once the year/college changes.
+    if (academicYear.id !== student.academicYearId) changes.batchId = null;
+  }
+
+  if (Object.keys(changes).length === 0) { res.json({ ok: true }); return; }
+  await db.update(usersTable).set(changes).where(eq(usersTable.id, id));
+  await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "STUDENT_UPDATED", entity: "user", entityId: id });
   res.json({ ok: true });
 });
 

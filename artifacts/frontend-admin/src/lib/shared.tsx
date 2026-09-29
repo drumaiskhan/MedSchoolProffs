@@ -159,9 +159,27 @@ function currentPageInfo(location: string): { title: string; group: string } {
   return { title: location.slice(1).split('/').filter((p) => p !== 'admin').map((part) => part.replaceAll('-', ' ')).join(' / ') || 'Overview', group: 'Admin' };
 }
 
+// Pending-work counts shown as small badges in the sidebar and the mobile
+// bottom bar, so the admin sees what needs attention without opening pages.
+// Uses the same cached list queries the Students / Payments pages already
+// load, so this adds no extra requests once those have been visited.
+function useAdminBadges(): Record<string, number> {
+  const paymentsQ = useListPayments();
+  const studentsQ = useListStudents();
+  const pendingPayments = (paymentsQ.data ?? []).filter((p) => p.status === 'PAYMENT_PENDING_REVIEW').length;
+  const pendingStudents = (studentsQ.data ?? []).filter((st) => st.status === 'PAYMENT_PENDING_REVIEW').length;
+  return { '/admin/payments': pendingPayments, '/admin/students': pendingStudents };
+}
+
+const NAV_OPEN_KEY = 'admin-nav-open-groups';
+function readOpenGroups(): string[] | null {
+  try { const raw = localStorage.getItem(NAV_OPEN_KEY); return raw ? (JSON.parse(raw) as string[]) : null; } catch { return null; }
+}
+
 export function SideNav({ user, onClose }: { user: User; onClose: () => void }) {
   const [location] = useLocation();
   const groups = adminGroups;
+  const badges = useAdminBadges();
   const notifQ = useListNotifications();
   const unreadCount = (notifQ.data ?? []).filter((n) => !n.read).length;
   // Same public bundle the student app reads — lets an admin see at a glance
@@ -169,34 +187,55 @@ export function SideNav({ user, onClose }: { user: User; onClose: () => void }) 
   const siteQ = useQuery({ queryKey: ['site-content'], queryFn: siteContentApi.get });
   const trial = siteQ.data?.trial;
   const logout = useMutation({ mutationFn: authApi.logout, onSuccess: () => { queryClient.clear(); window.location.href = '/login'; } });
-  return <aside className="admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col overflow-y-auto bg-sidebar px-3.5 py-5 text-sidebar-foreground shadow-xl md:sticky md:top-0 md:h-[100dvh] md:shadow-none">
-    <div className="mb-5 flex items-center justify-between px-2"><Logo dark /><button className="rounded-lg p-2 text-sidebar-foreground/60 hover:bg-sidebar-accent md:hidden" onClick={onClose} aria-label="Close menu" data-testid="button-close-menu"><X size={18} /></button></div>
-    {trial?.active && <Link href="/admin/settings?tab=access" onClick={onClose} className="mb-4 flex items-center gap-2.5 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/20" data-testid="chip-admin-trial-live">
+  const isActive = (href: string) => location === href || (href === '/admin/payments' && location === '/admin/payment-details');
+  const activeGroup = groups.find((g) => g.items.some(([href]) => isActive(href)))?.label;
+  // Groups are collapsible so the long list stays scannable: the group you are
+  // in is always open, the rest remember how you left them.
+  const [openGroups, setOpenGroups] = useState<string[]>(() => readOpenGroups() ?? ['Overview', 'Payments']);
+  useEffect(() => { if (activeGroup) setOpenGroups((cur) => (cur.includes(activeGroup) ? cur : [...cur, activeGroup])); }, [activeGroup]);
+  const toggleGroup = (label: string) => setOpenGroups((cur) => {
+    const next = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label];
+    try { localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+    return next;
+  });
+  return <aside className="admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[min(300px,86vw)] flex-col overflow-y-auto bg-sidebar px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] text-sidebar-foreground shadow-2xl animate-in slide-in-from-left duration-200 md:sticky md:top-0 md:h-[100dvh] md:w-[268px] md:shadow-none md:animate-none">
+    <div className="mb-4 flex items-center justify-between px-2"><Logo dark /><button className="grid size-10 place-items-center rounded-xl text-sidebar-foreground/70 hover:bg-sidebar-accent md:hidden" onClick={onClose} aria-label="Close menu" data-testid="button-close-menu"><X size={18} /></button></div>
+    {trial?.active && <Link href="/admin/settings?tab=access" onClick={onClose} className="mb-3 flex items-center gap-2.5 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/20" data-testid="chip-admin-trial-live">
       <span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-70" /><span className="relative inline-flex size-2 rounded-full bg-accent" /></span>
       <span className="min-w-0 flex-1"><span className="block">Free trial is live</span><span className="block truncate text-[10px] font-medium text-accent/70">{trial.features.length} feature{trial.features.length === 1 ? '' : 's'}{trial.program ? ` · ${trial.program}` : ''}{trial.years.length ? ` · Yr ${trial.years.join(', ')}` : ''}</span></span>
       <ChevronRight size={13} />
     </Link>}
-    <nav className="space-y-6" aria-label="Admin navigation">
-      {groups.map((group) => <div key={group.label}>
-        <div className="mb-2 px-3 font-mono-app text-[9px] font-bold uppercase tracking-[.16em] text-sidebar-foreground/40">{group.label}</div>
-        <div className="space-y-0.5">{group.items.map(([href, label, Icon]) => {
-          const active = location === href || (href === '/admin/payments' && location === '/admin/payment-details');
-          return <Link key={href} href={href} onClick={onClose} aria-current={active ? 'page' : undefined}
-            className={cn('group relative flex items-center gap-3 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition-all', active ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-sm' : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground')}
-            data-testid={`link-nav-${label.toLowerCase().replaceAll(' ', '-')}`}>
-            {active && <span className="absolute -left-3.5 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-sidebar-primary" />}
-            <span className={cn('grid size-8 shrink-0 place-items-center rounded-lg transition-colors', active ? 'bg-sidebar-primary text-sidebar-primary-foreground' : GROUP_TONE[group.label] ?? 'bg-white/5')}><Icon size={16} strokeWidth={active ? 2.3 : 1.9} /></span>
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-            {label === 'Notifications' && unreadCount > 0 && <span className="grid size-5 place-items-center rounded-full bg-accent text-[10px] font-bold text-accent-foreground">{unreadCount > 9 ? '9+' : unreadCount}</span>}
-          </Link>;
-        })}</div>
-      </div>)}
+    <nav className="space-y-1" aria-label="Admin navigation">
+      {groups.map((group) => {
+        const open = openGroups.includes(group.label);
+        const groupBadge = group.items.reduce((sum, [href]) => sum + (badges[href] ?? 0), 0);
+        return <div key={group.label}>
+          <button type="button" onClick={() => toggleGroup(group.label)} aria-expanded={open} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-mono-app text-[10px] font-bold uppercase tracking-[.14em] text-sidebar-foreground/50 transition-colors hover:text-sidebar-foreground/90" data-testid={`button-nav-group-${group.label.toLowerCase().replaceAll(' ', '-')}`}>
+            <span className="flex-1">{group.label}</span>
+            {!open && groupBadge > 0 && <span className="grid min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold leading-4 text-accent-foreground">{groupBadge}</span>}
+            <ChevronDown size={12} className={cn('transition-transform', !open && '-rotate-90')} />
+          </button>
+          {open && <div className="mb-2 space-y-0.5">{group.items.map(([href, label, Icon]) => {
+            const active = isActive(href);
+            const count = badges[href] ?? 0;
+            return <Link key={href} href={href} onClick={onClose} aria-current={active ? 'page' : undefined}
+              className={cn('group relative flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-semibold transition-colors', active ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-sidebar-foreground/75 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground')}
+              data-testid={`link-nav-${label.toLowerCase().replaceAll(' ', '-')}`}>
+              {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary" />}
+              <Icon size={17} strokeWidth={active ? 2.3 : 1.9} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {count > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[10px] font-bold leading-5 text-accent-foreground" aria-label={`${count} pending`}>{count > 99 ? '99+' : count}</span>}
+            </Link>;
+          })}</div>}
+        </div>;
+      })}
     </nav>
-    <div className="mt-auto pt-6">
-      <div className="flex items-center gap-3 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-2.5">
+    <div className="mt-auto pt-5">
+      <Link href="/notifications" onClick={onClose} className="mb-2 flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-semibold text-sidebar-foreground/75 hover:bg-sidebar-accent/70" data-testid="link-nav-notifications"><Bell size={17} /><span className="flex-1">Notifications</span>{unreadCount > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[10px] font-bold leading-5 text-accent-foreground">{unreadCount > 9 ? '9+' : unreadCount}</span>}</Link>
+      <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-2.5">
         <div className="grid size-9 shrink-0 place-items-center rounded-full bg-sidebar-primary text-xs font-extrabold text-sidebar-primary-foreground">{initials(user.name)}</div>
         <div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-sidebar-foreground">{user.name}</div><div className="truncate text-[10px] text-sidebar-foreground/50">Administrator</div></div>
-        <button onClick={() => logout.mutate()} disabled={logout.isPending} className="grid size-8 place-items-center rounded-lg text-sidebar-foreground/60 transition-colors hover:bg-white/10 hover:text-sidebar-foreground disabled:opacity-50" data-testid="button-signout" title="Sign out" aria-label="Sign out"><LogOut size={15} /></button>
+        <button onClick={() => logout.mutate()} disabled={logout.isPending} className="grid size-9 place-items-center rounded-lg text-sidebar-foreground/60 transition-colors hover:bg-white/10 hover:text-sidebar-foreground disabled:opacity-50" data-testid="button-signout" title="Sign out" aria-label="Sign out"><LogOut size={15} /></button>
       </div>
     </div>
   </aside>;
@@ -270,6 +309,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
   const isMobile = useIsMobile();
   const user = userQuery.data;
+  useEffect(() => { setMenuOpen(false); }, [location]);
+  useEffect(() => { document.body.style.overflow = menuOpen ? 'hidden' : ''; return () => { document.body.style.overflow = ''; }; }, [menuOpen]);
+  const badges = useAdminBadges();
 
   useEffect(() => {
     if (userQuery.isLoading) return;
@@ -298,7 +340,38 @@ export function Shell({ children }: { children: ReactNode }) {
   if (!user || user.role !== 'admin') return <BrandedLoadingScreen />;
 
   const { title, group: pageGroup } = currentPageInfo(location);
-  return <div className="admin-shell flex min-h-[100dvh] bg-background"><div className={cn(menuOpen ? 'block' : 'hidden', 'fixed inset-0 z-30 bg-sidebar/40 md:hidden')} onClick={() => setMenuOpen(false)} />{(menuOpen || !isMobile) && <SideNav user={user} onClose={() => setMenuOpen(false)} />}<main className="admin-main min-w-0 flex-1"><header className="admin-header sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-border/70 bg-background/90 px-5 backdrop-blur-md md:px-10"><div className="flex items-center gap-3"><button className="rounded-lg p-2 hover:bg-muted md:hidden" onClick={() => setMenuOpen(true)} data-testid="button-open-menu"><Menu size={20} /></button><div><div className="font-mono-app text-[10px] uppercase tracking-[.16em] text-muted-foreground">Admin · {pageGroup}</div><h1 className="mt-1 text-[18px] font-extrabold tracking-[-.02em] text-foreground">{title}</h1></div></div><div className="flex items-center gap-2"><button onClick={() => setSearchOpen(true)} className="hidden h-9 w-[220px] items-center gap-2 rounded-lg border border-border bg-card px-3 text-left text-[11px] text-muted-foreground shadow-sm hover:border-primary/50 sm:flex md:w-[320px]" data-testid="button-open-admin-search"><Search size={14} /><span className="truncate">Search students, MCQs, everything...</span><span className="ml-auto rounded border border-border px-1 text-[9px]">⌘K</span></button><button onClick={() => setSearchOpen(true)} className="grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted sm:hidden" data-testid="button-open-admin-search-mobile"><Search size={16} /></button><Link href="/admin/settings" className="grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" title="Platform settings" aria-label="Platform settings" data-testid="link-header-settings"><Settings size={16} /></Link><Link href="/notifications" className="relative grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted" data-testid="link-notifications"><Bell size={17} /></Link><Link href="/profile" className="ml-1 grid size-9 place-items-center rounded-full bg-primary/15 text-xs font-extrabold text-primary" data-testid="link-header-profile">{initials(user.name)}</Link></div></header><div className="admin-content page-enter px-5 py-7 md:px-10 md:py-9">{children}</div></main><AdminGlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} /></div>;
+  const bottomTabs: Array<[string, string, typeof LayoutDashboard]> = [['/admin', 'Overview', LayoutDashboard], ['/admin/students', 'Students', Users], ['/admin/payments', 'Payments', ReceiptText], ['/admin/mcqs', 'MCQs', CircleHelp]];
+  const tabActive = (href: string) => (href === '/admin' ? location === '/admin' : location === href || location.startsWith(`${href}/`) || (href === '/admin/payments' && location === '/admin/payment-details'));
+  return <div className="admin-shell flex min-h-[100dvh] bg-background">
+    <div className={cn(menuOpen ? 'block' : 'hidden', 'fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px] md:hidden')} onClick={() => setMenuOpen(false)} />
+    {(menuOpen || !isMobile) && <SideNav user={user} onClose={() => setMenuOpen(false)} />}
+    <main className="admin-main min-w-0 flex-1">
+      <header className="admin-header sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border/70 bg-background/80 px-3 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-5 md:h-16 md:px-8 md:pt-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <button className="grid size-10 shrink-0 place-items-center rounded-xl hover:bg-muted md:hidden" onClick={() => setMenuOpen(true)} aria-label="Open menu" data-testid="button-open-menu"><Menu size={20} /></button>
+          <div className="min-w-0"><div className="hidden truncate font-mono-app text-[10px] uppercase tracking-[.14em] text-muted-foreground sm:block">Admin · {pageGroup}</div><h1 className="truncate text-[16px] font-extrabold leading-tight tracking-[-.02em] text-foreground md:text-[18px]">{title}</h1></div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <button onClick={() => setSearchOpen(true)} className="hidden h-10 w-[220px] items-center gap-2 rounded-xl border border-border bg-card px-3 text-left text-[12px] text-muted-foreground hover:border-primary/50 sm:flex md:w-[320px]" data-testid="button-open-admin-search"><Search size={14} /><span className="truncate">Search students, MCQs, everything...</span><span className="ml-auto rounded border border-border px-1 text-[9px]">⌘K</span></button>
+          <button onClick={() => setSearchOpen(true)} className="grid size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted sm:hidden" aria-label="Search" data-testid="button-open-admin-search-mobile"><Search size={17} /></button>
+          <Link href="/notifications" className="relative grid size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted" aria-label="Notifications" data-testid="link-notifications"><Bell size={17} /></Link>
+          <Link href="/admin/settings" className="hidden size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:grid" title="Platform settings" aria-label="Platform settings" data-testid="link-header-settings"><Settings size={16} /></Link>
+          <Link href="/profile" className="grid size-10 place-items-center rounded-full bg-primary/15 text-xs font-extrabold text-primary" aria-label="Your profile" data-testid="link-header-profile">{initials(user.name)}</Link>
+        </div>
+      </header>
+      <div className="admin-content page-enter mx-auto w-full max-w-[1400px] px-3 py-5 pb-28 sm:px-5 md:px-8 md:py-8 md:pb-10">{children}</div>
+    </main>
+    <nav className="admin-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-border/70 bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden" aria-label="Quick navigation">
+      {bottomTabs.map(([href, label, Icon]) => {
+        const active = tabActive(href); const count = badges[href] ?? 0;
+        return <Link key={href} href={href} aria-current={active ? 'page' : undefined} className={cn('relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors', active ? 'text-primary' : 'text-muted-foreground')} data-testid={`tab-${label.toLowerCase()}`}>
+          <span className={cn('relative grid h-7 w-12 place-items-center rounded-full transition-colors', active && 'bg-primary/12')}><Icon size={19} strokeWidth={active ? 2.4 : 1.9} />{count > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold leading-4 text-accent-foreground">{count > 99 ? '99+' : count}</span>}</span>{label}
+        </Link>;
+      })}
+      <button type="button" onClick={() => setMenuOpen(true)} className="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-bold text-muted-foreground" data-testid="tab-more"><span className="grid h-7 w-12 place-items-center rounded-full"><Menu size={19} /></span>More</button>
+    </nav>
+    <AdminGlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+  </div>;
 }
 
 export function BrandedLoadingScreen() {
@@ -463,6 +536,46 @@ function StudentDevicesSection({ studentId }: { studentId: number }) {
 }
 
 import { Student360Panel } from '@/components/Student360';
+// Admin can edit everything about a student's profile: name, email, phone,
+// roll number, college, program (MBBS/BDS) and academic year. The PATCH
+// endpoint re-points the student's program/year records the same way
+// sign-up does, so content visibility follows the change immediately.
+function EditStudentDetails({ s, onSaved }: { s: StudentDetail; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: '', email: '', phone: '', rollNumber: '', institutionId: 0, programKind: '' as '' | 'MBBS' | 'BDS', yearNumber: 0 });
+  const reset = () => setForm({ name: s.name, email: s.email, phone: s.phone ?? '', rollNumber: s.rollNumber ?? '', institutionId: s.institutionId ?? 0, programKind: (s.programKind ?? '') as '' | 'MBBS' | 'BDS', yearNumber: s.yearNumber ?? 0 });
+  const institutions = useQuery({ queryKey: ['institutions', 'edit-student', form.programKind], queryFn: () => academicApi.institutions(undefined, form.programKind || undefined), enabled: open });
+  const maxYear = form.programKind === 'BDS' ? 4 : 5;
+  const save = useMutation({
+    mutationFn: () => studentsAdminApi.update(s.id, {
+      name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), rollNumber: form.rollNumber.trim(),
+      ...(form.institutionId && form.programKind && form.yearNumber ? { institutionId: form.institutionId, programKind: form.programKind, yearNumber: form.yearNumber } : {}),
+    }),
+    onSuccess: () => { toast({ title: 'Student details saved' }); onSaved(); setOpen(false); },
+    onError: (err: unknown) => toast({ title: 'Could not save details', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — check your connection and try again.', variant: 'destructive' }),
+  });
+  const input = 'mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-xs';
+  if (!open) return <button type="button" onClick={() => { reset(); setOpen(true); }} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-bold hover:bg-muted" data-testid="button-edit-student"><Pencil size={12} /> Edit details</button>;
+  return <div className="space-y-3 rounded-xl border border-border bg-background p-4 text-xs" data-testid="form-edit-student">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="font-bold">Name<input className={input} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="input-edit-name" /></label>
+      <label className="font-bold">Email<input className={input} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="input-edit-email" /></label>
+      <label className="font-bold">Phone<input className={input} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} data-testid="input-edit-phone" /></label>
+      <label className="font-bold">Roll number<input className={input} value={form.rollNumber} onChange={(e) => setForm({ ...form, rollNumber: e.target.value })} data-testid="input-edit-roll" /></label>
+    </div>
+    <div><div className="font-bold">Program</div><div className="mt-1 flex gap-2">{(['MBBS', 'BDS'] as const).map((k) => <button type="button" key={k} onClick={() => setForm({ ...form, programKind: k, institutionId: form.programKind === k ? form.institutionId : 0, yearNumber: Math.min(form.yearNumber, k === 'BDS' ? 4 : 5) })} className={cn('h-9 flex-1 rounded-lg border text-xs font-bold', form.programKind === k ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card hover:bg-muted')} data-testid={`button-edit-program-${k}`}>{k}</button>)}</div></div>
+    <label className="block font-bold">College
+      <select className={input} value={form.institutionId || ''} onChange={(e) => setForm({ ...form, institutionId: Number(e.target.value) })} disabled={!form.programKind} data-testid="select-edit-college">
+        <option value="">{form.programKind ? 'Select college' : 'Choose a program first'}</option>
+        {(institutions.data ?? []).map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+        {form.institutionId && !(institutions.data ?? []).some((i) => i.id === form.institutionId) && <option value={form.institutionId}>{s.institution ?? 'Current college'}</option>}
+      </select>
+    </label>
+    <div><div className="font-bold">Academic year</div><div className="mt-1 grid grid-cols-5 gap-2">{Array.from({ length: maxYear }, (_, i) => i + 1).map((y) => <button type="button" key={y} onClick={() => setForm({ ...form, yearNumber: y })} disabled={!form.programKind} className={cn('h-9 rounded-lg border text-xs font-bold disabled:opacity-40', form.yearNumber === y ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card hover:bg-muted')} data-testid={`button-edit-year-${y}`}>{y}</button>)}</div></div>
+    <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-border px-3 py-1.5 font-bold hover:bg-muted">Cancel</button><button type="button" onClick={() => save.mutate()} disabled={save.isPending || form.name.trim().length < 2 || !form.email.trim()} className="rounded-lg bg-primary px-4 py-1.5 font-bold text-primary-foreground disabled:opacity-50" data-testid="button-save-student">{save.isPending ? 'Saving…' : 'Save changes'}</button></div>
+  </div>;
+}
+
 export function StudentDrawer({ id, onClose }: { id: number; onClose: () => void }) {
   const detail = useQuery({ queryKey: ['student-detail', id], queryFn: () => studentsAdminApi.detail(id) });
   const invalidate = () => { queryClient.invalidateQueries({ queryKey: ['student-detail', id] }); queryClient.invalidateQueries({ queryKey: getListStudentsQueryKey() }); };
@@ -500,6 +613,7 @@ export function StudentDrawer({ id, onClose }: { id: number; onClose: () => void
     {!s ? <div className="mt-8"><InlineLoading /></div> : <div className="mt-6 space-y-6">
       <div className="flex items-center gap-3"><div className="grid size-12 place-items-center rounded-full bg-primary/15 text-sm font-extrabold text-primary">{initials(s.name)}</div><div><div className="font-bold">{s.name}</div><div className="text-xs text-muted-foreground">{s.email}</div></div></div>
       <div className="grid grid-cols-2 gap-3 text-xs"><div><div className="text-muted-foreground">Phone</div><div className="mt-0.5 font-bold">{s.phone || '—'}</div></div><div><div className="text-muted-foreground">Roll number</div><div className="mt-0.5 font-bold">{s.rollNumber || '—'}</div></div><div><div className="text-muted-foreground">Institution</div><div className="mt-0.5 font-bold">{s.institution || '—'}</div></div><div><div className="text-muted-foreground">Programme</div><div className="mt-0.5 font-bold">{s.program || '—'}</div></div><div><div className="text-muted-foreground">Year / batch</div><div className="mt-0.5 font-bold">{s.academicYear || '—'} · {s.batch || '—'}</div></div><div><div className="text-muted-foreground">Streak</div><div className="mt-0.5 font-bold">{s.currentStreak}d (best {s.longestStreak}d)</div></div><div><div className="text-muted-foreground">Joined</div><div className="mt-0.5 font-bold">{new Date(s.joinedAt).toLocaleDateString()}</div></div><div><div className="text-muted-foreground">Email verified</div>{s.emailVerified ? <div className="mt-0.5 font-bold text-primary">Yes</div> : <button onClick={() => verifyEmail.mutate()} disabled={verifyEmail.isPending} className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-extrabold text-destructive underline disabled:opacity-50" data-testid="button-verify-email">{verifyEmail.isPending ? 'Verifying…' : 'No · verify now'}</button>}</div></div>
+      <EditStudentDetails s={s} onSaved={invalidate} />
       <Student360Panel s={s} />
       {s.activeMembership && !s.activeMembership.isTrial && <div className="rounded-xl bg-primary/10 p-3 text-xs font-semibold text-primary">Active membership until {new Date(s.activeMembership.expiresAt).toLocaleDateString()}</div>}
       {!s.emailVerified && s.status !== 'ACTIVE' && <div className="rounded-xl border border-accent/40 bg-accent/10 p-3 text-[11px] leading-5 text-accent-text"><strong>Heads up:</strong> this student's email isn't verified yet, so they can't sign in at all even if you set their status below — the "No · verify now" link above (or "Activate now" here) clears that separately.</div>}
