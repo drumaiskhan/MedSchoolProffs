@@ -1018,6 +1018,7 @@ function buildRewriteDuplicatePrompt({ question, options, correctAnswer, otherQu
   return [
     "You are cleaning up a medical school (MBBS/BDS) question bank. Two questions in the bank are near-duplicates of each other — same underlying concept, wording too similar.",
     "Rewrite QUESTION B ONLY so it tests the exact same concept and has the exact same correct option (same medical fact), but reads as a genuinely different question — change the clinical scenario, phrasing, numbers, or angle of the question so it no longer looks copy-pasted from Question A. Do not change what is being tested or which option is correct.",
+    "The new stem MUST be clearly different from Question A: use a different clinical vignette or angle and different vocabulary, so that fewer than half of its content words appear in Question A. Do not return the original wording.",
     "Keep the same number of options, in the same order, with the same option that is correct — only reword the question stem and, if needed, the option wording (not the underlying meaning of the correct option).",
     "Do not use markdown.",
     NO_REASONING_INSTRUCTION,

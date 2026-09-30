@@ -548,7 +548,7 @@ export const mcqAdminApi = {
   // call (server enforces this too) so a bank with many duplicates is
   // cleared over several calls rather than one that risks a gateway timeout.
   dedupeBatch: (pairs: Array<{ id: number; otherId: number }>) =>
-    request<{ fixed: number; results: Array<{ id: number; rewritten: boolean }> }>('/admin/mcqs/dedupe-batch', { method: 'POST', body: JSON.stringify({ pairs }) }),
+    request<{ fixed: number; results: Array<{ id: number; rewritten: boolean; reason?: string; stillSimilar?: boolean; question?: string; options?: string[]; correctAnswer?: string }> }>('/admin/mcqs/dedupe-batch', { method: 'POST', body: JSON.stringify({ pairs }) }),
   // "AI Fix" for the Invalid stat/list: repairs empty questions, too-few or
   // duplicate options, and missing/mismatched correct answers. Capped at 20
   // items per call (server enforces this too), same reasoning as dedupeBatch.

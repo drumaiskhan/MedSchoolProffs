@@ -62,8 +62,21 @@ export default defineConfig({
         // Same reasoning as frontend-student's vite.config.ts — splits
         // slow-changing deps into their own cacheable chunk, separate from
         // app code that changes on every deploy.
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'wouter', '@tanstack/react-query'],
+        // Function form: heavy libraries get their own long-cached chunks,
+        // fetched in parallel and only by the pages that need them. The
+        // entry chunk is left with just React + router + query + the shell.
+        manualChunks(id: string) {
+          // Rollup's CommonJS interop helper is imported by every chunk that
+          // touches a CJS dep (lodash etc.). Pin it to vendor so the entry
+          // doesn't have to pull the whole charts chunk just to get it.
+          if (id.includes('commonjsHelpers')) return 'vendor';
+          if (!id.includes('node_modules')) return undefined;
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|wouter|clsx|tailwind-merge|class-variance-authority|@tanstack[\\/]react-query|@tanstack[\\/]query-core)[\\/]/.test(id)) return 'vendor';
+          if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|d3-[^\\/]+|victory-vendor|decimal\.js-light|internmap|lodash|fast-equals|eventemitter3|tiny-invariant)[\\/]/.test(id)) return 'charts';
+          if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) return 'motion';
+          if (id.includes('@radix-ui') || id.includes('@floating-ui')) return 'radix';
+          if (id.includes('lucide-react')) return 'icons';
+          return undefined;
         },
       },
     },

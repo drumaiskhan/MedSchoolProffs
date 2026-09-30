@@ -68,10 +68,17 @@ export default defineConfig({
         // the first screen only downloads React + router + query, and charts /
         // Radix / icons load only with the pages that need them.
         manualChunks(id: string) {
+          // Rollup's CommonJS interop helper is imported by every chunk that
+          // touches a CJS dep. Pin it to vendor so the entry doesn't have to
+          // pull the whole charts chunk just to get it.
+          if (id.includes('commonjsHelpers')) return 'vendor';
           if (!id.includes('node_modules')) return undefined;
-          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|wouter|@tanstack[\\/]react-query|@tanstack[\\/]query-core)[\\/]/.test(id)) return 'vendor';
-          if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor|decimal\.js-light|internmap)[\\/]/.test(id)) return 'charts';
-          if (id.includes('@radix-ui')) return 'radix';
+          // clsx / tailwind-merge / cva are used by every component (cn()) —
+          // they must live in vendor, not in a chunk only some pages need.
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|wouter|clsx|tailwind-merge|class-variance-authority|@tanstack[\\/]react-query|@tanstack[\\/]query-core)[\\/]/.test(id)) return 'vendor';
+          if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|d3-[^\\/]+|victory-vendor|decimal\.js-light|internmap|lodash|fast-equals|eventemitter3|tiny-invariant)[\\/]/.test(id)) return 'charts';
+          if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) return 'motion';
+          if (id.includes('@radix-ui') || id.includes('@floating-ui')) return 'radix';
           if (id.includes('lucide-react')) return 'icons';
           return undefined;
         },
