@@ -154,7 +154,7 @@ function TakeOspeExam() {
     });
   };
 
-  const imgUrl = current.imagePath ? resolveUploadUrl(current.imagePath) : null;
+  const imgUrl = current.imagePath ? (current.imageUrl ?? resolveUploadUrl(current.imagePath)) : null;
 
   return <div className="mx-auto max-w-4xl px-1 sm:px-0">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5">
@@ -178,7 +178,7 @@ function TakeOspeExam() {
       {view === 'image' ? <>
         {imgUrl && <div className="mt-4"><ZoomableImage src={imgUrl} pins={current.answerType === 'LABELING' ? (current.labelPoints || []) : undefined} testId={`img-station-${current.id}`} /></div>}
         {current.instructions && <p className="mt-4 whitespace-pre-wrap text-sm text-muted-foreground">{current.instructions}</p>}
-        {current.attachmentPath && <a href={resolveUploadUrl(current.attachmentPath)!} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-bold text-primary" data-testid={`link-station-attachment-${current.id}`}>Open attached file</a>}
+        {current.attachmentPath && <a href={(current.attachmentUrl ?? resolveUploadUrl(current.attachmentPath))!} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-bold text-primary" data-testid={`link-station-attachment-${current.id}`}>Open attached file</a>}
         {imgUrl && <button onClick={() => { if (current.answerType === 'WRITTEN') saveWritten(); setView('answer'); }} className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-go-to-answer">Answer the question{ current.answerType === 'LABELING' && (current.labelPoints || []).length > 1 ? 's' : ''} <ArrowRight size={14} /></button>}
       </> : <>
         {!imgUrl && current.instructions && <p className="mb-5 whitespace-pre-wrap text-sm text-muted-foreground">{current.instructions}</p>}

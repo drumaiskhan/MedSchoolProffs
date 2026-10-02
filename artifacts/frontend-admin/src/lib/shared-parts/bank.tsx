@@ -537,8 +537,12 @@ export function ProgramYearFilter({ program, studyYear, onProgramChange, onStudy
 // AdminFlashcards' "Backup / restore" panels since both trees use the same
 // Block > Module > Subject > Topic shape and neither cares which bank the
 // resulting scope is later applied to.
+// Shown in the picker, the confirmation text and the downloaded file's label.
+export const BACKUP_PROGRAM_LABEL = { MBBS: 'MBBS', BDS: 'BDS', SHARED: 'Shared' } as const;
+
 export function BackupScopePicker({ blocks, allModules, onChange }: { blocks: AdminBlock[]; allModules: AdminModule[]; onChange: (scope: BackupScope | null) => void }) {
-  const [level, setLevel] = useState<'all' | 'year' | 'block' | 'module' | 'subject' | 'topic'>('all');
+  const [level, setLevel] = useState<'all' | 'program' | 'year' | 'block' | 'module' | 'subject' | 'topic'>('all');
+  const [programSel, setProgramSel] = useState<'' | 'MBBS' | 'BDS' | 'SHARED'>('');
   const [blockSel, setBlockSel] = useState('');
   const [moduleSel, setModuleSel] = useState('');
   const [subjectSel, setSubjectSel] = useState('');
@@ -563,29 +567,41 @@ export function BackupScopePicker({ blocks, allModules, onChange }: { blocks: Ad
 
   useEffect(() => {
     if (level === 'all') { onChange(null); return; }
-    if (level === 'year') { onChange(yearSel ? { level: 'year', id: Number(yearSel), label: `Year ${yearSel}` } : null); return; }
+    if (level === 'program') { onChange(programSel ? { level: 'program', id: 0, label: `${BACKUP_PROGRAM_LABEL[programSel]} · all years`, program: programSel } : null); return; }
+    if (level === 'year') { onChange(yearSel ? { level: 'year', id: Number(yearSel), label: `${programSel ? `${BACKUP_PROGRAM_LABEL[programSel]} · ` : ''}Year ${yearSel}`, ...(programSel ? { program: programSel } : {}) } : null); return; }
     if (level === 'block') { onChange(blockSel ? { level: 'block', id: Number(blockSel), label: blocks.find((b) => String(b.id) === blockSel)?.name ?? `Block #${blockSel}` } : null); return; }
     if (level === 'module') { onChange(moduleSel ? { level: 'module', id: Number(moduleSel), label: allModules.find((m) => String(m.id) === moduleSel)?.name ?? `Module #${moduleSel}` } : null); return; }
     if (level === 'subject') { onChange(subjectSel ? { level: 'subject', id: Number(subjectSel), label: (subjectsQ.data || []).find((s) => String(s.id) === subjectSel)?.name ?? `Subject #${subjectSel}` } : null); return; }
     onChange(topicSel ? { level: 'topic', id: Number(topicSel), label: (topicsQ.data || []).find((t) => String(t.id) === topicSel)?.name ?? `Topic #${topicSel}` } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [level, yearSel, blockSel, moduleSel, subjectSel, topicSel, subjectsQ.data, topicsQ.data]);
+  }, [level, programSel, yearSel, blockSel, moduleSel, subjectSel, topicSel, subjectsQ.data, topicsQ.data]);
 
-  const resetBelow = (next: typeof level) => { setLevel(next); setBlockSel(''); setModuleSel(''); setSubjectSel(''); setTopicSel(''); setYearSel(''); };
+  const resetBelow = (next: typeof level) => { setLevel(next); setBlockSel(''); setModuleSel(''); setSubjectSel(''); setTopicSel(''); setYearSel(''); setProgramSel(''); };
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       <select value={level} onChange={(e) => resetBelow(e.target.value as typeof level)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs font-semibold" data-testid="select-backup-scope-level">
         <option value="all">Whole bank</option>
+        <option value="program">One program (MBBS / BDS)</option>
         <option value="year">One year</option>
         <option value="block">One block</option>
         <option value="module">One module</option>
         <option value="subject">One subject</option>
         <option value="topic">One topic</option>
       </select>
-      {level === 'year' && <select value={yearSel} onChange={(e) => setYearSel(e.target.value)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs" data-testid="select-backup-scope-year">
-        <option value="">Select year</option>{years.map((y) => <option key={y} value={y}>Year {y}</option>)}
+      {level === 'program' && <select value={programSel} onChange={(e) => setProgramSel(e.target.value as typeof programSel)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs" data-testid="select-backup-scope-program">
+        <option value="">Select program</option>
+        <option value="MBBS">MBBS</option><option value="BDS">BDS</option><option value="SHARED">Shared (no program)</option>
       </select>}
+      {level === 'year' && <>
+        <select value={programSel} onChange={(e) => setProgramSel(e.target.value as typeof programSel)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs" data-testid="select-backup-scope-year-program">
+          <option value="">Any program</option>
+          <option value="MBBS">MBBS</option><option value="BDS">BDS</option><option value="SHARED">Shared (no program)</option>
+        </select>
+        <select value={yearSel} onChange={(e) => setYearSel(e.target.value)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs" data-testid="select-backup-scope-year">
+          <option value="">Select year</option>{years.map((y) => <option key={y} value={y}>Year {y}</option>)}
+        </select>
+      </>}
       {level === 'block' && <select value={blockSel} onChange={(e) => setBlockSel(e.target.value)} className="h-9 rounded-lg border border-border bg-background px-2 text-xs" data-testid="select-backup-scope-block">
         <option value="">Select block</option>{blockGroups.map((g) => <optgroup key={`${g.programLabel}-${g.yearLabel}`} label={`${g.programLabel} · ${g.yearLabel}`}>{g.blocks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</optgroup>)}
       </select>}

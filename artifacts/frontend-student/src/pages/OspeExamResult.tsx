@@ -42,7 +42,7 @@ function OspeExamResult() {
         </div>
         <p className="mt-1 text-sm font-bold">{b.title}</p>
         {b.imagePath && <div className="relative mt-3 overflow-hidden rounded-xl bg-muted">
-          <img src={resolveUploadUrl(b.imagePath) ?? undefined} alt="" className="max-h-64 w-full object-contain" />
+          <img src={(b.imageUrl ?? resolveUploadUrl(b.imagePath)) ?? undefined} alt="" className="max-h-64 w-full object-contain" />
           {b.answerType === 'LABELING' && (b.labelPoints || []).map((p, pi) => <div key={p.id} style={{ left: `${p.x}%`, top: `${p.y}%` }} className="absolute grid size-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-primary text-[11px] font-extrabold text-primary-foreground shadow-md ring-2 ring-white">{pi + 1}</div>)}
         </div>}
         {b.instructions && <p className="mt-2 text-xs text-muted-foreground">{b.instructions}</p>}

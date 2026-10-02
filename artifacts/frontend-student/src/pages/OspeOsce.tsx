@@ -58,7 +58,7 @@ function OspeExamCard({ exam, examType, index, onStart, starting }: { exam: Ospe
 
 function LearningMaterialCard({ material, examType, index }: { material: OspeLearningMaterial; examType: OspeExamType; index: number }) {
   const [expanded, setExpanded] = useState(false);
-  const img = material.imagePath ? resolveUploadUrl(material.imagePath) ?? undefined : undefined;
+  const img = material.imagePath ? (material.imageUrl ?? resolveUploadUrl(material.imagePath)) ?? undefined : undefined;
   return <TiltDiv className="cu-ospe-card" testId={`card-ospe-material-${material.id}`} style={vars({ '--h': EXAM_TYPE_HUE[examType], '--i': Math.min(index, 11), '--tilt': 6 })}>
     <span className="cu-ospe-card__glow" aria-hidden="true" />
     {img
@@ -70,7 +70,7 @@ function LearningMaterialCard({ material, examType, index }: { material: OspeLea
       ? <p className="cu-ospe-card__body">{material.bodyText}</p>
       : <button onClick={() => setExpanded(true)} className="cu-ospe-card__more no-3d" data-testid={`button-expand-material-${material.id}`}>Read more</button>)}
     {(material.attachmentPath || material.externalUrl) && <span className="cu-ospe-card__foot">
-      {material.attachmentPath && <a href={resolveUploadUrl(material.attachmentPath)!} target="_blank" rel="noreferrer" className="cu-ospe-cta cu-ospe-cta--ghost no-3d" data-testid={`link-material-attachment-${material.id}`}><Paperclip size={12} /> Attachment</a>}
+      {material.attachmentPath && <a href={(material.attachmentUrl ?? resolveUploadUrl(material.attachmentPath))!} target="_blank" rel="noreferrer" className="cu-ospe-cta cu-ospe-cta--ghost no-3d" data-testid={`link-material-attachment-${material.id}`}><Paperclip size={12} /> Attachment</a>}
       {material.externalUrl && <a href={material.externalUrl} target="_blank" rel="noreferrer" className="cu-ospe-link no-3d" data-testid={`link-material-external-${material.id}`}><LinkIcon size={12} /> Open link</a>}
     </span>}
   </TiltDiv>;
