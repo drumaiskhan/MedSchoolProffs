@@ -5,12 +5,6 @@ const config: CapacitorConfig = {
   appName: 'MedSchoolProffs',
   webDir: 'dist/public',
 
-  // Android 15 (targetSdk 35) draws edge-to-edge, which put the app header
-  // under the status bar. This insets the WebView below the system bars.
-  android: {
-    adjustMarginsForEdgeToEdge: 'force',
-  },
-
   plugins: {
     LiveUpdate: {
       autoUpdateStrategy: 'none',

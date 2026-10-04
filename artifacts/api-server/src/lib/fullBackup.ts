@@ -698,6 +698,11 @@ export interface RestoreResult {
   mode: "restore-empty" | "wipe-and-restore";
   restored: Record<string, number>;
   wipedFirst: Record<string, number>;
+  // Optional links that pointed at a row missing from this backup and so
+  // were cleared instead of restored, keyed "table.column" (for example
+  // "mcqs.pastPaperId": 120 = 120 MCQs lost their past paper). The rows are
+  // still restored, which is why counts look right while the link is gone.
+  nulledRefs: Record<string, number>;
   // Rows that referenced a required (NOT NULL) foreign key which didn't
   // resolve within this restore, and so had to be dropped rather than
   // inserted (see sanitizeRow below). Previously only logged server-side —
@@ -798,6 +803,7 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
   const restored: Record<string, number> = {};
   const wipedFirst: Record<string, number> = {};
   const dropped: Record<string, number> = {};
+  const nulledRefs: Record<string, number> = {};
   const idsBySpec = new Map<string, Set<number>>();
   for (const spec of specs) {
     const ids = new Set<number>();
@@ -942,6 +948,12 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
       const rows = (file.data[spec.key] ?? []).flatMap((row) => {
         const sanitized = sanitizeRow(spec.key, row as Record<string, unknown>, idsBySpec, notNullColumns);
         if (sanitized === null) { droppedForDanglingRequiredRef++; return []; }
+        for (const [column] of FK_CHECKS[spec.key] ?? []) {
+          if (typeof (row as Record<string, unknown>)[column] === "number" && (sanitized as Record<string, unknown>)[column] === null) {
+            const k = `${spec.key}.${column}`;
+            nulledRefs[k] = (nulledRefs[k] ?? 0) + 1;
+          }
+        }
         if (spec.key === "platformSettings") {
           const r = sanitized as { key?: unknown; value?: unknown };
           if (r.value === REDACTED_SECRET_PLACEHOLDER && typeof r.key === "string" && existingSettings.has(r.key)) {
@@ -1013,5 +1025,72 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
   }
   logger.info({ ms: Date.now() - restoreStarted }, "[full-backup] restore complete");
 
-  return { scope: file.scope, mode, restored, wipedFirst, dropped };
+  if (Object.keys(nulledRefs).length) logger.warn({ nulledRefs }, "[full-backup] some links pointed at rows missing from the backup and were cleared");
+  return { scope: file.scope, mode, restored, wipedFirst, dropped, nulledRefs };
+}
+
+
+// ---------------------------------------------------------------------------
+// Repair: re-attach MCQs to their past papers from a backup file.
+//
+// For databases already restored where MCQs lost their past paper link: the
+// MCQ rows are all there (so the bank count looks right) but their
+// past_paper_id was cleared. This reads the backup file, re-creates any past
+// paper that is missing, and sets past_paper_id again on MCQs that currently
+// have none. It only fills EMPTY links, and only when the id and the question
+// text both match, so it can never overwrite or mislink anything.
+// ---------------------------------------------------------------------------
+export interface RelinkResult {
+  papersInBackup: number;
+  papersRecreated: number;
+  mcqsWithPaperInBackup: number;
+  mcqsRelinked: number;
+  mcqsAlreadyLinked: number;
+  mcqsNotMatched: number;
+}
+
+export async function relinkPastPapersFromBackup(file: FullBackupFile): Promise<RelinkResult> {
+  const papers = ((file.data.pastPapers ?? []) as Array<Record<string, unknown>>).filter((p) => typeof p.id === "number");
+  const mcqs = ((file.data.mcqs ?? []) as Array<Record<string, unknown>>)
+    .filter((m) => typeof m.id === "number" && typeof m.pastPaperId === "number" && typeof m.question === "string");
+  let papersRecreated = 0;
+  let mcqsRelinked = 0;
+  let mcqsAlreadyLinked = 0;
+
+  const existing = new Set<number>(((await db.select({ id: pastPapersTable.id }).from(pastPapersTable)) as Array<{ id: number }>).map((r) => r.id));
+  const missing = papers.filter((p) => !existing.has(p.id as number)).map((p) => convertTimestamps("pastPapers", p));
+  if (missing.length) {
+    for (let i = 0; i < missing.length; i += 200) {
+      const inserted = await db.insert(pastPapersTable).values(missing.slice(i, i + 200) as never).onConflictDoNothing().returning({ id: pastPapersTable.id });
+      papersRecreated += inserted.length;
+    }
+    await resyncSerialSequence({ key: "pastPapers", table: pastPapersTable, sqlName: "med_past_papers" } as TableSpec);
+  }
+
+  for (let i = 0; i < mcqs.length; i += 500) {
+    const batch = mcqs.slice(i, i + 500);
+    const values = sql.join(batch.map((m) => sql`(${m.id as number}::int, ${m.pastPaperId as number}::int, ${m.question as string}::text)`), sql`, `);
+    const res = await db.execute(sql`
+      update med_mcqs m set past_paper_id = v.pp
+      from (values ${values}) as v(id, pp, q)
+      where m.id = v.id and m.question = v.q and m.past_paper_id is null
+        and exists (select 1 from med_past_papers p where p.id = v.pp)
+    `);
+    mcqsRelinked += res.rowCount ?? 0;
+    const linked = await db.execute(sql`
+      select count(*)::int as n from med_mcqs m
+      join (values ${values}) as v(id, pp, q) on m.id = v.id and m.question = v.q
+      where m.past_paper_id = v.pp
+    `);
+    mcqsAlreadyLinked += ((linked.rows[0] as { n: number } | undefined)?.n ?? 0);
+  }
+  mcqsAlreadyLinked = Math.max(0, mcqsAlreadyLinked - mcqsRelinked);
+  return {
+    papersInBackup: papers.length,
+    papersRecreated,
+    mcqsWithPaperInBackup: mcqs.length,
+    mcqsRelinked,
+    mcqsAlreadyLinked,
+    mcqsNotMatched: Math.max(0, mcqs.length - mcqsRelinked - mcqsAlreadyLinked),
+  };
 }

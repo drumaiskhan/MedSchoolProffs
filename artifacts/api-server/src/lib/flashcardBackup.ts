@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db, flashcardsTable, type Flashcard } from "@workspace/db";
-import { buildScopeWhere, BACKUP_SCOPE_LEVELS, BACKUP_PROGRAMS, type BackupScope } from "./backupScope";
+import { buildScopeWhere, type BackupScope } from "./backupScope";
 
 // ---------------------------------------------------------------------------
 // Whole-flashcard-bank backup — the flashcard-side counterpart to
@@ -84,10 +84,9 @@ const BackupFlashcardSchema = z.object({
 // only ever reads `scope` to decide what a scoped "replace" should wipe, it
 // never trusts `label` for anything beyond display.
 const BackupScopeSchema = z.object({
-  level: z.enum(BACKUP_SCOPE_LEVELS),
+  level: z.enum(["year", "block", "module", "subject", "topic"]),
   id: z.number().int(),
   label: z.string(),
-  program: z.enum(BACKUP_PROGRAMS).optional(),
 });
 
 export const FlashcardBackupFileSchema = z.object({

@@ -61,12 +61,6 @@ function ExamTypeToggle({ value, onChange }: { value: OspeExamType; onChange: (v
   </div>;
 }
 
-// A just-uploaded file has a storage path but nothing saved yet to resolve it
-// from, so remember the URL the upload returned and use it for the preview.
-const uploadedUrls = new Map<string, string>();
-const fileUrl = (path: string | null | undefined, url?: string | null): string | undefined =>
-  path ? (url ?? uploadedUrls.get(path) ?? resolveUploadUrl(path) ?? undefined) : undefined;
-
 function FileField({ label, path, onUpload, accept, icon: Icon = UploadCloud, testId }: { label: string; path: string | null; onUpload: (path: string) => void; accept?: string; icon?: typeof UploadCloud; testId: string }) {
   const [uploading, setUploading] = useState(false);
   return <label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground hover:bg-muted/50">
@@ -74,7 +68,7 @@ function FileField({ label, path, onUpload, accept, icon: Icon = UploadCloud, te
     <input type="file" accept={accept} className="hidden" data-testid={testId} onChange={async (e) => {
       const file = e.target.files?.[0]; if (!file) return;
       setUploading(true);
-      try { const res = await uploadFile(file, 'resource'); if (res.url) uploadedUrls.set(res.storagePath, res.url); onUpload(res.storagePath); }
+      try { const res = await uploadFile(file, 'resource'); onUpload(res.storagePath); }
       catch (err) { toast({ title: 'Upload failed', description: errMsg(err), variant: 'destructive' }); }
       finally { setUploading(false); e.target.value = ''; }
     }} />
@@ -249,7 +243,7 @@ function LearningMaterialForm({ initial, onSave, onCancel, pending, examType, mo
       <FileField label="Photo" icon={ImageIcon} accept="image/*" path={imagePath} onUpload={setImagePath} testId="input-material-image" />
       <FileField label="File (PDF, doc, whatever)" icon={Paperclip} path={attachmentPath} onUpload={setAttachmentPath} testId="input-material-attachment" />
     </div>
-    {imagePath && <img src={fileUrl(imagePath, initial?.imageUrl && initial.imagePath === imagePath ? initial.imageUrl : null)} alt="" className="h-28 w-full rounded-lg object-cover" />}
+    {imagePath && <img src={resolveUploadUrl(imagePath) ?? undefined} alt="" className="h-28 w-full rounded-lg object-cover" />}
     <input value={externalUrl} onChange={(e) => setExternalUrl(e.target.value)} placeholder="External link (optional, e.g. a YouTube video)" className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-material-url" />
     <TargetingSelect programTargetKind={kind} yearTargetNumber={year} onChange={(k, y) => { setKind(k); setYear(y); }} idPrefix="material" />
     <div className="flex justify-end gap-2">
@@ -279,12 +273,12 @@ function LearningMaterialsTab({ examType }: { examType: OspeExamType }) {
     <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-extrabold">Learning material</h3><button onClick={() => setAdding((v) => !v)} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-toggle-add-material"><Plus size={15} /> {adding ? 'Close' : 'Add material'}</button></div>
     {adding && <LearningMaterialForm examType={examType} modules={modules} blocks={blocks} onCancel={() => setAdding(false)} pending={create.isPending} onSave={(body) => create.mutate(body)} />}
     {!materials.length && !adding ? <EmptyState icon={BookOpen} title="No learning material yet" body="Upload a photo, notes, a file, or a link — students see it before they attempt the exam." /> : <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{materials.map((m) => <div key={m.id} className="rounded-2xl border border-border bg-card p-4" data-testid={`card-material-${m.id}`}>
-      {m.imagePath && <img src={fileUrl(m.imagePath, m.imageUrl)} alt="" loading="lazy" className="mb-3 h-28 w-full rounded-lg object-cover" />}
+      {m.imagePath && <img src={resolveUploadUrl(m.imagePath) ?? undefined} alt="" loading="lazy" className="mb-3 h-28 w-full rounded-lg object-cover" />}
       <div className="flex items-start justify-between gap-2"><p className="text-sm font-bold leading-5">{m.title}</p><span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">{m.examType}</span></div>
       {m.description && <p className="mt-1 text-xs text-muted-foreground">{m.description}</p>}
       <p className="mt-1 text-[10px] font-semibold text-primary">{m.targetingLabel}{(m.blockId || m.moduleId) ? ` · ${[blocks.find((b) => b.id === m.blockId)?.name, modules.find((mod) => mod.id === m.moduleId)?.name].filter(Boolean).join(' › ')}` : ''}</p>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-        {m.attachmentPath && <a href={fileUrl(m.attachmentPath, m.attachmentUrl)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-primary"><Paperclip size={10} /> File</a>}
+        {m.attachmentPath && <a href={resolveUploadUrl(m.attachmentPath)!} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-primary"><Paperclip size={10} /> File</a>}
         {m.externalUrl && <a href={m.externalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-primary"><Link2 size={10} /> Link</a>}
       </div>
       {editingId === m.id ? <LearningMaterialForm initial={m} examType={examType} modules={modules} blocks={blocks} onCancel={() => setEditingId(null)} pending={update.isPending} onSave={(body) => update.mutate({ id: m.id, body })} /> : <div className="mt-3 flex items-center justify-between">
@@ -309,7 +303,7 @@ function LearningMaterialsTab({ examType }: { examType: OspeExamType }) {
 // stored as x/y percentages of the image's own box (not pixels), so a pin
 // stays put over the same structure however large the image renders later —
 // this is also what lets the student view stay correct on a small screen.
-function IdentificationEditor({ imagePath, imageUrl, points, onChange }: { imagePath: string | null; imageUrl?: string | null; points: OspeLabelPoint[]; onChange: (points: OspeLabelPoint[]) => void }) {
+function IdentificationEditor({ imagePath, points, onChange }: { imagePath: string | null; points: OspeLabelPoint[]; onChange: (points: OspeLabelPoint[]) => void }) {
   const imgWrapRef = useRef<HTMLDivElement | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -345,7 +339,7 @@ function IdentificationEditor({ imagePath, imageUrl, points, onChange }: { image
       className="relative w-full cursor-crosshair select-none overflow-hidden rounded-xl border border-border bg-muted"
       data-testid="editor-identification-image"
     >
-      <img src={fileUrl(imagePath, imageUrl)} alt="" className="pointer-events-none block w-full" draggable={false} />
+      <img src={resolveUploadUrl(imagePath) ?? undefined} alt="" className="pointer-events-none block w-full" draggable={false} />
       {points.map((p, i) => <div
         key={p.id}
         onMouseDown={(e) => { e.stopPropagation(); setDragId(p.id); }}
@@ -392,7 +386,7 @@ function StationForm({ initial, onSave, onCancel, pending, examType, modules, bl
       <FileField label="Photo / specimen image" icon={ImageIcon} accept="image/*" path={imagePath} onUpload={setImagePath} testId="input-station-image" />
       <FileField label="Attachment (optional)" icon={Paperclip} path={attachmentPath} onUpload={setAttachmentPath} testId="input-station-attachment" />
     </div>
-    {imagePath && answerType !== 'LABELING' && <img src={fileUrl(imagePath, initial?.imageUrl && initial.imagePath === imagePath ? initial.imageUrl : null)} alt="" className="h-28 w-full rounded-lg object-cover" />}
+    {imagePath && answerType !== 'LABELING' && <img src={resolveUploadUrl(imagePath) ?? undefined} alt="" className="h-28 w-full rounded-lg object-cover" />}
 
     <div className="rounded-xl border border-border bg-card p-3">
       <div className="mb-2 flex items-center gap-2 text-[11px] font-bold text-muted-foreground"><ListChecks size={13} /> How the student answers</div>
@@ -407,8 +401,8 @@ function StationForm({ initial, onSave, onCancel, pending, examType, modules, bl
         </div>)}
         <button onClick={() => setOptions([...options, ''])} className="text-[11px] font-bold text-primary" data-testid="button-add-option">+ Add option</button>
         <p className="text-[10px] text-muted-foreground">Select the radio button next to the correct option.</p>
-      </div> : answerType === 'LABELING' ? <IdentificationEditor imagePath={imagePath} imageUrl={initial?.imagePath === imagePath ? initial?.imageUrl : null} points={labelPoints} onChange={setLabelPoints} />
-        : <textarea value={modelAnswer} onChange={(e) => setModelAnswer(e.target.value)} placeholder="Model answer / marking scheme (required) — list each key point on its own line; the AI awards marks per point the student states correctly, so a clear list gives fairer, stricter marking" rows={3} className="mt-3 w-full rounded-lg border border-border bg-background p-3 text-xs" data-testid="textarea-station-model-answer" />}
+      </div> : answerType === 'LABELING' ? <IdentificationEditor imagePath={imagePath} points={labelPoints} onChange={setLabelPoints} />
+        : <textarea value={modelAnswer} onChange={(e) => setModelAnswer(e.target.value)} placeholder="Model answer / marking scheme — the student's written answer is graded by AI against this" rows={3} className="mt-3 w-full rounded-lg border border-border bg-background p-3 text-xs" data-testid="textarea-station-model-answer" />}
     </div>
 
     <div className="grid gap-2 sm:grid-cols-2">
@@ -430,8 +424,7 @@ function StationForm({ initial, onSave, onCancel, pending, examType, modules, bl
         })}
         disabled={pending || !title.trim()
           || (answerType === 'MCQ' && (!correctAnswer || options.filter((o) => o.trim()).length < 2))
-          || (answerType === 'LABELING' && (!imagePath || labelPoints.filter((p) => p.label.trim()).length < 1))
-          || (answerType === 'WRITTEN' && !modelAnswer.trim())}
+          || (answerType === 'LABELING' && (!imagePath || labelPoints.filter((p) => p.label.trim()).length < 1))}
         className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-bold text-primary-foreground disabled:opacity-50" data-testid="button-save-station"
       >{pending ? 'Saving…' : 'Save'}</button>
     </div>
@@ -457,7 +450,7 @@ function StationsTab({ examType }: { examType: OspeExamType }) {
 
   const stationRow = (s: OspeStation) => <div key={s.id} className="border-b border-border p-4 last:border-0" data-testid={`row-station-${s.id}`}>
     <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap">
-      {s.imagePath ? <img src={fileUrl(s.imagePath, s.imageUrl)} alt="" className="size-12 shrink-0 rounded-lg object-cover" /> : <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Stethoscope size={18} /></div>}
+      {s.imagePath ? <img src={resolveUploadUrl(s.imagePath) ?? undefined} alt="" className="size-12 shrink-0 rounded-lg object-cover" /> : <div className="grid size-12 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><Stethoscope size={18} /></div>}
       <div className="min-w-[160px] flex-1"><p className="text-sm font-bold leading-5">{s.title}</p><p className="mt-1 text-xs text-muted-foreground">{s.answerType === 'MCQ' ? 'Multiple choice' : s.answerType === 'LABELING' ? `Identification · ${(s.labelPoints || []).length} pin${(s.labelPoints || []).length === 1 ? '' : 's'}` : 'Written (AI graded)'} · {s.marks} mark{s.marks === 1 ? '' : 's'} · {s.targetingLabel}</p>{(s.blockId || s.moduleId) && <p className="mt-0.5 text-[10px] font-semibold text-primary">{[blocks.find((b) => b.id === s.blockId)?.name, modules.find((m) => m.id === s.moduleId)?.name].filter(Boolean).join(' › ')}</p>}</div>
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={() => update.mutate({ id: s.id, body: { active: !s.active } })} className={cn('rounded-lg px-2 py-1 text-[10px] font-extrabold', s.active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground')} data-testid={`button-toggle-station-${s.id}`}>{s.active ? 'Active' : 'Hidden'}</button>

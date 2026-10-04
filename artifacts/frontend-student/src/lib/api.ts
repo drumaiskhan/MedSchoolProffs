@@ -364,7 +364,7 @@ export const examsApi = {
 // ---------------------------------------------------------------------------
 
 export type OspeExamType = 'OSPE' | 'OSCE';
-export interface OspeLearningMaterial { id: number; moduleId: number | null; examType: OspeExamType; title: string; description: string; bodyText: string; imagePath: string | null; imageUrl?: string | null; attachmentPath: string | null; attachmentUrl?: string | null; externalUrl: string | null }
+export interface OspeLearningMaterial { id: number; moduleId: number | null; examType: OspeExamType; title: string; description: string; bodyText: string; imagePath: string | null; attachmentPath: string | null; externalUrl: string | null }
 export interface OspeExam {
   id: number; title: string; description: string; examType: OspeExamType; programTargetKind: string | null; yearTargetNumber: number | null;
   durationMinutes: number; startAt: string; endAt: string; maxAttempts: number; passingPercent: number | null;
@@ -375,13 +375,13 @@ export interface OspeStudentExam extends OspeExam { attemptsUsed: number; canSta
 // Student-facing identification point — just where the pin sits, never the
 // correct label (that stays server-side until results are released).
 export interface OspeExamLabelPoint { id: string; x: number; y: number }
-export interface OspeExamStation { id: number; title: string; instructions: string; imagePath: string | null; imageUrl?: string | null; attachmentPath: string | null; attachmentUrl?: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; labelPoints: OspeExamLabelPoint[] | null; marks: number; timeLimitSeconds: number | null }
+export interface OspeExamStation { id: number; title: string; instructions: string; imagePath: string | null; attachmentPath: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; labelPoints: OspeExamLabelPoint[] | null; marks: number; timeLimitSeconds: number | null }
 export interface OspeExamStartResponse { attemptId: number; startedAt: string; durationMinutes: number; stations: OspeExamStation[] }
 export interface OspeExamResult {
   released: boolean; status?: string; totalStations?: number; fullyGraded?: boolean;
   totalMarks?: number; obtainedMarks?: number | null; percentage?: number | null; passed?: boolean | null;
   breakdown?: Array<{
-    stationId: number; title: string; instructions: string; imagePath: string | null; imageUrl?: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null;
+    stationId: number; title: string; instructions: string; imagePath: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null;
     selectedAnswer: string | null; writtenAnswer: string | null; correctAnswer: string | null; modelAnswer: string | null;
     labelPoints: Array<{ id: string; x: number; y: number; label: string }> | null; labelAnswers: Record<string, string> | null;
     marks: number; marksObtained: number | null; correct: boolean | null; aiVerdict: 'correct' | 'partial' | 'incorrect' | null; aiFeedback: string | null;

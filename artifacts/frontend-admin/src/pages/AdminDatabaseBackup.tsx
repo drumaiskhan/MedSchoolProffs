@@ -24,7 +24,7 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Archive, CheckCircle2, Database, Download, Loader2, ShieldAlert, Upload, Users } from 'lucide-react';
 import { SectionHeader, ConfirmDialog, cn } from '@/lib/shared';
-import { fullBackupApi, ApiRequestError, type FullBackupScope, type FullBackupValidation, type FullBackupRestoreResult } from '@/lib/api';
+import { fullBackupApi, ApiRequestError, type FullBackupScope, type FullBackupValidation, type FullBackupRestoreResult, type PastPaperRelinkResult } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
 const SCOPES: Array<{ scope: FullBackupScope; title: string; description: string; icon: typeof Database }> = [
@@ -182,6 +182,32 @@ function BackupCard({ scope, title, description, icon: Icon, onImported }: { sco
   </div>;
 }
 
+// Repair for a restore that left MCQs detached from their past papers: the
+// MCQs are all there (the bank count looks right) but they no longer belong
+// to a paper, so papers show empty. Uploading the original backup file puts
+// the links back; it only fills empty links, never overwrites existing ones.
+function RelinkPastPapersCard() {
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<PastPaperRelinkResult | null>(null);
+  const relink = useMutation({
+    mutationFn: (f: File) => fullBackupApi.relinkPastPapers(f),
+    onSuccess: (r) => { setResult(r); toast({ title: 'Past paper links repaired', description: `${r.mcqsRelinked.toLocaleString()} MCQ${r.mcqsRelinked === 1 ? '' : 's'} re-attached.` }); },
+    onError: (err: unknown) => toast({ title: 'Could not repair the links', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — try again.', variant: 'destructive' }),
+  });
+  return <div className="mt-5 rounded-2xl border border-border bg-card p-5" data-testid="card-relink-past-papers">
+    <div className="flex items-center gap-2 text-sm font-extrabold"><Archive size={16} className="text-primary" /> Repair past paper links</div>
+    <p className="mt-1.5 max-w-2xl text-xs leading-5 text-muted-foreground">Restored a backup and your past papers look empty even though the MCQ bank count is right? Upload the same backup file here. Any past paper that went missing is re-created and each MCQ is put back in its paper. Existing links are never changed, so it is safe to run more than once.</p>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <input type="file" accept=".json,application/json" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); }} className="max-w-full text-xs file:mr-3 file:rounded-lg file:border file:border-border file:bg-muted file:px-3 file:py-2 file:text-xs file:font-bold" data-testid="input-relink-file" />
+      <button type="button" onClick={() => file && relink.mutate(file)} disabled={!file || relink.isPending} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-relink-past-papers">{relink.isPending ? <><Loader2 size={14} className="animate-spin" /> Repairing…</> : 'Repair links'}</button>
+    </div>
+    {result && <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs" data-testid="text-relink-result">
+      <div className="font-extrabold">{result.mcqsRelinked.toLocaleString()} MCQ{result.mcqsRelinked === 1 ? '' : 's'} re-attached{result.papersRecreated ? `, ${result.papersRecreated} past paper${result.papersRecreated === 1 ? '' : 's'} re-created` : ''}</div>
+      <div className="mt-1 text-muted-foreground">{result.mcqsAlreadyLinked.toLocaleString()} already linked · {result.mcqsNotMatched.toLocaleString()} could not be matched (the question was changed or deleted since this backup) · {result.papersInBackup.toLocaleString()} past papers in the file</div>
+    </div>}
+  </div>;
+}
+
 function AdminDatabaseBackup() {
   const [lastResult, setLastResult] = useState<FullBackupRestoreResult | null>(null);
 
@@ -195,11 +221,20 @@ function AdminDatabaseBackup() {
       {SCOPES.map((s) => <BackupCard key={s.scope} {...s} onImported={setLastResult} />)}
     </div>
 
+    <RelinkPastPapersCard />
+
     {lastResult && <div className={cn('mt-5 rounded-2xl border p-5 text-xs', 'border-primary/30 bg-primary/5')} data-testid="text-last-restore-result">
       <div className="flex items-center gap-2 font-extrabold"><CheckCircle2 size={15} className="text-primary" /> Last restore — {lastResult.scope}, {lastResult.mode === 'wipe-and-restore' ? 'wiped and restored' : 'restored into empty tables'}</div>
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
         {Object.entries(lastResult.restored).map(([key, count]) => <div key={key} className="flex justify-between gap-2 border-b border-border/60 py-1"><span className="text-muted-foreground">{key}</span><span className="font-bold">{count.toLocaleString()}</span></div>)}
       </div>
+      {lastResult.nulledRefs && Object.keys(lastResult.nulledRefs).length > 0 && <div className="mt-4 rounded-lg border border-accent/50 bg-accent/10 p-3 text-accent-text" data-testid="warning-cleared-links">
+        <div className="flex items-center gap-2 font-extrabold"><AlertTriangle size={14} /> Some links were cleared</div>
+        <p className="mt-1 text-[11px] leading-5">These rows were restored, but what they pointed at is not in this backup file, so the link was removed. For example, MCQs whose past paper is missing will no longer appear inside that paper. Restore from a backup that contains those items, or use "Repair past paper links" below with the original file.</p>
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+          {Object.entries(lastResult.nulledRefs).map(([key, count]) => <div key={key} className="flex justify-between gap-2 border-b border-accent/30 py-1"><span>{key}</span><span className="font-bold">{count.toLocaleString()}</span></div>)}
+        </div>
+      </div>}
       {/* A restore can complete without error and still be missing entire
           tables of data — e.g. every module dropped because its blockId
           didn't resolve within this file. dropped is only ever populated
@@ -217,7 +252,7 @@ function AdminDatabaseBackup() {
       <p className="font-bold text-foreground">Format notes</p>
       <ul className="mt-2 list-disc space-y-1 pl-4">
         <li>Every row keeps its original database id, and every foreign key is preserved — a restored MCQ still points at the right topic, a restored payment still points at the right student.</li>
-        <li>Platform settings that look like secrets (API keys, SMTP password, the admin signup code) are exported as a placeholder — reconfigure those from Admin → Platform settings after a restore.</li>
+        <li>A Full Database Backup keeps your saved API keys and SMTP password exactly as stored, so a restore brings everything back as it was — keep that file private. The Platform content backup replaces those secrets with a placeholder so it is safer to share; restoring it never overwrites keys already saved here.</li>
         <li>Restoring works best into an empty database. Restoring into one that already has data requires explicitly choosing "wipe and restore," which runs inside a single transaction — a failure rolls back rather than leaving things half-restored.</li>
         <li>A brand-new PostgreSQL database (a freshly created Supabase project, for example) doesn't need its tables created by hand first — restoring into it automatically prepares the required schema before restoring data.</li>
         <li>Use "Full Database Backup" for a complete migration — it's the same JSON either way, just every table in one file instead of two.</li>

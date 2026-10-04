@@ -9,6 +9,7 @@ import {
   buildFullBackup,
   validateFullBackup,
   restoreFullBackup,
+  relinkPastPapersFromBackup,
   APPLICATION_NAME,
   type BackupScopeName,
   type FullBackupFile,
@@ -152,6 +153,31 @@ router.post("/admin/full-backup/import", requireAdmin, upload.single("file"), as
   }
 
   res.status(201).json({ ...result, application: APPLICATION_NAME });
+});
+
+// Repair for a restore that left MCQs detached from their past papers: upload
+// the same backup file and the links are filled back in (never overwritten).
+router.post("/admin/full-backup/relink-past-papers", requireAdmin, upload.single("file"), async (req, res): Promise<void> => {
+  if (!req.file) { res.status(400).json({ error: "No backup file uploaded" }); return; }
+  let raw: FullBackupFile;
+  try {
+    raw = JSON.parse(req.file.buffer.toString("utf-8")) as FullBackupFile;
+  } catch {
+    res.status(422).json({ error: "That file isn't valid JSON." });
+    return;
+  }
+  if (!raw || typeof raw !== "object" || !raw.data || !Array.isArray(raw.data.mcqs)) {
+    res.status(422).json({ error: "This doesn't look like a full or content backup (no MCQs found in it)." });
+    return;
+  }
+  try {
+    const result = await relinkPastPapersFromBackup(raw);
+    await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "PAST_PAPER_LINKS_REPAIRED", entity: "mcq", metadata: JSON.stringify(result) }).catch((err: unknown) => logger.error({ err }, "[full-backup] relink audit log failed"));
+    res.status(200).json(result);
+  } catch (err) {
+    logger.error({ err }, "[full-backup] relink failed");
+    res.status(500).json({ error: `Could not repair the links: ${dbErrorMessage(err, "unknown database error")}` });
+  }
 });
 
 export default router;

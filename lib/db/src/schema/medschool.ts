@@ -424,10 +424,6 @@ export const mcqsTable = pgTable("med_mcqs", {
   topicId: integer("topic_id"),
   pastPaperId: integer("past_paper_id"),
   examId: integer("exam_id"),
-  // Manual/shuffled position in lists. NULL = never shuffled (falls back to
-  // newest-first). Set by POST /admin/mcqs/shuffle-sequence so the admin can
-  // mix the question sequence of a block/module/subject/topic.
-  sortOrder: integer("sort_order"),
   ...timestamps,
 });
 

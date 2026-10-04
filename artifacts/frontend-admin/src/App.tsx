@@ -2,6 +2,7 @@ import { type ReactNode, type ComponentProps, useState, useEffect, lazy, Suspens
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useSearch, useParams, Router as WouterRouter } from 'wouter';
 import {ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, ChevronRight, ChevronUp, ChevronDown, CircleHelp, Clock3, CreditCard, FileText, Flame, FolderOpen, LayoutDashboard, Library, LockKeyhole, LogOut, Menu, MoreHorizontal, Pencil, Plus, ReceiptText, Search, Settings, ShieldCheck, Sparkles, Stethoscope, Target, Trash2, TrendingUp, Users, X, Zap, Bell, SlidersHorizontal, FileStack, NotebookPen, Bookmark, Flag, Trophy, MessageSquare, Landmark, Copy, QrCode, User as UserIcon, Mail, Phone, Hash, GraduationCap, CalendarDays, Eye, EyeOff, Smartphone, UploadCloud, ImageOff, RotateCcw, ThumbsUp, ThumbsDown, CheckCheck, ClipboardCheck, AlertTriangle, Wand2, Activity, Layers, BarChart3, ToggleLeft, Download, Database, Loader2} from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { applyThemeVars, DEFAULT_THEME, readableForegroundHsl } from '@/lib/theme';
 import {
   getListMembershipPlansQueryKey, getListPaymentsQueryKey, getListMcqsQueryKey, getListModulesQueryKey, getListStudentsQueryKey, getListNotificationsQueryKey, getGetCurrentUserQueryKey, getListFlashcardsQueryKey,
@@ -25,7 +26,6 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 import './index.css';
 import { Shell, SkeletonPage, BrandedLoadingScreen, useFaviconSync, useThemeSync } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
-import { pageLoaders, startPrefetching } from '@/lib/routes';
 
 // Round 3, item 10 (performance) — same over-fetching fix as the student
 // app (see its App.tsx for the full rationale): `new QueryClient()` with no
@@ -42,36 +42,36 @@ import { pageLoaders, startPrefetching } from '@/lib/routes';
 
 // Route-level code splitting: each admin page ships as its own chunk and
 // is only fetched when that route is actually visited.
-const Login = lazy(pageLoaders.Login);
-const AdminSignup = lazy(pageLoaders.AdminSignup);
-const ForgotPassword = lazy(pageLoaders.ForgotPassword);
-const ResetPassword = lazy(pageLoaders.ResetPassword);
-const VerifyEmail = lazy(pageLoaders.VerifyEmail);
-const Notifications = lazy(pageLoaders.Notifications);
-const Profile = lazy(pageLoaders.Profile);
-const AdminOverview = lazy(pageLoaders.AdminOverview);
-const AdminStudents = lazy(pageLoaders.AdminStudents);
-const AdminPaymentsHub = lazy(pageLoaders.AdminPaymentsHub);
-const AdminPlans = lazy(pageLoaders.AdminPlans);
-const AdminAcademicStructure = lazy(pageLoaders.AdminAcademicStructure);
-const AdminContent = lazy(pageLoaders.AdminContent);
-const AdminSubjectsPage = lazy(pageLoaders.AdminSubjectsPage);
-const AdminTopicsPage = lazy(pageLoaders.AdminTopicsPage);
-const AdminQualityCenter = lazy(pageLoaders.AdminQualityCenter);
-const AdminMcqs = lazy(pageLoaders.AdminMcqs);
-const AdminFlashcards = lazy(pageLoaders.AdminFlashcards);
-const AdminBooks = lazy(pageLoaders.AdminBooks);
-const AdminBookPurchases = lazy(pageLoaders.AdminBookPurchases);
-const AdminCoupons = lazy(pageLoaders.AdminCoupons);
-const AdminPastPapers = lazy(pageLoaders.AdminPastPapers);
-const AdminExams = lazy(pageLoaders.AdminExams);
-const AdminOspeOsce = lazy(pageLoaders.AdminOspeOsce);
-const AdminFeedback = lazy(pageLoaders.AdminFeedback);
-const AdminAiVisualizerLogs = lazy(pageLoaders.AdminAiVisualizerLogs);
-const AdminSiteContent = lazy(pageLoaders.AdminSiteContent);
-const AdminTeam = lazy(pageLoaders.AdminTeam);
-const AdminSettings = lazy(pageLoaders.AdminSettings);
-const AdminDatabaseBackup = lazy(pageLoaders.AdminDatabaseBackup);
+const Login = lazy(() => import('@/pages/Login'));
+const AdminSignup = lazy(() => import('@/pages/AdminSignup'));
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('@/pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('@/pages/VerifyEmail'));
+const Notifications = lazy(() => import('@/pages/Notifications'));
+const Profile = lazy(() => import('@/pages/Profile'));
+const AdminOverview = lazy(() => import('@/pages/AdminOverview'));
+const AdminStudents = lazy(() => import('@/pages/AdminStudents'));
+const AdminPaymentsHub = lazy(() => import('@/pages/AdminPaymentsHub'));
+const AdminPlans = lazy(() => import('@/pages/AdminPlans'));
+const AdminAcademicStructure = lazy(() => import('@/pages/AdminAcademicStructure'));
+const AdminContent = lazy(() => import('@/pages/AdminContent'));
+const AdminSubjectsPage = lazy(() => import('@/pages/AdminSubjectsPage'));
+const AdminTopicsPage = lazy(() => import('@/pages/AdminTopicsPage'));
+const AdminQualityCenter = lazy(() => import('@/pages/AdminQualityCenter'));
+const AdminMcqs = lazy(() => import('@/pages/AdminMcqs'));
+const AdminFlashcards = lazy(() => import('@/pages/AdminFlashcards'));
+const AdminBooks = lazy(() => import('@/pages/AdminBooks'));
+const AdminBookPurchases = lazy(() => import('@/pages/AdminBookPurchases'));
+const AdminCoupons = lazy(() => import('@/pages/AdminCoupons'));
+const AdminPastPapers = lazy(() => import('@/pages/AdminPastPapers'));
+const AdminExams = lazy(() => import('@/pages/AdminExams'));
+const AdminOspeOsce = lazy(() => import('@/pages/AdminOspeOsce'));
+const AdminFeedback = lazy(() => import('@/pages/AdminFeedback'));
+const AdminAiVisualizerLogs = lazy(() => import('@/pages/AdminAiVisualizerLogs'));
+const AdminSiteContent = lazy(() => import('@/pages/AdminSiteContent'));
+const AdminTeam = lazy(() => import('@/pages/AdminTeam'));
+const AdminSettings = lazy(() => import('@/pages/AdminSettings'));
+const AdminDatabaseBackup = lazy(() => import('@/pages/AdminDatabaseBackup'));
 
 function AppRoutes() {
  useFaviconSync();
@@ -81,6 +81,6 @@ function AppRoutes() {
  // fallback it rendered as bare skeleton blocks on a blank white page.
  // BrandedLoadingScreen matches the initial boot / session-restore loader.
  return <Suspense fallback={<BrandedLoadingScreen />}><Switch><Route path="/login" component={Login} /><Route path="/admin/login" component={Login} /><Route path="/admin-signup/1" component={AdminSignup} /><Route path="/forgot-password" component={ForgotPassword} /><Route path="/reset-password" component={ResetPassword} /><Route path="/verify-email" component={VerifyEmail} /><Route path="/notifications"><Shell><Notifications /></Shell></Route><Route path="/profile"><Shell><Profile /></Shell></Route><Route path="/"><Shell><AdminOverview /></Shell></Route><Route path="/admin"><Shell><AdminOverview /></Shell></Route><Route path="/admin/students"><Shell><AdminStudents /></Shell></Route><Route path="/admin/payments"><Shell><AdminPaymentsHub initialTab="Proof Review" /></Shell></Route><Route path="/admin/plans"><Shell><AdminPlans /></Shell></Route><Route path="/admin/coupons"><Shell><AdminCoupons /></Shell></Route><Route path="/admin/payment-details"><Shell><AdminPaymentsHub initialTab="Collection Details" /></Shell></Route><Route path="/admin/academic-structure"><Shell><AdminAcademicStructure /></Shell></Route><Route path="/admin/content"><Shell><AdminContent /></Shell></Route><Route path="/admin/subjects"><Shell><AdminSubjectsPage /></Shell></Route><Route path="/admin/topics"><Shell><AdminTopicsPage /></Shell></Route><Route path="/admin/quality"><Shell><AdminQualityCenter /></Shell></Route><Route path="/admin/mcqs"><Shell><AdminMcqs /></Shell></Route><Route path="/admin/flashcards"><Shell><AdminFlashcards /></Shell></Route><Route path="/admin/books"><Shell><AdminBooks /></Shell></Route><Route path="/admin/book-purchases"><Shell><AdminBookPurchases /></Shell></Route><Route path="/admin/past-papers"><Shell><AdminPastPapers /></Shell></Route><Route path="/admin/exams"><Shell><AdminExams /></Shell></Route><Route path="/admin/ospe-osce"><Shell><AdminOspeOsce /></Shell></Route><Route path="/admin/feedback"><Shell><AdminFeedback /></Shell></Route><Route path="/admin/ai-visualizer-logs"><Shell><AdminAiVisualizerLogs /></Shell></Route><Route path="/admin/site-content"><Shell><AdminSiteContent /></Shell></Route><Route path="/admin/team"><Shell><AdminTeam /></Shell></Route><Route path="/admin/settings"><Shell><AdminSettings /></Shell></Route><Route path="/admin/database-backup"><Shell><AdminDatabaseBackup /></Shell></Route><Route component={NotFound} /></Switch></Suspense>; }
-function App() { useEffect(() => { startPrefetching(); }, []); return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><ErrorBoundary><AppRoutes /></ErrorBoundary></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
+function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><ErrorBoundary><AppRoutes /></ErrorBoundary></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
 
 export default App;

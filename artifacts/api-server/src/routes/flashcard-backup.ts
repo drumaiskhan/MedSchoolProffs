@@ -13,7 +13,7 @@ import {
   FLASHCARD_BACKUP_FORMAT_VERSION,
 } from "../lib/flashcardBackup";
 import { logger } from "../lib/logger";
-import { BACKUP_SCOPE_LEVELS, BACKUP_PROGRAMS, describeScope, sanitizeScopeLabel, scopeFilenamePart, type BackupScope } from "../lib/backupScope";
+import { BACKUP_SCOPE_LEVELS, describeScope, sanitizeScopeLabel, scopeFilenamePart, type BackupScope } from "../lib/backupScope";
 
 const router: IRouter = Router();
 
@@ -47,19 +47,17 @@ const ExportQuery = z.object({
   // them — used as-is for the filename/embedded scope so it always matches
   // what they picked, with describeScope as a fallback when it's missing.
   scopeLabel: z.string().optional(),
-  // MBBS / BDS / SHARED — only used with scopeLevel "program" or "year".
-  scopeProgram: z.enum(BACKUP_PROGRAMS).optional(),
 });
 
 router.get("/admin/flashcard-backup/export", requireAdmin, async (req, res): Promise<void> => {
   const queryParsed = ExportQuery.safeParse(req.query);
   if (!queryParsed.success) { res.status(400).json({ error: "Invalid scope" }); return; }
-  const { scopeLevel, scopeId, scopeLabel, scopeProgram } = queryParsed.data;
+  const { scopeLevel, scopeId, scopeLabel } = queryParsed.data;
   if (scopeLevel && scopeId === undefined) { res.status(400).json({ error: "scopeId is required alongside scopeLevel" }); return; }
 
   try {
     const scope: BackupScope | undefined = scopeLevel && scopeId !== undefined
-      ? { level: scopeLevel, id: scopeId, label: sanitizeScopeLabel(scopeLabel || (await describeScope(scopeLevel, scopeId))), ...(scopeProgram ? { program: scopeProgram } : {}) }
+      ? { level: scopeLevel, id: scopeId, label: sanitizeScopeLabel(scopeLabel || (await describeScope(scopeLevel, scopeId))) }
       : undefined;
 
     const backup = await buildFlashcardBackup(scope);

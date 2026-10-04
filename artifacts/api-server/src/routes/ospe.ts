@@ -17,33 +17,8 @@ import {
 import { requireAuth, requireAdmin, requireMembershipFor, isAdminRole } from "../middlewares/auth";
 import { getStudentTargeting, isTargetVisible, notifyTargetedStudents, describeModuleTargeting } from "../lib/contentVisibility";
 import { gradeWrittenAnswer, AiNotConfiguredError } from "../lib/aiExplain";
-import { resolveFileUrl } from "../lib/storage";
 
 const router: IRouter = Router();
-
-// Uploaded photos/attachments are stored as storage paths ("supabase:bucket/…",
-// "cloudinary:…"), which a browser can't load — only resolveFileUrl() turns
-// them into a real URL. This router returned the raw path everywhere, so an
-// uploaded station/material picture never loaded in the admin preview or for
-// students. Rather than touch ~15 response shapes one by one, every JSON body
-// leaving the /ospe and /admin/ospe routes is walked once and each object with
-// an imagePath / attachmentPath gets a sibling imageUrl / attachmentUrl. The
-// raw paths stay as they are so the admin form still saves paths, not URLs.
-function addFileUrls(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) { for (const v of value) addFileUrls(v, depth + 1); return value; }
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.imagePath === "string" && obj.imagePath) obj.imageUrl = resolveFileUrl(obj.imagePath);
-  if (typeof obj.attachmentPath === "string" && obj.attachmentPath) obj.attachmentUrl = resolveFileUrl(obj.attachmentPath);
-  for (const v of Object.values(obj)) addFileUrls(v, depth + 1);
-  return obj;
-}
-router.use((req, res, next) => {
-  if (!/^\/(admin\/)?ospe(\/|$)/.test(req.path)) { next(); return; }
-  const original = res.json.bind(res);
-  res.json = ((body: unknown) => original(addFileUrls(body))) as typeof res.json;
-  next();
-});
 
 const ExamTypeEnum = z.enum(["OSPE", "OSCE"]);
 
@@ -312,9 +287,6 @@ router.post("/admin/ospe/stations", requireAdmin, async (req, res): Promise<void
   const parsed = StationBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
   const d = parsed.data;
-  // A written station is marked by AI against its model answer; without one
-  // there is nothing honest to mark against and it would never be gradable.
-  if ((d.answerType ?? "WRITTEN") === "WRITTEN" && !d.modelAnswer?.trim()) { res.status(400).json({ error: "Written stations need a model answer / marking scheme — it is what the student's answer is graded against." }); return; }
   const [row] = await db.insert(ospeStationsTable).values({
     title: d.title, instructions: d.instructions ?? "", examType: d.examType ?? "OSPE", moduleId: d.moduleId ?? null, blockId: d.blockId ?? null,
     imagePath: d.imagePath ?? null, attachmentPath: d.attachmentPath ?? null, answerType: d.answerType ?? "WRITTEN",
@@ -755,7 +727,7 @@ async function gradeWrittenStations(attemptId: number, stations: Array<typeof os
     const existing = answerMap.get(station.id);
     try {
       const result = await gradeWrittenAnswer({
-        instructions: station.instructions, modelAnswer: station.modelAnswer ?? "",
+        instructions: station.instructions, modelAnswer: station.modelAnswer ?? "(no model answer was provided by the admin — grade generously based on general medical knowledge)",
         studentAnswer: existing?.writtenAnswer ?? "", maxMarks: Number(station.marks),
       });
       if (existing) {

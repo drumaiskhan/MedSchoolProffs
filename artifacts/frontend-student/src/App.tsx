@@ -32,6 +32,9 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
+import { VisualizationRenderer, isStepBased } from '@/components/visualizer/VisualizationRenderer';
+import { StepControls } from '@/components/visualizer/StepControls';
+import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 import './index.css';
 import { Shell, SkeletonPage, BrandedLoadingScreen, FocusModeContext, PageTitleContext, useFaviconSync, useThemeSync } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
@@ -144,33 +147,11 @@ function usePrefetchRoutes() {
       seen.add(hit[0]);
       hit[1]().catch(() => seen.delete(hit[0]));
     };
-    // Idle warm-up: after first paint, pull the most-used pages one at a
-    // time while the browser has nothing better to do, so the first tap on
-    // Dashboard / Practice / Exams etc. lands on an already-downloaded chunk.
-    // Skipped on Save-Data / 2G. Heavy pages (Books, AI visualizer) are left
-    // to the hover/touch prefetch above.
-    const conn = (navigator as any).connection;
-    const constrained = !!conn && (conn.saveData || /(^|-)2g$/.test(conn.effectiveType || ''));
-    let cancelled = false;
-    const IDLE_FIRST = ['/dashboard', '/blocks', '/subjects', '/practice', '/exams', '/progress', '/flashcards', '/past-papers', '/leaderboard', '/notifications', '/profile'];
-    const idle: (cb: () => void) => void = (window as any).requestIdleCallback
-      ? (cb) => (window as any).requestIdleCallback(cb, { timeout: 3000 })
-      : (cb) => setTimeout(cb, 400);
-    let idx = 0;
-    const step = () => {
-      if (cancelled || idx >= IDLE_FIRST.length) return;
-      const hit = ROUTE_PREFETCH.find(([prefix]) => prefix === IDLE_FIRST[idx++]);
-      if (hit && !seen.has(hit[0])) { seen.add(hit[0]); hit[1]().catch(() => seen.delete(hit[0])); }
-      idle(step);
-    };
-    const kick = () => idle(step);
-    if (!constrained) { if (document.readyState === 'complete') kick(); else window.addEventListener('load', kick, { once: true }); }
     const opts = { passive: true, capture: true } as const;
     document.addEventListener('pointerover', warm, opts);
     document.addEventListener('focusin', warm, opts);
     document.addEventListener('touchstart', warm, opts);
     return () => {
-      cancelled = true;
       document.removeEventListener('pointerover', warm, opts);
       document.removeEventListener('focusin', warm, opts);
       document.removeEventListener('touchstart', warm, opts);

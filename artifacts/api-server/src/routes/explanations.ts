@@ -392,57 +392,38 @@ router.post("/admin/mcqs/generate-option-explanations", requireAdmin, async (req
 const DEDUPE_REPAIR_BATCH_CAP = 20;
 const DedupeBatchBody = z.object({ pairs: z.array(z.object({ id: z.number().int().positive(), otherId: z.number().int().positive() })).min(1).max(DEDUPE_REPAIR_BATCH_CAP) });
 
-// Same tokenisation/Jaccard as the client's findDuplicates (frontend-admin
-// contentQuality.ts) so the server can tell whether a rewrite actually
-// stopped the pair from being flagged as a near-duplicate.
-const dupNorm = (s: string) => s.toLowerCase().replace(/<[^>]*>/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-const dupTokens = (s: string) => new Set(dupNorm(s).split(" ").filter((w) => w.length > 2));
-function stemSimilarity(a: string, b: string): number {
-  const ta = dupTokens(a), tb = dupTokens(b);
-  let inter = 0; ta.forEach((w) => tb.has(w) && inter++);
-  return inter / (ta.size + tb.size - inter || 1);
-}
-const DUPE_SIMILARITY_THRESHOLD = 0.72;
-
 router.post("/admin/mcqs/dedupe-batch", requireAdmin, async (req, res): Promise<void> => {
   const parsed = DedupeBatchBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
 
-  // One rewrite per target row per call — two pairs sharing the same "b"
-  // would otherwise race and overwrite each other.
-  const seenTargets = new Set<number>();
-  const pairs = parsed.data.pairs.filter((p) => (seenTargets.has(p.id) ? false : (seenTargets.add(p.id), true)));
-
-  const ids = Array.from(new Set(pairs.flatMap((p) => [p.id, p.otherId])));
+  const ids = Array.from(new Set(parsed.data.pairs.flatMap((p) => [p.id, p.otherId])));
   const rows = await db.select({ id: mcqsTable.id, question: mcqsTable.question, options: mcqsTable.options, correctAnswer: mcqsTable.correctAnswer }).from(mcqsTable).where(inArray(mcqsTable.id, ids));
   const byId = new Map(rows.map((r) => [r.id, r]));
 
-  // Each pair has its own try/catch so one bad row can't throw away the
-  // rest of the batch. Every result now carries the new content (so the
-  // client can patch its local list instead of re-downloading ~7MB of
-  // questions every round) and a `reason` when nothing was written (so the
-  // client can report failures instead of silently retrying them).
-  type Result = { id: number; rewritten: boolean; reason?: string; stillSimilar?: boolean; question?: string; options?: string[]; correctAnswer?: string };
-  const results: Result[] = await Promise.all(pairs.map(async (pair): Promise<Result> => {
+  // Same concurrency reasoning as CLASSIFY_CONCURRENCY / GENERATE_CONCURRENCY
+  // above: a fully sequential loop over up to 20 AI calls (each with its own
+  // 12s hard deadline) could take a while, so pairs run in parallel. Each
+  // pair is wrapped in its own try/catch so one bad row (a DB error, a
+  // malformed legacy row) can't reject the whole Promise.all and throw away
+  // every other row's already-computed fix — the batch always returns
+  // whatever it managed, which is also what lets the client fold each
+  // round's results into the visible list right away instead of only at
+  // the very end of a multi-round run (see fixDuplicatesLoop in
+  // AdminQualityCenter.tsx).
+  const results = await Promise.all(parsed.data.pairs.map(async (pair) => {
     try {
       const row = byId.get(pair.id);
       const other = byId.get(pair.otherId);
-      if (!row || !other) return { id: pair.id, rewritten: false, reason: "missing-row" };
+      if (!row || !other) return { id: pair.id, rewritten: false };
       const rewritten = await rewriteDuplicateMcq({ question: row.question, options: (row.options as string[]) ?? [], correctAnswer: row.correctAnswer, otherQuestion: other.question });
-      if (!rewritten) return { id: pair.id, rewritten: false, reason: "ai-failed" };
-      // The model sometimes hands back the stem untouched — writing that
-      // would "succeed" while changing nothing.
-      if (dupNorm(rewritten.question) === dupNorm(row.question)) return { id: pair.id, rewritten: false, reason: "unchanged" };
+      if (!rewritten) return { id: pair.id, rewritten: false };
       await db.update(mcqsTable).set({ question: rewritten.question, options: rewritten.options, correctAnswer: rewritten.correctAnswer }).where(eq(mcqsTable.id, pair.id));
-      const stillSimilar = stemSimilarity(rewritten.question, other.question) >= DUPE_SIMILARITY_THRESHOLD;
-      return { id: pair.id, rewritten: true, stillSimilar, question: rewritten.question, options: rewritten.options, correctAnswer: rewritten.correctAnswer };
+      return { id: pair.id, rewritten: true };
     } catch (err) {
       logger.error({ err, mcqId: pair.id }, "dedupe-batch: row failed, skipping");
-      return { id: pair.id, rewritten: false, reason: "error" };
+      return { id: pair.id, rewritten: false };
     }
   }));
-  const failedReasons = results.filter((r) => !r.rewritten).map((r) => r.reason);
-  if (failedReasons.length) logger.warn({ failed: failedReasons.length, of: results.length, reasons: failedReasons }, "dedupe-batch: some rows not rewritten");
   res.json({ fixed: results.filter((r) => r.rewritten).length, results });
 });
 

@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import './dark-compat.css';
@@ -39,7 +40,7 @@
   --shadow-sm: 0 4px 10px hsl(208 35% 19% / .06); --shadow: 0 6px 14px hsl(208 35% 19% / .07); --shadow-md: 0 8px 20px hsl(208 35% 19% / .08); --shadow-lg: 0 12px 28px hsl(208 35% 19% / .1); --shadow-xl: 0 18px 40px hsl(208 35% 19% / .12);
   --button-outline: rgba(22,43,54,.12); --badge-outline: rgba(22,43,54,.06); --tracking-normal: 0em; --spacing: .25rem;
 }
-.dark { --background: 215 32% 8%; --foreground: 210 28% 94%; --border: 215 20% 21%; --card: 215 27% 12%; --card-foreground: 210 28% 94%; --card-border: 215 20% 21%; --sidebar: 216 36% 6%; --sidebar-foreground: 210 22% 86%; --sidebar-border: 215 24% 15%; --sidebar-primary: 166 62% 56%; --sidebar-primary-foreground: 216 36% 8%; --sidebar-accent: 215 26% 15%; --sidebar-accent-foreground: 210 28% 95%; --sidebar-ring: 166 62% 56%; --popover: 215 27% 14%; --popover-foreground: 210 28% 94%; --popover-border: 215 20% 24%; --primary: 166 62% 56%; --primary-foreground: 216 36% 8%; --secondary: 215 22% 18%; --secondary-foreground: 210 28% 94%; --muted: 215 22% 15%; --muted-foreground: 213 16% 72%; --accent: 36 88% 64%; --accent-foreground: 216 36% 8%; --destructive: 2 80% 66%; --destructive-foreground: 216 36% 8%; --input: 215 20% 24%; --ring: 166 62% 56%; color-scheme: dark; }
+.dark { --background: 224 28% 7%; --foreground: 210 30% 96%; --border: 222 20% 18%; --card: 223 26% 11%; --card-foreground: 210 30% 96%; --card-border: 222 20% 18%; --sidebar: 226 32% 5%; --sidebar-foreground: 210 24% 88%; --sidebar-border: 222 20% 14%; --sidebar-primary: 164 65% 55%; --sidebar-primary-foreground: 226 32% 6%; --sidebar-accent: 223 24% 14%; --sidebar-accent-foreground: 210 24% 94%; --sidebar-ring: 164 65% 55%; --popover: 223 26% 11%; --popover-foreground: 210 30% 96%; --popover-border: 222 20% 18%; --primary: 164 65% 55%; --primary-foreground: 226 32% 6%; --secondary: 223 20% 17%; --secondary-foreground: 210 30% 96%; --muted: 223 20% 15%; --muted-foreground: 216 15% 65%; --accent: 34 92% 62%; --accent-foreground: 226 32% 6%; --destructive: 2 78% 62%; --destructive-foreground: 210 30% 96%; --input: 222 20% 20%; --ring: 164 65% 55%; }
 /* Bug fix (mobile "white flash" on fast scroll): `body` had `bg-background`
    but `html` had no background at all. On iOS/Android, scrolling fast
    enough triggers the native rubber-band bounce past the top/bottom edge,
@@ -657,7 +658,7 @@ html, body { max-width: 100%; }
   .dash-resume__footrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem .75rem; margin-top: .45rem; }
   .dash-resume__foot { margin: 0; font-size: 11px; color: hsl(var(--muted-foreground)); }
   .dash-resume__module { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: .15rem; font-size: 11px; font-weight: 800; color: hsl(var(--primary)); text-decoration: none; }
-  .dash-key--go { grid-column: 1 / -1; position: relative; z-index: 2; }
+  .dash-key--go { grid-column: 1 / -1; position: relative; }
   @media (min-width: 640px) { .dash-resume { grid-template-columns: auto minmax(0, 1fr) auto; padding: 1.4rem; } .dash-key--go { grid-column: auto; } }
   .dash-meter { position: relative; flex: 1; min-width: 0; height: .7rem; overflow: hidden; border-radius: 999px; background: hsl(var(--muted)); box-shadow: var(--well); }
   .dash-meter__fill { position: relative; display: block; height: 100%; overflow: hidden; border-radius: inherit; background: linear-gradient(180deg, hsl(0 0% 100% / .38), transparent 55%), linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent))); box-shadow: inset 0 -2px 0 hsl(0 0% 0% / .12); transition: width 1.1s cubic-bezier(.2, .8, .2, 1); }
@@ -906,12 +907,3 @@ html, body { max-width: 100%; }
   .cp-scrim, .cp-panel, .cp-row, .cp-skel, .cp-empty__orb, .cp-spin, .cp-field.is-busy::after, .cp-clear, .bk-card, .bk-stats > div, .bk-card:hover .bk-sheen { animation: none !important; }
   .bk-img, .bk-plate, .bk-go, .bk-ring__arc, .bk-meter > span, .cp-ico { transition: none !important; }
 }
-
-
-/* Mobile app (Capacitor/Android edge-to-edge): keep sticky headers clear of the
-   status bar / notch. env() is 0 on desktop and when the native layer already
-   insets the WebView, so this never double-pads. */
-.student-header, header.sticky { padding-top: env(safe-area-inset-top, 0px); }
-.student-header { height: calc(68px + env(safe-area-inset-top, 0px)); }
-header.sticky.h-14 { height: calc(3.5rem + env(safe-area-inset-top, 0px)); }
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }

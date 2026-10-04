@@ -933,7 +933,7 @@ router.get("/mcqs", requireAuth, requireMembershipFor((req) => (req.query.pastPa
     // moduleId as "globally visible"; MCQs need the same OR isNull(...)
     // clause, or "Start Session" on a past paper returns zero questions.
     visibleModuleIds ? or(isNull(mcqsTable.moduleId), inArray(mcqsTable.moduleId, visibleModuleIds)) : undefined,
-  )).orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, desc(mcqsTable.createdAt));
+  )).orderBy(desc(mcqsTable.createdAt));
   res.json(ListMcqsResponse.parse(rows.map((row) => ({ ...row, module: "", subject: "", topic: "" }))));
 });
 
@@ -957,7 +957,7 @@ router.get("/admin/mcqs", requireAdmin, async (req, res): Promise<void> => {
     params.data.topicId ? eq(mcqsTable.topicId, params.data.topicId) : undefined,
     params.data.difficulty ? eq(mcqsTable.difficulty, params.data.difficulty) : undefined,
     includeArchived ? undefined : ne(mcqsTable.status, "archived"),
-  )).orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, desc(mcqsTable.createdAt));
+  )).orderBy(desc(mcqsTable.createdAt));
   res.json(rows);
 });
 
@@ -1122,34 +1122,6 @@ const ShuffleOptionsBody = z.object({ ids: z.array(z.number().int().positive()).
     }).optional(),
   }),
 );
-
-// Mixes the SEQUENCE of questions (not the order of options inside a question
-// — that's shuffle-options above). Takes the ids of every question in the
-// chosen block/module/subject/topic, deals them a random permutation and saves
-// it as sort_order 1..n, so lists and student practice see them mixed instead
-// of grouped by import batch. Safe to run repeatedly (each run re-mixes).
-const ShuffleSequenceBody = z.object({ ids: z.array(z.number().int().positive()).min(2).max(50000) });
-router.post("/admin/mcqs/shuffle-sequence", requireAdmin, async (req, res): Promise<void> => {
-  const parsed = ShuffleSequenceBody.safeParse(req.body);
-  if (!parsed.success) { res.status(400).json({ error: "Need at least 2 questions to shuffle." }); return; }
-  const ids = Array.from(new Set(parsed.data.ids));
-  for (let i = ids.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-  }
-  const BATCH_SIZE = 1000;
-  await db.transaction(async (tx) => {
-    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-      const batch = ids.slice(i, i + BATCH_SIZE).map((id, k) => ({ id, sort_order: i + k + 1 }));
-      await tx.execute(sql`
-        UPDATE med_mcqs AS m SET sort_order = v.sort_order
-        FROM jsonb_to_recordset(${JSON.stringify(batch)}::jsonb) AS v(id int, sort_order int)
-        WHERE m.id = v.id
-      `);
-    }
-  });
-  res.json({ ok: true, shuffled: ids.length });
-});
 
 router.post("/admin/mcqs/shuffle-options", requireAdmin, async (req, res): Promise<void> => {
   const parsed = ShuffleOptionsBody.safeParse(req.body);
