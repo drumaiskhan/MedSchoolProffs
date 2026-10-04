@@ -29,3 +29,8 @@ separate change to `mcqBackup.ts` / `mcq-backup.ts` / `McqBackupPanel.tsx`.
 ## Not verified
 Only syntax-checked (no node_modules / network in the merge environment). Run `pnpm -r typecheck` and a `vite build` before deploying.
 Not click-tested in a browser.
+
+## GET /past-papers 500 fix (N+1 on MCQ counts)
+- `routes/past-papers.ts`: the list endpoint ran `paperView()` per paper (one `count(*)` each, ~55 at once) against a small DB pool, so requests queued past `connectionTimeoutMillis` (5s) and returned 500. Added `paperViews()` (one grouped count via `inArray` + `groupBy`) and the list route now uses it. `paperView()` is unchanged and still used by POST/PATCH. Response shape (`mcqCount`) and filtering unchanged.
+- No schema/route/frontend changes. Recommended manual Supabase SQL (not a migration): `CREATE INDEX IF NOT EXISTS idx_med_mcqs_past_paper_id ON public.med_mcqs (past_paper_id); ANALYZE public.med_mcqs;` (no index on that column exists in schema.ts or ensureSchema.ts).
+- Not verified by build/typecheck in the merge sandbox (no pnpm/node_modules/network). Run `pnpm --filter @workspace/api-server build && pnpm run typecheck`.

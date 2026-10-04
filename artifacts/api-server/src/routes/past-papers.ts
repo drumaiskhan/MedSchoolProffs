@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, pastPapersTable, mcqsTable, auditLogsTable, usersTable } from "@workspace/db";
 import { requireAdmin, requireAuth, requireMembershipFor, isAdminRole } from "../middlewares/auth";
@@ -21,6 +21,23 @@ const DEGREE_YEAR_OPTIONS: Record<string, string[]> = {
 async function paperView(paper: typeof pastPapersTable.$inferSelect) {
   const [mcqCount] = await db.select({ count: sql<number>`count(*)` }).from(mcqsTable).where(eq(mcqsTable.pastPaperId, paper.id));
   return { ...paper, mcqCount: Number(mcqCount?.count ?? 0) };
+}
+
+// Batch version of paperView for the list endpoint: ONE grouped COUNT for all
+// papers instead of one COUNT per paper. The per-paper version fired ~55
+// concurrent queries against a 5-connection pool, so requests queued past the
+// 5s connectionTimeoutMillis and surfaced as a 500. Same output shape, same
+// order as the input.
+async function paperViews(papers: Array<typeof pastPapersTable.$inferSelect>) {
+  if (papers.length === 0) return [];
+  const countRows = await db
+    .select({ pastPaperId: mcqsTable.pastPaperId, count: sql<number>`count(*)::int` })
+    .from(mcqsTable)
+    .where(inArray(mcqsTable.pastPaperId, papers.map((p) => p.id)))
+    .groupBy(mcqsTable.pastPaperId);
+  const counts = new Map<number, number>();
+  for (const r of countRows) if (r.pastPaperId != null) counts.set(r.pastPaperId, Number(r.count));
+  return papers.map((paper) => ({ ...paper, mcqCount: counts.get(paper.id) ?? 0 }));
 }
 
 router.get("/past-papers", async (req, res): Promise<void> => {
@@ -54,7 +71,7 @@ router.get("/past-papers", async (req, res): Promise<void> => {
     isAdmin || !req.user ? undefined : or(isNull(pastPapersTable.academicYearId), eq(pastPapersTable.academicYearId, studentAcademicYearId ?? -1)),
   )).orderBy(pastPapersTable.displayOrder);
   const scoped = isAdmin || !req.user ? rows : rows.filter((row) => isTargetVisible(row.programTargetKind, row.yearTargetNumber, targeting));
-  res.json(await Promise.all(scoped.map(paperView)));
+  res.json(await paperViews(scoped));
 });
 
 router.get("/past-papers/:id/mcqs", requireAuth, requireMembershipFor("past_papers"), async (req, res): Promise<void> => {
