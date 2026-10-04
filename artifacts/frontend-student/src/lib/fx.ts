@@ -43,6 +43,10 @@ function detectLevel(): FxLevel {
   if (nav.connection?.saveData) return 'lite';
   if (typeof nav.deviceMemory === 'number' && nav.deviceMemory <= 2) return 'lite';
   if (typeof nav.hardwareConcurrency === 'number' && nav.hardwareConcurrency <= 2) return 'lite';
+  // Phones / tablets (touch-only): blurred orbs, backdrop-filter and endless
+  // decorative animations are what made scrolling and taps lag. Start lite;
+  // `?fx=full` opts back in (and is remembered).
+  try { if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) return 'lite'; } catch { /* ignore */ }
   return 'full';
 }
 

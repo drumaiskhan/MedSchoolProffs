@@ -105,22 +105,54 @@ export default function AdminQualityCenter() {
   // multi-round run finishes (which could be a while for a big backlog).
   const applyRows = (next: AdminMcqRow[]) => qc.setQueryData(['admin-mcqs-all'], next);
 
-  const fixDuplicatesLoop = async (initialDupes: DupPair[]) => {
-    const total = initialDupes.length;
-    setProgress({ done: 0, total });
+  // Duplicate-fix loop. Three things differ from the other loops on purpose:
+  //  1. The duplicate finder normally caps its output at 150 pairs for
+  //     display; the loop uses the uncapped list, otherwise fixing 20 just
+  //     lets 20 more pairs slide into the capped list and the count never
+  //     drops.
+  //  2. A row is only attempted once per run. Before, a pair the AI failed
+  //     on stayed at the top of the list and the same 20 were re-sent every
+  //     round, forever.
+  //  3. The server returns the rewritten content, so the list is patched
+  //     locally instead of re-downloading the whole bank every round.
+  const DEDUPE_BATCH_SIZE = 10;
+  const MAX_DEDUPE_ROUNDS = 50;
+  const fixDuplicatesLoop = async () => {
+    const pending = (rs: AdminMcqRow[]) => findDuplicates(rs, 0.72, Infinity).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`));
+    const attempted = new Set<number>();
     let currentRows = rows;
-    let currentDupes = initialDupes;
-    let fixedTotal = 0;
-    for (let round = 0; round < MAX_FIX_ROUNDS && currentDupes.length; round++) {
-      const batch = currentDupes.slice(0, FIX_BATCH_SIZE);
-      const { fixed } = await mcqAdminApi.dedupeBatch(batch.map((p) => ({ id: p.b.id, otherId: p.a.id })));
+    let currentDupes = pending(currentRows);
+    const total = currentDupes.length;
+    setProgress({ done: 0, total });
+    let fixedTotal = 0, failedTotal = 0, stillSimilarTotal = 0, deadRounds = 0;
+    for (let round = 0; round < MAX_DEDUPE_ROUNDS; round++) {
+      const seen = new Set<number>();
+      const batch: DupPair[] = [];
+      for (const p of currentDupes) {
+        if (attempted.has(p.b.id) || seen.has(p.b.id)) continue;
+        seen.add(p.b.id); batch.push(p);
+        if (batch.length >= DEDUPE_BATCH_SIZE) break;
+      }
+      if (!batch.length) break;
+      const { fixed, results } = await mcqAdminApi.dedupeBatch(batch.map((p) => ({ id: p.b.id, otherId: p.a.id })));
+      batch.forEach((p) => attempted.add(p.b.id));
       fixedTotal += fixed;
-      currentRows = await mcqAdminApi.list();
-      applyRows(currentRows);
-      currentDupes = findDuplicates(currentRows).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`));
-      setProgress({ done: Math.max(0, total - currentDupes.length), total });
+      failedTotal += results.filter((r) => !r.rewritten).length;
+      stillSimilarTotal += results.filter((r) => r.rewritten && r.stillSimilar).length;
+      const patch = new Map(results.filter((r) => r.rewritten && r.question && r.options).map((r) => [r.id, r]));
+      if (patch.size) {
+        currentRows = currentRows.map((m) => { const r = patch.get(m.id); return r ? { ...m, question: r.question!, options: r.options!, correctAnswer: r.correctAnswer ?? m.correctAnswer } : m; });
+        applyRows(currentRows);
+      }
+      currentDupes = pending(currentRows);
+      const left = currentDupes.filter((p) => !attempted.has(p.b.id)).length;
+      setProgress({ done: Math.max(0, total - left), total });
+      // AI provider down / rate-limited: stop instead of burning through the backlog.
+      deadRounds = fixed === 0 ? deadRounds + 1 : 0;
+      if (deadRounds >= 3) break;
     }
-    return { fixedTotal, remaining: currentDupes.length };
+    const remaining = currentDupes.filter((p) => !attempted.has(p.b.id)).length;
+    return { fixedTotal, failedTotal, stillSimilarTotal, remaining };
   };
 
   const fixInvalidLoop = async () => {
@@ -166,11 +198,11 @@ export default function AdminQualityCenter() {
         const r = await flaggedMcqsApi.resolveAll();
         toast({ title: `Resolved ${r.resolved} reported question${r.resolved === 1 ? '' : 's'}` });
       }
-      const dupResult = await fixDuplicatesLoop(dupes);
+      const dupResult = await fixDuplicatesLoop();
       const refResult = await fixNoReferenceLoop();
       refresh();
       const remaining = dupResult.remaining + refResult.remaining;
-      toast({ title: 'AI Fix All complete', description: `${dupResult.fixedTotal} duplicate question${dupResult.fixedTotal === 1 ? '' : 's'} rewritten and ${refResult.fixedTotal} reference${refResult.fixedTotal === 1 ? '' : 's'} added by AI.${remaining ? ` ${remaining} left — run it again to keep going.` : ''}` });
+      toast({ title: 'AI Fix All complete', description: `${dupResult.fixedTotal} duplicate question${dupResult.fixedTotal === 1 ? '' : 's'} rewritten${dupResult.failedTotal ? ` (${dupResult.failedTotal} failed)` : ''} and ${refResult.fixedTotal} reference${refResult.fixedTotal === 1 ? '' : 's'} added by AI.${remaining ? ` ${remaining} left — run it again to keep going.` : ''}` });
     } catch (e) {
       fail(e);
     } finally {
@@ -182,9 +214,15 @@ export default function AdminQualityCenter() {
   const runAiFixDuplicates = async () => {
     setBusyKind('duplicates');
     try {
-      const { fixedTotal, remaining } = await fixDuplicatesLoop(dupes);
+      const { fixedTotal, failedTotal, stillSimilarTotal, remaining } = await fixDuplicatesLoop();
       refresh();
-      toast({ title: 'Duplicates fixed', description: `${fixedTotal} question${fixedTotal === 1 ? '' : 's'} rewritten by AI.${remaining ? ` ${remaining} pairs left — run it again to keep going.` : ''}` });
+      const bits = [
+        `${fixedTotal} question${fixedTotal === 1 ? '' : 's'} rewritten by AI.`,
+        failedTotal ? `${failedTotal} couldn't be rewritten (AI timed out or returned invalid output) — run it again to retry.` : '',
+        stillSimilarTotal ? `${stillSimilarTotal} rewritten but still worded similarly.` : '',
+        remaining ? `${remaining} pairs not reached yet — run it again to keep going.` : '',
+      ].filter(Boolean).join(' ');
+      toast({ title: fixedTotal || !failedTotal ? 'Duplicates fixed' : 'Duplicate fix failed', description: bits, variant: fixedTotal || !failedTotal ? undefined : 'destructive' });
     } catch (e) {
       fail(e);
     } finally {
@@ -223,7 +261,9 @@ export default function AdminQualityCenter() {
 
   const rows: AdminMcqRow[] = mcqs.data ?? [];
   const openFlags = useMemo(() => (flags.data ?? []).filter((f: FlaggedMcq) => f.status === 'open' && !f.mcqDeleted), [flags.data]);
-  const dupes = useMemo(() => findDuplicates(rows).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`)), [rows, hidden]);
+  // Uncapped so the counts are real; only the rendered list is trimmed.
+  const dupes = useMemo(() => findDuplicates(rows, 0.72, Infinity).filter((p) => !hidden.has(`${p.a.id}-${p.b.id}`)), [rows, hidden]);
+  const dupeView = dupes.slice(0, 150);
   if (mcqs.isLoading) return <SkeletonPage />;
   if (mcqs.isError) return <ErrorState retry={() => mcqs.refetch()} />;
 
@@ -286,10 +326,11 @@ export default function AdminQualityCenter() {
 
     {tab === 'duplicates' && <div className="grid gap-3">
       {!!dupes.length && <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3.5"><div className="text-xs text-muted-foreground">AI rewrites the second question in each pair so it tests the same fact but no longer reads as a copy.</div><button disabled={busyKind !== null} onClick={runAiFixDuplicates} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-primary to-violet px-3.5 py-2 text-xs font-extrabold text-primary-foreground shadow-sm transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0" data-testid="button-ai-fix-duplicates">{busyKind === 'duplicates' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Fix {dupes.length} with AI</button></div>}
-      {!dupes.length ? <EmptyState icon={Copy} title="No likely duplicates" body="Questions with very similar wording would appear here for side-by-side review." /> : dupes.map((p) => <div key={`${p.a.id}-${p.b.id}`} className="rounded-2xl border border-border bg-card p-3.5 animate-in fade-in duration-300" data-testid={`dupe-${p.a.id}-${p.b.id}`}>
+      {!dupes.length ? <EmptyState icon={Copy} title="No likely duplicates" body="Questions with very similar wording would appear here for side-by-side review." /> : dupeView.map((p) => <div key={`${p.a.id}-${p.b.id}`} className="rounded-2xl border border-border bg-card p-3.5 animate-in fade-in duration-300" data-testid={`dupe-${p.a.id}-${p.b.id}`}>
         <div className="grid gap-2 md:grid-cols-2">{[p.a, p.b].map((m) => <div key={m.id} className="rounded-xl bg-muted/50 p-2.5 text-xs leading-5"><div className="text-[10px] font-bold text-muted-foreground">#{m.id}</div><div className="line-clamp-2 font-semibold">{m.question}</div></div>)}</div>
         <div className="mt-2.5 flex items-center gap-2"><Badge tone={p.score > 0.9 ? 'red' : 'amber'}>{Math.round(p.score * 100)}% similar</Badge><button onClick={() => setCmp(p)} className="ml-auto rounded-xl bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground" data-testid="button-compare">Compare</button><button onClick={() => { const next = new Set(hidden).add(`${p.a.id}-${p.b.id}`); setHidden(next); try { localStorage.setItem(DISMISS, JSON.stringify([...next])); } catch { /* ignore */ } }} className="rounded-xl border border-border px-3 py-1.5 text-[11px] font-extrabold hover:bg-muted">Not a duplicate</button></div>
       </div>)}
+      {dupes.length > dupeView.length && <p className="text-center text-[11px] text-muted-foreground">Showing {dupeView.length} of {dupes.length} pairs.</p>}
       <p className="text-center text-[10px] text-muted-foreground">"Not a duplicate" is remembered in this browser only.</p>
     </div>}
 

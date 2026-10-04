@@ -6,12 +6,16 @@ import { ErrorBoundary } from '@/components/error-boundary';
 
 import './index.css';
 import './profile3d.css';
+import './modern.css'; // shared visual layer: tokens + surfaces for every section
+import './perf.css'; // must stay last: overrides the heavy effects on phones
 import { initFx } from '@/lib/fx';
+import { initThemePref } from '@/lib/theme';
 import { initializeGithubLiveUpdate } from '@/lib/github-live-update';
 import { initNativeAuth, isNativeApp } from '@/lib/native-auth';
 
 // v43: stamps <html data-fx="full|lite"> before first paint (see lib/fx.ts).
 initFx();
+initThemePref();
 
 void initializeGithubLiveUpdate();
 

@@ -542,7 +542,7 @@ async function findMissingAdditiveColumns(): Promise<Array<[string, string]>> {
 // comment at this function's call site in validateFullBackup for why
 // skipping it on an up-to-date database matters (this was the real cause of
 // validation's statement-timeout / 500s, not the JSON size).
-async function ensureSchemaIfMissing(anchor: TableSpec): Promise<void> {
+export async function ensureSchemaIfMissing(anchor: TableSpec): Promise<void> {
   const [{ exists }] = (
     await db.execute(sql`select (to_regclass(${anchor.sqlName}) is not null) as exists`)
   ).rows as Array<{ exists: boolean }>;

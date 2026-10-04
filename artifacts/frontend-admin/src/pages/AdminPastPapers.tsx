@@ -33,7 +33,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
+import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, pastPaperBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
 
 // Round 3, item 10 (performance) — same over-fetching fix as the student
 // app (see its App.tsx for the full rationale): `new QueryClient()` with no
@@ -43,6 +43,69 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // background refetches of data nothing has touched.
 import { DEGREE_OPTIONS, DEGREE_YEAR_OPTIONS, McqTreeModule, SectionHeader, groupByDegreeYear, studyYearToNumber, BrandSpinner, CollapsibleGroup, ConfirmDialog, EmptyState, PastPaperEditForm, PastPaperQuestionsList, PastPaperUploader, cn } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
+
+// Past papers have their own backup & restore, separate from the MCQ bank
+// and the whole-database backup. A file holds the papers and their questions;
+// restoring it creates any missing tables, and "Replace" swaps what the file
+// covers in one transaction (a failure changes nothing).
+function PastPaperBackupPanel({ papers }: { papers: Array<{ id: number; title: string }> }) {
+  const [open, setOpen] = useState(false);
+  const [paperId, setPaperId] = useState('');
+  const [downloading, setDownloading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<'append' | 'replace'>('append');
+  const [confirm, setConfirm] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof pastPaperBackupApi.importBackup>> | null>(null);
+  const restore = useMutation({
+    mutationFn: () => pastPaperBackupApi.importBackup(file!, mode),
+    onSuccess: (r) => {
+      setResult(r); setConfirm(false); setFile(null);
+      queryClient.invalidateQueries({ queryKey: ['admin-past-papers'] });
+      toast({ title: 'Past papers restored', description: `${r.pastPapersRestored} paper${r.pastPapersRestored === 1 ? '' : 's'}, ${r.mcqsRestored.toLocaleString()} question${r.mcqsRestored === 1 ? '' : 's'}.` });
+    },
+    onError: (err: unknown) => { setConfirm(false); toast({ title: 'Could not restore', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — try again.', variant: 'destructive' }); },
+  });
+  async function download() {
+    setDownloading(true);
+    try { await pastPaperBackupApi.downloadBackup(paperId ? Number(paperId) : null); toast({ title: 'Backup downloaded' }); }
+    catch (err) { toast({ title: 'Could not download', description: err instanceof ApiRequestError ? err.message : 'Try again.', variant: 'destructive' }); }
+    finally { setDownloading(false); }
+  }
+  return <div className="mb-5 rounded-2xl border border-border bg-card p-4 md:p-5" data-testid="panel-past-paper-backup">
+    <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center justify-between gap-3 text-left" aria-expanded={open} data-testid="button-toggle-past-paper-backup">
+      <span><span className="block text-sm font-extrabold">Backup &amp; restore past papers</span><span className="block text-[11px] text-muted-foreground">Saved separately from the MCQ bank — papers and their questions only.</span></span>
+      <ChevronDown size={16} className={cn('shrink-0 transition-transform', open && 'rotate-180')} />
+    </button>
+    {open && <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-border p-4">
+        <div className="text-xs font-extrabold">Download a backup</div>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">Every past paper with all its questions, or just one paper.</p>
+        <select value={paperId} onChange={(e) => setPaperId(e.target.value)} className="mt-3 h-10 w-full rounded-xl border border-border bg-background px-3 text-xs" data-testid="select-backup-paper">
+          <option value="">All past papers</option>
+          {papers.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+        </select>
+        <button type="button" onClick={download} disabled={downloading} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-download-past-paper-backup">{downloading ? 'Preparing…' : 'Download backup'}</button>
+      </div>
+      <div className="rounded-xl border border-border p-4">
+        <div className="text-xs font-extrabold">Restore from a backup</div>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">Use a file from the button on the left, or a Full / Platform content database backup. Missing tables are created automatically.</p>
+        <input type="file" accept=".json,application/json" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); }} className="mt-3 block w-full text-xs file:mr-3 file:rounded-lg file:border file:border-border file:bg-muted file:px-3 file:py-2 file:text-xs file:font-bold" data-testid="input-past-paper-backup-file" />
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {([['append', 'Add alongside', 'Keeps what is there'], ['replace', 'Replace', 'Swaps the papers in the file']] as const).map(([m, label, hint]) => <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} className={cn('rounded-xl border px-3 py-2 text-left text-xs font-bold', mode === m ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-muted')} data-testid={`button-backup-mode-${m}`}>{label}<span className="block text-[10px] font-medium text-muted-foreground">{hint}</span></button>)}
+        </div>
+        <button type="button" onClick={() => (mode === 'replace' ? setConfirm(true) : restore.mutate())} disabled={!file || restore.isPending} className={cn('mt-3 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-extrabold disabled:opacity-50', mode === 'replace' ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground')} data-testid="button-restore-past-papers">{restore.isPending ? 'Restoring…' : mode === 'replace' ? 'Replace and restore' : 'Restore'}</button>
+        {result && <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-[11px] leading-5" data-testid="text-past-paper-restore-result">
+          <div className="font-extrabold">{result.pastPapersRestored} paper{result.pastPapersRestored === 1 ? '' : 's'} and {result.mcqsRestored.toLocaleString()} question{result.mcqsRestored === 1 ? '' : 's'} restored</div>
+          {result.mode === 'replace' && <div>Replaced {result.pastPapersReplaced} existing paper{result.pastPapersReplaced === 1 ? '' : 's'} ({result.mcqsDeleted.toLocaleString()} questions removed first).</div>}
+          {result.tablesPrepared && <div>Missing tables were created for this restore.</div>}
+          {result.source === 'database-backup' && <div>Read from a database backup file.</div>}
+          {result.mcqsSkippedNoPaper > 0 && <div className="text-accent-text">{result.mcqsSkippedNoPaper.toLocaleString()} question{result.mcqsSkippedNoPaper === 1 ? ' was' : 's were'} skipped because their paper is not in the file.</div>}
+        </div>}
+      </div>
+    </div>}
+    {confirm && <ConfirmDialog title="Replace past papers?" body="This deletes the past papers this file covers, along with their questions and the practice history for those questions, then restores them from the file. It runs in one step, so if anything fails nothing is changed. Your MCQ bank is not touched." confirmLabel="Replace and restore" pendingLabel="Restoring…" tone="destructive" pending={restore.isPending} onCancel={() => { if (!restore.isPending) setConfirm(false); }} onConfirm={() => restore.mutate()} />}
+  </div>;
+}
 
 function AdminPastPapers() {
   const papers = useQuery({ queryKey: ['admin-past-papers'], queryFn: () => pastPapersApi.list() });
@@ -102,6 +165,7 @@ function AdminPastPapers() {
   const grouped = groupByDegreeYear(papers.data || [], paperDegree, paperStudyYear, paperStudyYearSortKey);
 
   return <div><SectionHeader eyebrow="Content" title="Past papers" action={<div className="flex gap-2"><button onClick={() => backfillYearTargeting.mutate()} disabled={backfillYearTargeting.isPending} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-extrabold text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="button-backfill-paper-year-targeting" title="Fix old papers whose Level label (e.g. &quot;MBBS - 1st Year&quot;) was never turned into real year/degree targeting, so they show up for every year">{backfillYearTargeting.isPending ? 'Checking…' : 'Fix year targeting'}</button><button onClick={() => setOpen(true)} className="btn-pop inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground shadow-sm" data-testid="button-create-paper"><Plus size={15} /> Add paper</button></div>} />
+    <PastPaperBackupPanel papers={(papers.data ?? []).map((p) => ({ id: p.id, title: p.title }))} />
     <datalist id="past-paper-college-options">{collegeOptions.map((c) => <option key={c} value={c} />)}</datalist>
     {open && <form onSubmit={(e) => { e.preventDefault(); if (!formDegree || !formStudyYear) { toast({ title: 'Degree and year required', description: 'Pick both so this paper only shows to the right students — leaving them blank is what made First Year papers show up for Third Year.', variant: 'destructive' }); return; } const f = new FormData(e.currentTarget); const programId = f.get('programId') ? Number(f.get('programId')) : undefined; const academicYearId = f.get('academicYearId') ? Number(f.get('academicYearId')) : undefined; const level = String(f.get('level') || '') || composedLevel; create.mutate({ title: String(f.get('title')), examBoard: String(f.get('examBoard') || ''), year: String(f.get('year') || ''), level, programId, academicYearId, programTargetKind: formDegree || null, yearTargetNumber: studyYearToNumber(formDegree, formStudyYear) ?? null, active: true }, { onSuccess: resetForm }); }} className="mb-5 grid gap-3 rounded-2xl border border-primary/30 bg-primary/10 p-4 sm:p-5 md:grid-cols-4">
       <input required name="title" placeholder="Paper title, e.g. Block A" className="h-11 rounded-xl border border-border bg-card px-3 text-xs outline-none transition-shadow focus:ring-2 focus:ring-primary/25 md:col-span-2" data-testid="input-paper-title" />

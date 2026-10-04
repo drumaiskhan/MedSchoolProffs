@@ -56,6 +56,7 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 import { buildStudySet, recordSession } from '@/lib/study';
 import { Badge, EmptyState, PracticeResultCard, Progress, SectionHeader, SkeletonPage, cn, difficultyTone, useFocusMode } from '@/lib/shared';
 import { queryClient, invalidatePracticeQueries } from '@/lib/query-client';
+import { CountdownBadge, useCountdownStore } from '@/lib/countdown';
 
 function Practice() {
   const search = useSearch();
@@ -101,7 +102,9 @@ function Practice() {
   // student edits it (stepper, preset chip, or typing directly), their
   // choice sticks even if they flip between Timer/Timeless and back.
   const [customMinutes, setCustomMinutes] = useState<number | null>(null);
-  const [remainingSeconds, setRemainingSeconds] = useState(0);
+  // Ticks live in a store, not state: a per-second setState re-rendered this whole page (see lib/countdown.tsx).
+  const countdown = useCountdownStore(0);
+  const setRemainingSeconds = countdown.set;
   // "Shuffle question order" toggle on the setup screen — off by default so
   // the set stays in its curated/syllabus order unless the student opts in.
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
@@ -418,14 +421,14 @@ function Practice() {
             <button
               onClick={startSession}
               disabled={effectiveCount === 0}
-              className="flex items-center justify-center gap-2 rounded-full bg-[#0f1e3d] px-8 py-3.5 text-xs font-extrabold text-white shadow-sm transition-transform active:scale-[0.99] disabled:opacity-40"
+              className="dash-key !rounded-full !px-8 !py-3.5 !text-xs disabled:opacity-40 disabled:hover:translate-y-0"
               data-testid="button-start-session"
-            ><Play size={13} className="fill-white" /> Start Test {pendingMode === 'timed' ? `(${effectiveMinutes} min)` : ''}</button>
+            ><Play size={13} fill="currentColor" /> Start Test {pendingMode === 'timed' ? `(${effectiveMinutes} min)` : ''}</button>
           </div>
           <button
             onClick={() => saveSession.mutate({ name: `Practice — ${new Date().toLocaleDateString()}`, config: { topicId, pastPaperId } })}
             disabled={saveSession.isPending}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-muted-foreground hover:text-foreground disabled:opacity-50"
+            className="card-lift mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
             data-testid="button-save-session"
           ><Bookmark size={14} /> {saveSession.isPending ? 'Saving…' : 'Save this filter for later'}</button>
         </div>
@@ -463,8 +466,6 @@ function Practice() {
     return next;
   });
   const saveQuestion = () => { if (savedIds.has(current.id)) return; saveNote.mutate({ content: current.question, mcqId: current.id }); setSavedIds((prev) => new Set(prev).add(current.id)); };
-  const mm = String(Math.floor(remainingSeconds / 60)).padStart(2, '0');
-  const ss = String(remainingSeconds % 60).padStart(2, '0');
   const stateForIndex = (i: number): 'current' | 'answered' | 'flagged' | 'new' => {
     if (i === index) return 'current';
     const id = activeMcqs[i].id;
@@ -475,7 +476,7 @@ function Practice() {
 
   const controlPanel = <div className="space-y-3">
     <div className="rounded-2xl border border-border bg-card p-3.5">
-      <div className="flex items-center justify-between text-xs font-bold"><span className="flex items-center gap-1.5"><Clock3 size={13} /> {mode === 'timed' ? 'Timer' : 'Untimed'}</span>{mode === 'timed' && <span className={cn('font-mono-app rounded-full px-2.5 py-1 text-[11px]', remainingSeconds < 60 ? 'bg-[#fff1ed] text-[#a34c3e]' : 'bg-[#d7eee4] text-[#287058]')} data-testid="text-timer">{mm}:{ss}</span>}</div>
+      <div className="flex items-center justify-between text-xs font-bold"><span className="flex items-center gap-1.5"><Clock3 size={13} /> {mode === 'timed' ? 'Timer' : 'Untimed'}</span>{mode === 'timed' && <CountdownBadge store={countdown} className="font-mono-app rounded-full px-2.5 py-1 text-[11px]" warnClass="bg-[#fff1ed] text-[#a34c3e]" okClass="bg-[#d7eee4] text-[#287058]" />}</div>
       <div className="mt-2.5 flex gap-1.5">
         <button onClick={() => setPaused((p) => !p)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#32647b] px-2 py-2 text-[11px] font-bold text-white" data-testid="button-pause-session">{paused ? <><Zap size={12} /> Resume</> : <><Clock3 size={12} /> Pause</>}</button>
         <button onClick={saveQuestion} disabled={savedIds.has(current.id)} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-bold', savedIds.has(current.id) ? 'bg-[#e6dcf3] text-[#6a4c93]' : 'bg-gradient-to-r from-[#6a4c93] to-[#815276] text-white')} data-testid="button-save-question"><Bookmark size={12} /> {savedIds.has(current.id) ? 'Saved' : 'Save'}</button>

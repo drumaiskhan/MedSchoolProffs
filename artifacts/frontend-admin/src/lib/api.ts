@@ -321,13 +321,13 @@ export interface OspeBlock {
 export interface OspeModule extends OspeBlock { blockId: number | null; blockName: string | null }
 export interface OspeLearningMaterial {
   id: number; moduleId: number | null; blockId: number | null; examType: OspeExamType; title: string; description: string; bodyText: string;
-  imagePath: string | null; attachmentPath: string | null; externalUrl: string | null; active: boolean; archived: boolean;
+  imagePath: string | null; imageUrl?: string | null; attachmentPath: string | null; attachmentUrl?: string | null; externalUrl: string | null; active: boolean; archived: boolean;
   displayOrder: number; programTargetKind: string | null; yearTargetNumber: number | null; targetingLabel: string;
 }
 export interface OspeLabelPoint { id: string; x: number; y: number; label: string; marks?: number | null }
 export interface OspeStation {
-  id: number; moduleId: number | null; blockId: number | null; examType: OspeExamType; title: string; instructions: string; imagePath: string | null;
-  attachmentPath: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; correctAnswer: string | null;
+  id: number; moduleId: number | null; blockId: number | null; examType: OspeExamType; title: string; instructions: string; imagePath: string | null; imageUrl?: string | null;
+  attachmentPath: string | null; attachmentUrl?: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; correctAnswer: string | null;
   modelAnswer: string | null; labelPoints: OspeLabelPoint[] | null; marks: number; timeLimitSeconds: number | null; active: boolean; archived: boolean;
   displayOrder: number; programTargetKind: string | null; yearTargetNumber: number | null; targetingLabel: string;
 }
@@ -339,14 +339,14 @@ export interface OspeExam {
 }
 export interface OspeAdminExam extends OspeExam { stationCount: number; attemptCount: number }
 export interface OspeStudentExam extends OspeExam { attemptsUsed: number; canStart: boolean; inProgressAttemptId: number | null; windowStatus: 'upcoming' | 'open' | 'closed' }
-export interface OspeExamStation { id: number; title: string; instructions: string; imagePath: string | null; attachmentPath: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; labelPoints: Array<{ id: string; x: number; y: number }> | null; marks: number; timeLimitSeconds: number | null }
+export interface OspeExamStation { id: number; title: string; instructions: string; imagePath: string | null; imageUrl?: string | null; attachmentPath: string | null; attachmentUrl?: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null; labelPoints: Array<{ id: string; x: number; y: number }> | null; marks: number; timeLimitSeconds: number | null }
 export interface OspeExamStartResponse { attemptId: number; startedAt: string; durationMinutes: number; stations: OspeExamStation[] }
 export interface OspeExamAttemptRow { id: number; examId: number; userId: number; studentName: string; institution: string; attemptNumber: number; startedAt: string; submittedAt: string | null; totalStations: number; totalMarks: number; obtainedMarks: number; percentage: number; passed: boolean | null; status: string; resultsReleasedAt: string | null }
 export interface OspeExamResult {
   released: boolean; status?: string; totalStations?: number; fullyGraded?: boolean;
   totalMarks?: number; obtainedMarks?: number | null; percentage?: number | null; passed?: boolean | null;
   breakdown?: Array<{
-    stationId: number; title: string; instructions: string; imagePath: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null;
+    stationId: number; title: string; instructions: string; imagePath: string | null; imageUrl?: string | null; answerType: 'MCQ' | 'WRITTEN' | 'LABELING'; options: string[] | null;
     selectedAnswer: string | null; writtenAnswer: string | null; correctAnswer: string | null; modelAnswer: string | null;
     labelPoints: OspeLabelPoint[] | null; labelAnswers: Record<string, string> | null;
     marks: number; marksObtained: number | null; correct: boolean | null; aiVerdict: 'correct' | 'partial' | 'incorrect' | null; aiFeedback: string | null;
@@ -537,6 +537,9 @@ export const mcqAdminApi = {
   // without touching which option is marked correct. Fixes banks (e.g.
   // bulk-imported from an AI generator) where the correct answer is
   // always the same letter.
+  // Mixes the order of the questions themselves (POST /admin/mcqs/shuffle-sequence).
+  shuffleSequence: (ids: number[]) =>
+    request<{ ok: true; shuffled: number }>('/admin/mcqs/shuffle-sequence', { method: 'POST', body: JSON.stringify({ ids }) }),
   shuffleOptions: (body: { ids: number[] } | { all: true; filters?: { search?: string; moduleId?: number; subjectId?: number; topicId?: number; difficulty?: string; pastPaperId?: number } }) =>
     request<{ ok: true; shuffled: number; skipped: number }>('/admin/mcqs/shuffle-options', { method: 'POST', body: JSON.stringify(body) }),
   // "AI Fix All" (Content Quality Center): rewrites the second question in
@@ -545,7 +548,7 @@ export const mcqAdminApi = {
   // call (server enforces this too) so a bank with many duplicates is
   // cleared over several calls rather than one that risks a gateway timeout.
   dedupeBatch: (pairs: Array<{ id: number; otherId: number }>) =>
-    request<{ fixed: number; results: Array<{ id: number; rewritten: boolean }> }>('/admin/mcqs/dedupe-batch', { method: 'POST', body: JSON.stringify({ pairs }) }),
+    request<{ fixed: number; results: Array<{ id: number; rewritten: boolean; reason?: string; stillSimilar?: boolean; question?: string; options?: string[]; correctAnswer?: string }> }>('/admin/mcqs/dedupe-batch', { method: 'POST', body: JSON.stringify({ pairs }) }),
   // "AI Fix" for the Invalid stat/list: repairs empty questions, too-few or
   // duplicate options, and missing/mismatched correct answers. Capped at 20
   // items per call (server enforces this too), same reasoning as dedupeBatch.
@@ -580,10 +583,14 @@ export const mcqImportApi = {
 // tree — mirrors the server's BackupScope (backupScope.ts). `id` is the
 // block/module/subject/topic's row id, or the academic year number (1-5)
 // itself for level 'year'. `label` is only for the filename/UI.
-export interface BackupScope { level: 'year' | 'block' | 'module' | 'subject' | 'topic'; id: number; label: string }
+// Level 'program' = every year of one program (id is unused, 0). Level 'year'
+// may also carry a `program` so "Year 2" can mean "MBBS Year 2". 'SHARED' is
+// content with no program targeting (visible to MBBS and BDS alike).
+export type BackupProgram = 'MBBS' | 'BDS' | 'SHARED';
+export interface BackupScope { level: 'program' | 'year' | 'block' | 'module' | 'subject' | 'topic'; id: number; label: string; program?: BackupProgram }
 function backupScopeQuery(scope?: BackupScope | null): string {
   if (!scope) return '';
-  return `scopeLevel=${encodeURIComponent(scope.level)}&scopeId=${scope.id}&scopeLabel=${encodeURIComponent(scope.label)}`;
+  return `scopeLevel=${encodeURIComponent(scope.level)}&scopeId=${scope.id}&scopeLabel=${encodeURIComponent(scope.label)}${scope.program ? `&scopeProgram=${scope.program}` : ''}`;
 }
 
 // Whole-bank backup/restore — separate from mcqImportApi's file parser
@@ -592,14 +599,39 @@ function backupScopeQuery(scope?: BackupScope | null): string {
 // questions under one Year/Block/Module/Subject/Topic branch; import
 // restores a file like it, either alongside the existing bank or replacing
 // it (a scoped backup's "replace" only wipes that same branch first).
-export const mcqBackupApi = {
-  exportUrl: () => `${API_BASE}/admin/mcq-backup/export`,
-  // Not a plain <a href> download because it needs the admin's session
-  // cookie (credentials: 'include') and a nicer error than a bare failed
-  // navigation if the export fails — fetch it as a blob and trigger the
-  // save ourselves.
-  downloadBackup: async (scope?: BackupScope | null): Promise<void> => {
-    const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
+export type McqRestoreMode = 'merge' | 'append' | 'replace';
+interface NodeStat { created: number; reused: number }
+// What a restore did (or, for previewBackup, what it WOULD do). `legacy` files
+// are pre-structure (v1) backups: questions only, restored by raw ids.
+export interface McqRestoreResult {
+  legacy: boolean;
+  mode: McqRestoreMode;
+  scope: BackupScope | null;
+  restored?: number;
+  deletedFirst: number;
+  dryRun?: boolean;
+  structure?: { blocks: NodeStat; modules: NodeStat; subjects: NodeStat; topics: NodeStat; pastPapers: NodeStat; exams: NodeStat };
+  questions?: { inBackup: number; restored: number; skippedExisting?: number; skippedMissingLink?: number; detachedLinks?: number };
+  examLinks?: number;
+  warnings?: string[];
+}
+export interface McqBackupCounts { questions: number; blocks: number; modules: number; subjects: number; topics: number; pastPapers: number; exams: number }
+
+export interface PastPaperRestoreResult {
+  mode: 'append' | 'replace';
+  pastPapersRestored: number;
+  mcqsRestored: number;
+  pastPapersReplaced: number;
+  mcqsDeleted: number;
+  mcqsSkippedNoPaper: number;
+  tablesPrepared: boolean;
+  source: 'past-papers' | 'database-backup';
+}
+
+// Past papers have their own backup/restore (separate from the MCQ bank).
+export const pastPaperBackupApi = {
+  downloadBackup: async (paperId?: number | null): Promise<void> => {
+    const res = await fetchOrThrow(`${API_BASE}/admin/past-paper-backup/export${paperId ? `?paperId=${paperId}` : ''}`, { credentials: 'include' });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
@@ -610,13 +642,61 @@ export const mcqBackupApi = {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filenameMatch?.[1] || 'mcq-bank-backup.json';
+    a.download = filenameMatch?.[1] || 'past-papers-backup.json';
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   },
-  importBackup: async (file: File, mode: 'append' | 'replace'): Promise<{ restored: number; mode: 'append' | 'replace'; deletedFirst: number; scope: BackupScope | null }> => {
+  importBackup: async (file: File, mode: 'append' | 'replace'): Promise<PastPaperRestoreResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetchOrThrow(`${API_BASE}/admin/past-paper-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
+    return data;
+  },
+};
+
+export const mcqBackupApi = {
+  exportUrl: () => `${API_BASE}/admin/mcq-backup/export`,
+  // Not a plain <a href> download because it needs the admin's session
+  // cookie (credentials: 'include') and a nicer error than a bare failed
+  // navigation if the export fails — fetch it as a blob and trigger the
+  // save ourselves. Resolves with what went into the file (for the toast).
+  downloadBackup: async (scope?: BackupScope | null): Promise<{ filename: string; counts: McqBackupCounts | null }> => {
+    const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/export?${backupScopeQuery(scope)}`, { credentials: 'include' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiRequestError(res.status, (data && data.error) || 'Could not download the backup', data);
+    }
+    const disposition = res.headers.get('content-disposition') || '';
+    const filenameMatch = disposition.match(/filename="([^"]+)"/);
+    let counts: McqBackupCounts | null = null;
+    try { counts = JSON.parse(res.headers.get('x-backup-counts') || 'null'); } catch { counts = null; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const filename = filenameMatch?.[1] || 'mcq-bank-backup.json';
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return { filename, counts };
+  },
+  // Dry run: same matching as the real restore, nothing written. Powers the
+  // confirmation dialog ("3 modules will be created, 412 questions added…").
+  previewBackup: async (file: File, mode: McqRestoreMode): Promise<McqRestoreResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/preview?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not check this backup', data);
+    return data;
+  },
+  importBackup: async (file: File, mode: McqRestoreMode): Promise<McqRestoreResult> => {
     const form = new FormData();
     form.append('file', file);
     const res = await fetchOrThrow(`${API_BASE}/admin/mcq-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
@@ -671,15 +751,6 @@ export interface PastPaperRelinkResult {
 }
 
 export const fullBackupApi = {
-  // Repair: re-attach MCQs to their past papers from the original backup file.
-  relinkPastPapers: async (file: File): Promise<PastPaperRelinkResult> => {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/relink-past-papers`, { method: 'POST', credentials: 'include', body: form });
-    const data = await res.json().catch(() => null);
-    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not repair the past paper links', data);
-    return data;
-  },
   // Same "fetch as a blob with credentials, trigger the save ourselves"
   // pattern as mcqBackupApi.downloadBackup above — a plain <a href> can't
   // carry the admin's session cookie.
@@ -717,6 +788,15 @@ export const fullBackupApi = {
     const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
+    return data;
+  },
+  // Repair: re-attach MCQs to their past papers from the original backup file.
+  relinkPastPapers: async (file: File): Promise<PastPaperRelinkResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/relink-past-papers`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not repair the past paper links', data);
     return data;
   },
 };

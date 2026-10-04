@@ -694,6 +694,7 @@ ALTER TABLE med_mcqs ALTER COLUMN topic_id DROP NOT NULL;
 -- relation "med_mcqs" does not exist" import failures alongside the
 -- option_explanations ones.
 ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS option_explanations TEXT[];
+ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS explanation_status TEXT NOT NULL DEFAULT 'PENDING';
 
 -- Round 3, item 4b: short student-facing hint, separate from the

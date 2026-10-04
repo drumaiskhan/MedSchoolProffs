@@ -1,5 +1,5 @@
 // Auto-extracted route page — code-split via React.lazy() in App.tsx.
-import { type ReactNode, type ComponentProps, type TouchEvent, useState, useEffect, useRef, createContext, useContext } from 'react';
+import { type ReactNode, type ComponentProps, type TouchEvent, useSyncExternalStore, useState, useEffect, useRef, createContext, useContext } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useParams, useSearch, Router as WouterRouter } from 'wouter';
 import {
@@ -11,9 +11,9 @@ import {
   Flag, Trophy, MessageSquare, Landmark, Copy, QrCode, User as UserIcon, Mail, Phone, Hash,
   GraduationCap, Eye, EyeOff, Smartphone, UploadCloud, ImageOff,
   RotateCcw, ThumbsUp, ThumbsDown, CheckCheck, ClipboardCheck, AlertTriangle, Link2 as LinkIcon, Lightbulb,
-  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity
+  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity, Sun, Moon, Monitor
 } from 'lucide-react';
-import { applyThemeVars } from '@/lib/theme';
+import { applyThemeVars, getStoredThemePref, setThemePref, subscribeThemePref, type ThemePref } from '@/lib/theme';
 import {
   getListMembershipPlansQueryKey, getListPaymentsQueryKey, getListMcqsQueryKey, getListModulesQueryKey, getListStudentsQueryKey, getListNotificationsQueryKey, getGetCurrentUserQueryKey,
   useApprovePayment, useCreateMembershipPlan, useCreateMcq, useCreateModule, useGetAdminDashboard,
@@ -110,6 +110,9 @@ function Profile() {
   });
   const resetPasswordFields = () => { setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPasswordError(null); };
   const dashboard = useGetStudentDashboard();
+  // Appearance (Light / Dark / Auto) — saved on this device only.
+  const storedPref = useSyncExternalStore(subscribeThemePref, () => getStoredThemePref() ?? 'site');
+  const activePref: ThemePref = storedPref === 'site' ? (document.documentElement.classList.contains('dark') ? 'dark' : 'light') : storedPref;
   if (q.isLoading) return <SkeletonPage />;
   if (!q.data) return <ErrorState retry={() => q.refetch()} />;
   const u = q.data;
@@ -161,6 +164,8 @@ function Profile() {
       </form></>
       : <div className="mt-6 grid gap-5 sm:grid-cols-2">{[['Full name', u.name], ['Email address', u.email], ['Institution', u.institution || 'Not added'], ['Programme', u.programKind || u.program || 'Not added'], ['Academic year', u.academicYear || 'Not added']].map(([label, value]) => <div key={label} className="pf-row"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-muted-foreground">{label}</div><div className="mt-2 text-sm font-semibold">{value}</div></div>)}</div>}
     </div></div>
+  <div className="mt-5 rounded-2xl border border-border bg-card p-6" data-testid="card-appearance"><h3 className="font-bold">Appearance</h3><p className="mt-1 text-xs text-muted-foreground">Choose how MedSchoolProffs looks on this device. Auto follows your phone's setting.</p>
+    <div role="radiogroup" aria-label="Theme" className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1.5">{([['light', 'Light', Sun], ['dark', 'Dark', Moon], ['auto', 'Auto', Monitor]] as const).map(([value, label, Icon]) => <button key={value} type="button" role="radio" aria-checked={activePref === value} onClick={() => setThemePref(value)} className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-all ${activePref === value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} data-testid={`button-theme-${value}`}><Icon size={14} />{label}</button>)}</div></div>
   <TeamSection />
   <Footer variant="full" />
   </div>;

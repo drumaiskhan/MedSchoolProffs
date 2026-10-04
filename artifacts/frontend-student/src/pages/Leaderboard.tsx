@@ -29,7 +29,7 @@ function Leaderboard() {
   const [metricKey, setMetricKey] = useState<MetricKey>('points');
   const [search, setSearch] = useState('');
 
-  const board = useQuery({ queryKey: ['leaderboard', range], queryFn: () => analyticsApi.leaderboard(range), refetchInterval: 10_000, refetchIntervalInBackground: true });
+  const board = useQuery({ queryKey: ['leaderboard', range], queryFn: () => analyticsApi.leaderboard(range), refetchInterval: 15_000, refetchIntervalInBackground: false });
   // Separate + non-fatal: an API build without /leaderboard/streak just loses
   // the 14-day coins; the flame falls back to the streak on your board row.
   const streakQ = useQuery({ queryKey: ['leaderboard-streak'], queryFn: () => analyticsApi.streak(), staleTime: 30_000, refetchInterval: 60_000, retry: false });

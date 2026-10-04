@@ -133,7 +133,9 @@ export function ResumeCard({ resume, starter, loading }: { resume: ContinueResum
         {resume && <Link href={`/modules/${resume.id}`} className="dash-resume__module" data-testid={`link-open-module-${resume.id}`}>Open module <ChevronRight size={12} /></Link>}
       </div>
     </div>
-    <span className="dash-key dash-key--go" aria-hidden="true"><Play size={13} fill="currentColor" /> {action.label}</span>
+    {/* Real link (was an inert aria-hidden <span>, so tapping "Resume" did nothing);
+        z-index keeps it above the title's stretched-link overlay. */}
+    <Link href={action.href} className="dash-key dash-key--go" data-testid={`button-continue-${mod.id}`}><Play size={13} fill="currentColor" /> {action.label}</Link>
   </article>;
 }
 

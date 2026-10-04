@@ -53,6 +53,7 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { Badge, SkeletonPage, cn, difficultyTone, useExamLock, useFocusMode, usePageTitle } from '@/lib/shared';
+import { ExamClock, useCountdownStore } from '@/lib/countdown';
 
 function TakeExam() {
   const params = useParams();
@@ -61,7 +62,8 @@ function TakeExam() {
   const [session, setSession] = useState<ExamStartResponse | null>(null);
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string | null>>({});
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // Ticks live in a store (lib/countdown.tsx) so the whole exam page doesn't re-render every second.
+  const clock = useCountdownStore(0);
   const [confirming, setConfirming] = useState(false);
   // On for the whole time this screen is mounted — TakeExam is only ever
   // reached mid-attempt, so unlike Practice() there's no separate
@@ -87,14 +89,13 @@ function TakeExam() {
   useEffect(() => {
     if (load.data && !session) {
       setSession(load.data);
-      setSecondsLeft(Math.max(0, load.data.durationMinutes * 60 - Math.floor((Date.now() - new Date(load.data.startedAt).getTime()) / 1000)));
+      clock.set(Math.max(0, load.data.durationMinutes * 60 - Math.floor((Date.now() - new Date(load.data.startedAt).getTime()) / 1000)));
     }
   }, [load.data, session]);
 
   useEffect(() => {
     if (!session) return;
-    const timer = setInterval(() => setSecondsLeft((s) => {
-      if (s === null) return s;
+    const timer = setInterval(() => clock.set((s) => {
       if (s <= 1) { clearInterval(timer); submit.mutate(); return 0; }
       return s - 1;
     }), 1000);
@@ -104,13 +105,11 @@ function TakeExam() {
 
   if (load.isLoading || !session) return <SkeletonPage />;
   const current = session.questions[index];
-  const minutes = secondsLeft !== null ? Math.floor(secondsLeft / 60) : 0;
-  const seconds = secondsLeft !== null ? secondsLeft % 60 : 0;
   const answeredCount = Object.values(answers).filter((v) => v != null).length;
 
   const selectAnswer = (opt: string) => { setAnswers((prev) => ({ ...prev, [current.id]: opt })); saveAnswer.mutate({ mcqId: current.id, selectedAnswer: opt }); };
 
-  return <div className="mx-auto max-w-4xl px-1 sm:px-0"><div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5"><div className="min-w-0"><div className="truncate text-xs font-extrabold" data-testid="text-exam-title">{(load.data as { examTitle?: string } | undefined)?.examTitle}</div><div className="text-[11px] text-muted-foreground">Question {index + 1} / {session.questions.length} · {answeredCount} answered</div></div><div className={cn('flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold', secondsLeft !== null && secondsLeft < 60 ? 'bg-destructive/10 text-destructive' : 'bg-muted')}><Clock3 size={13} /> {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</div></div>
+  return <div className="mx-auto max-w-4xl px-1 sm:px-0"><div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5"><div className="min-w-0"><div className="truncate text-xs font-extrabold" data-testid="text-exam-title">{(load.data as { examTitle?: string } | undefined)?.examTitle}</div><div className="text-[11px] text-muted-foreground">Question {index + 1} / {session.questions.length} · {answeredCount} answered</div></div><ExamClock store={clock} /></div>
     <div className="rounded-3xl border border-border bg-card p-6 md:p-9"><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge><h2 className="mt-6 text-xl font-extrabold leading-8">{current.question}</h2><div className="mt-7 space-y-3">{current.options.map((opt, i) => <button key={opt} onClick={() => selectAnswer(opt)} className={cn('flex w-full items-center gap-3 rounded-xl border p-4 text-left text-sm transition-colors', answers[current.id] === opt ? 'border-primary bg-[#e6f3ed]' : 'border-border hover:bg-muted')} data-testid={`button-exam-answer-${i}`}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted font-mono-app text-[11px]">{String.fromCharCode(65 + i)}</span>{opt}</button>)}</div></div>
     <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button disabled={index === 0} onClick={() => setIndex((i) => i - 1)} className="rounded-xl border border-border bg-card px-4 py-2.5 text-xs font-bold disabled:opacity-40" data-testid="button-exam-prev">Previous</button><button disabled={index === session.questions.length - 1} onClick={() => setIndex((i) => i + 1)} className="rounded-xl border border-border bg-card px-4 py-2.5 text-xs font-bold disabled:opacity-40" data-testid="button-exam-next">Next</button></div><button onClick={() => setConfirming(true)} className="rounded-xl bg-primary px-5 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-exam-finish">Submit exam</button></div>
     <div className="mt-4 flex flex-wrap gap-1.5">{session.questions.map((q, i) => <button key={q.id} onClick={() => setIndex(i)} className={cn('grid size-8 place-items-center rounded-lg text-[11px] font-bold', i === index ? 'bg-primary text-primary-foreground' : answers[q.id] != null ? 'bg-[#d7eee4] text-[#164b4b]' : 'bg-muted text-muted-foreground')} data-testid={`button-exam-nav-${i}`}>{i + 1}</button>)}</div>

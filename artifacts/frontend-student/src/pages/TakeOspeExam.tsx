@@ -5,6 +5,7 @@ import { Link, useLocation, useParams } from 'wouter';
 import { ArrowRight, Clock3, Stethoscope, Image as ImageIcon, PenLine, RotateCcw, ZoomIn } from 'lucide-react';
 import { ospeApi, type OspeExamStartResponse } from '@/lib/api';
 import { Badge, SkeletonPage, cn, useExamLock, useFocusMode, usePageTitle } from '@/lib/shared';
+import { ExamClock, useCountdownStore } from '@/lib/countdown';
 import { resolveUploadUrl } from '@/lib/api';
 
 // ---------------------------------------------------------------------------
@@ -93,7 +94,8 @@ function TakeOspeExam() {
   const [selected, setSelected] = useState<Record<number, string | null>>({});
   const [written, setWritten] = useState<Record<number, string>>({});
   const [labelAnswers, setLabelAnswers] = useState<Record<number, Record<string, string>>>({});
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  // Ticks live in a store (lib/countdown.tsx) so the whole exam page doesn't re-render every second.
+  const clock = useCountdownStore(0);
   const [confirming, setConfirming] = useState(false);
   // Which slide is showing for the current station: the image (with any
   // identification pins), or the answer form. Stations with no image skip
@@ -114,14 +116,13 @@ function TakeOspeExam() {
   useEffect(() => {
     if (load.data && !session) {
       setSession(load.data);
-      setSecondsLeft(Math.max(0, load.data.durationMinutes * 60 - Math.floor((Date.now() - new Date(load.data.startedAt).getTime()) / 1000)));
+      clock.set(Math.max(0, load.data.durationMinutes * 60 - Math.floor((Date.now() - new Date(load.data.startedAt).getTime()) / 1000)));
     }
   }, [load.data, session]);
 
   useEffect(() => {
     if (!session) return;
-    const timer = setInterval(() => setSecondsLeft((s) => {
-      if (s === null) return s;
+    const timer = setInterval(() => clock.set((s) => {
       if (s <= 1) { clearInterval(timer); submit.mutate(); return 0; }
       return s - 1;
     }), 1000);
@@ -136,8 +137,6 @@ function TakeOspeExam() {
   useEffect(() => { setView(current?.imagePath ? 'image' : 'answer'); }, [current?.id]);
 
   if (load.isLoading || !session || !current) return <SkeletonPage />;
-  const minutes = secondsLeft !== null ? Math.floor(secondsLeft / 60) : 0;
-  const seconds = secondsLeft !== null ? secondsLeft % 60 : 0;
   const isAnswered = (s: typeof current) => {
     if (s.answerType === 'MCQ') return selected[s.id] != null;
     if (s.answerType === 'LABELING') return (s.labelPoints || []).every((p) => !!labelAnswers[s.id]?.[p.id]?.trim());
@@ -155,12 +154,12 @@ function TakeOspeExam() {
     });
   };
 
-  const imgUrl = current.imagePath ? resolveUploadUrl(current.imagePath) : null;
+  const imgUrl = current.imagePath ? (current.imageUrl ?? resolveUploadUrl(current.imagePath)) : null;
 
   return <div className="mx-auto max-w-4xl px-1 sm:px-0">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5">
       <div className="min-w-0"><div className="truncate text-xs font-extrabold" data-testid="text-ospe-exam-title">{session.examTitle}</div><div className="text-[11px] text-muted-foreground">Station {index + 1} / {session.stations.length} · {answeredCount} answered</div></div>
-      <div className={cn('flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-extrabold', secondsLeft !== null && secondsLeft < 60 ? 'bg-destructive/10 text-destructive' : 'bg-muted')}><Clock3 size={13} /> {String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</div>
+      <ExamClock store={clock} />
     </div>
 
     <div className="rounded-3xl border border-border bg-card p-6 md:p-9">
@@ -179,7 +178,7 @@ function TakeOspeExam() {
       {view === 'image' ? <>
         {imgUrl && <div className="mt-4"><ZoomableImage src={imgUrl} pins={current.answerType === 'LABELING' ? (current.labelPoints || []) : undefined} testId={`img-station-${current.id}`} /></div>}
         {current.instructions && <p className="mt-4 whitespace-pre-wrap text-sm text-muted-foreground">{current.instructions}</p>}
-        {current.attachmentPath && <a href={resolveUploadUrl(current.attachmentPath)!} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-bold text-primary" data-testid={`link-station-attachment-${current.id}`}>Open attached file</a>}
+        {current.attachmentPath && <a href={(current.attachmentUrl ?? resolveUploadUrl(current.attachmentPath))!} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs font-bold text-primary" data-testid={`link-station-attachment-${current.id}`}>Open attached file</a>}
         {imgUrl && <button onClick={() => { if (current.answerType === 'WRITTEN') saveWritten(); setView('answer'); }} className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-go-to-answer">Answer the question{ current.answerType === 'LABELING' && (current.labelPoints || []).length > 1 ? 's' : ''} <ArrowRight size={14} /></button>}
       </> : <>
         {!imgUrl && current.instructions && <p className="mb-5 whitespace-pre-wrap text-sm text-muted-foreground">{current.instructions}</p>}
