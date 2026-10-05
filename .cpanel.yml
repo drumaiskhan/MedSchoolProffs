@@ -1,0 +1,11 @@
+
+deployment:
+  tasks:
+    - export APPDIR=$HOME/medschoolproffs-api
+    - /bin/mkdir -p $APPDIR
+    - /usr/bin/rsync -a --delete --exclude='.git' --exclude='node_modules' ./ $APPDIR/
+    - cd $APPDIR && corepack enable
+    - cd $APPDIR && pnpm install --frozen-lockfile
+    - cd $APPDIR && pnpm --filter @workspace/api-server build
+    - /bin/mkdir -p $APPDIR/tmp
+    - /usr/bin/touch $APPDIR/tmp/restart.txt
