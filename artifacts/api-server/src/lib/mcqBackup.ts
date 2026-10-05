@@ -414,7 +414,7 @@ export async function restoreMcqBackupWithStructure(
     client.release(err ? (err instanceof Error ? err : true) : undefined);
   };
   try {
-    const tx = drizzle(client);
+    const tx = drizzle(client as any);
     await client.query("BEGIN");
     const timeoutMs = Number(process.env.RESTORE_STATEMENT_TIMEOUT_MS) || 600_000;
     await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);

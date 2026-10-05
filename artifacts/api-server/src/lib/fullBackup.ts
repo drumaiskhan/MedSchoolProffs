@@ -856,7 +856,7 @@ export async function restoreFullBackup(file: FullBackupFile, mode: "restore-emp
     client.release(err ? (err instanceof Error ? err : true) : undefined);
   };
   try {
-    const tx = drizzle(client);
+    const tx = drizzle(client as any);
     await client.query("BEGIN");
 
     // Nothing in this codebase ever set statement_timeout on the connection
