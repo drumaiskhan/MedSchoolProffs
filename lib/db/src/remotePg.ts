@@ -1,17 +1,9 @@
-import { Agent, fetch as undiciFetch } from "undici";
-
-/**
- * Hostinger -> cPanel bridge HTTPS transport.
- *
- * Observed in production: the TLS connect from Hostinger to
- * site.medschoolproffs.live can take well over Node's default 10 s connect
- * timeout (UND_ERR_CONNECT_TIMEOUT). A long connect timeout plus keep-alive
- * (so warm sockets are reused instead of re-handshaking on every query)
- * fixes that, but ONLY if the total time of a request stays below the
- * host proxy's (hcdn) gateway timeout - otherwise the proxy answers 504 with
- * no CORS headers and the browser reports a misleading CORS error.
- */
-const CONNECT_TIMEOUT_MS = Number(process.env.DB_BRIDGE_CONNECT_TIMEOUT_MS) || 30_000;
+import {
+  bridgeFetch,
+  bridgeHealthCheck as runBridgeHealthCheck,
+  bridgeTransportStats,
+  logBridgeTransportConfig,
+} from "./bridgeTransport";
 
 // Default total time for ONE bridge round trip made through pool.query().
 const DEFAULT_REQUEST_TIMEOUT_MS =
@@ -21,80 +13,17 @@ const DEFAULT_REQUEST_TIMEOUT_MS =
 // minutes, so those keep the long timeout.
 const SESSION_REQUEST_TIMEOUT_MS = 650_000;
 
-const bridgeAgent = new Agent({
-  connect: { timeout: CONNECT_TIMEOUT_MS },
-  keepAliveTimeout: 30_000,
-  keepAliveMaxTimeout: 120_000,
-  connections: 16,
-});
+logBridgeTransportConfig(process.env.DB_BRIDGE_URL);
 
-const CONNECT_PHASE_CODES = new Set([
-  "UND_ERR_CONNECT_TIMEOUT",
-  "ECONNREFUSED",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-]);
+export { bridgeTransportStats };
 
-function causeCode(err: unknown): string | undefined {
-  const cause = (err as { cause?: { code?: string } } | undefined)?.cause;
-  return cause?.code ?? (err as { code?: string } | undefined)?.code;
-}
-
-/** Low-level fetch against the bridge with the shared agent. */
-export function bridgeFetch(
-  path: string,
-  init: { method: "GET" | "POST"; body?: string; timeoutMs: number },
-) {
-  const { url, secret } = getBridgeConfig();
-  return undiciFetch(`${url}${path}`, {
-    method: init.method,
-    headers: {
-      "content-type": "application/json",
-      "x-bridge-key": secret,
-      accept: "application/json",
-    },
-    body: init.body,
-    dispatcher: bridgeAgent,
-    signal: AbortSignal.timeout(init.timeoutMs),
-  });
-}
-
-/**
- * GET <bridge>/db-health. Used by /api/bridge-health. Never throws - returns
- * a small diagnostic object instead.
- */
-export async function bridgeHealthCheck(): Promise<{
-  status: number;
-  body: unknown;
-  elapsedMs: number;
-}> {
-  const started = Date.now();
-  try {
-    const res = await bridgeFetch("/db-health", {
-      method: "GET",
-      timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
-    });
-    const text = await res.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = { ok: false, error: "bridge_invalid_response", snippet: text.slice(0, 300) };
-    }
-    return { status: res.status, body, elapsedMs: Date.now() - started };
-  } catch (err) {
-    const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-    return {
-      status: 502,
-      elapsedMs: Date.now() - started,
-      body: {
-        ok: false,
-        error: "bridge_unreachable",
-        message: err instanceof Error ? err.message : String(err),
-        cause: cause ? { code: cause.code, message: cause.message } : undefined,
-      },
-    };
-  }
+/** GET <bridge>/db-health for /api/bridge-health. Never throws. */
+export function bridgeHealthCheck() {
+  return runBridgeHealthCheck(
+    process.env.DB_BRIDGE_URL,
+    process.env.DB_BRIDGE_SECRET,
+    DEFAULT_REQUEST_TIMEOUT_MS,
+  );
 }
 
 type QueryConfig = {
@@ -152,30 +81,20 @@ async function bridgeRequest(
   body: Record<string, unknown>,
   timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<BridgeResponse> {
-  const payload = JSON.stringify(body);
-  const started = Date.now();
+  const { url, secret } = getBridgeConfig();
 
-  let response: Awaited<ReturnType<typeof bridgeFetch>>;
-  try {
-    response = await bridgeFetch(path, { method: "POST", body: payload, timeoutMs });
-  } catch (err) {
-    // The request never reached the bridge when the failure is in the
-    // connect phase, so retrying once is safe even for writes. Only retry if
-    // there is still time left inside this request's budget.
-    const code = causeCode(err);
-    const remaining = timeoutMs - (Date.now() - started);
-    if (code && CONNECT_PHASE_CODES.has(code) && remaining > 5_000) {
-      await new Promise((r) => setTimeout(r, 500));
-      response = await bridgeFetch(path, { method: "POST", body: payload, timeoutMs: remaining });
-    } else {
-      throw err;
-    }
-  }
+  // Connection-establishment failures are retried inside bridgeFetch (see
+  // bridgeTransport.ts) - never anything that may have reached the server.
+  const response = await bridgeFetch(url, path, secret, {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs,
+  });
 
   let data: BridgeResponse;
 
   try {
-    data = (await response.json()) as BridgeResponse;
+    data = JSON.parse(response.text) as BridgeResponse;
   } catch {
     throw new Error(
       `Database bridge returned invalid JSON (HTTP ${response.status}).`,

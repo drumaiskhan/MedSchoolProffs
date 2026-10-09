@@ -13,7 +13,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { attachUser } from "./middlewares/auth";
 import { dbErrorMessage } from "./lib/dbErrors";
-import { bridgeHealthCheck } from "@workspace/db";
+import { bridgeHealthCheck, bridgeTransportStats } from "@workspace/db";
 
 const app: Express = express();
 
@@ -164,7 +164,8 @@ app.use(cookieParser());
 /*
  * Bridge health check (Hostinger -> cPanel bridge -> PostgreSQL).
  * Registered BEFORE attachUser because attachUser may touch the database.
- * Uses the same keep-alive / long-connect-timeout transport as every query.
+ * Uses the same keep-alive transport as every query (single attempt, no retry,
+ * so elapsedMs shows what a real connect costs). Never returns secrets.
  */
 app.get("/api/bridge-health", async (_req: Request, res: Response) => {
   if (!process.env.DB_BRIDGE_URL || !process.env.DB_BRIDGE_SECRET) {
@@ -172,7 +173,7 @@ app.get("/api/bridge-health", async (_req: Request, res: Response) => {
     return;
   }
   const { status, body, elapsedMs } = await bridgeHealthCheck();
-  res.status(status).json({ ...(body as object), elapsedMs });
+  res.status(status).json({ ...(body as object), elapsedMs, transport: bridgeTransportStats() });
 });
 
 // Authentication middleware comes AFTER the bridge test.
