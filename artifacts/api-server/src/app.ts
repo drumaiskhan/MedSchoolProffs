@@ -141,37 +141,40 @@ app.get(
 
       const normalizedBridgeUrl = bridgeUrl.replace(/\/+$/, "");
 
-      /*
-       * Hostinger -> cPanel can occasionally take longer than expected
-       * to establish the HTTPS connection.
-       *
-       * Give the bridge up to 30 seconds per attempt and retry once
-       * before treating the bridge as unreachable.
-       */
-      const requestBridgeHealth = async (): Promise<globalThis.Response> => {
-        return fetch(
-          `${normalizedBridgeUrl}/db-health`,
-          {
-            method: "GET",
+      const requestBridgeHealth =
+        async (): Promise<globalThis.Response> => {
+          return fetch(
+            `${normalizedBridgeUrl}/db-health`,
+            {
+              method: "GET",
 
-            headers: {
-              "x-bridge-key": bridgeSecret,
-              accept: "application/json",
+              headers: {
+                "x-bridge-key": bridgeSecret,
+                accept: "application/json",
+              },
+
+              signal: AbortSignal.timeout(30000),
             },
-
-            signal: AbortSignal.timeout(30000),
-          },
-        );
-      };
+          );
+        };
 
       let response: globalThis.Response;
 
       try {
         response = await requestBridgeHealth();
       } catch (firstError) {
+        const firstCause =
+          firstError instanceof Error &&
+          "cause" in firstError
+            ? (firstError as Error & {
+                cause?: unknown;
+              }).cause
+            : undefined;
+
         logger.warn(
           {
             err: firstError,
+            cause: firstCause,
           },
           "First DB bridge health request failed, retrying",
         );
@@ -211,9 +214,28 @@ app.get(
 
       res.status(response.status).json(data);
     } catch (error) {
+      const cause =
+        error instanceof Error &&
+        "cause" in error
+          ? (
+              error as Error & {
+                cause?: {
+                  code?: string;
+                  message?: string;
+                  errno?: number | string;
+                  syscall?: string;
+                  address?: string;
+                  port?: number;
+                  hostname?: string;
+                };
+              }
+            ).cause
+          : undefined;
+
       logger.error(
         {
           err: error,
+          cause,
         },
         "DB bridge connection failed",
       );
@@ -221,10 +243,23 @@ app.get(
       res.status(500).json({
         ok: false,
         error: "bridge_unreachable",
+
         message:
           error instanceof Error
             ? error.message
             : String(error),
+
+        cause: cause
+          ? {
+              code: cause.code,
+              message: cause.message,
+              errno: cause.errno,
+              syscall: cause.syscall,
+              address: cause.address,
+              port: cause.port,
+              hostname: cause.hostname,
+            }
+          : undefined,
       });
     }
   },
