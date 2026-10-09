@@ -61,6 +61,8 @@ export const db = drizzle(
 
 export * from "./schema";
 
+export { bridgeHealthCheck } from "./remotePg";
+
 export {
   ensureSchema,
   isSchemaHealthy,

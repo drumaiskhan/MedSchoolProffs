@@ -39,41 +39,65 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${process.env["PORT"]}"`);
 }
 
-async function main(): Promise<void> {
-  // Creates any missing tables/indexes (idempotent, additive-only — see
-  // lib/db/ensure-schema.sql). Nothing else below this can work on a fresh
-  // database until the tables exist, so this runs first and its failure is
-  // logged loudly — a real connection/permissions problem here means the
-  // "[migrate]"/"[seed]" failures right after it are just downstream noise.
-  try {
-    await ensureSchema();
-  } catch (err) {
-    logger.error({ err }, "[schema] Failed to ensure baseline tables exist — the database connection or permissions are likely the real problem here; the migrate/seed errors that follow are probably just downstream of this.");
+// Startup tasks that talk to the database (through the HTTPS bridge, so each
+// statement is a network round trip). They must NOT be able to keep the
+// server from listening: while the process isn't listening, the host proxy
+// answers 307/504 to everything - including CORS preflights.
+const STARTUP_BUDGET_MS = Number(process.env.STARTUP_BUDGET_MS) || 15_000;
+
+async function runStartupTasks(): Promise<void> {
+  // SKIP_ENSURE_SCHEMA=1 skips the (large, idempotent) schema DDL once the
+  // production schema is known to be current. Leave unset to keep the old
+  // behaviour.
+  if (process.env.SKIP_ENSURE_SCHEMA !== "1") {
+    try {
+      await ensureSchema();
+    } catch (err) {
+      logger.error({ err }, "[schema] Failed to ensure baseline tables exist - the database connection or permissions are likely the real problem here; the migrate/seed errors that follow are probably just downstream of this.");
+    }
   }
 
   try {
     await normalizeLegacyRoles();
   } catch (err) {
-    logger.error({ err }, "[migrate] Failed to normalize legacy 'superadmin' roles to 'admin' — those accounts may still be blocked from the admin UI until this succeeds.");
+    logger.error({ err }, "[migrate] Failed to normalize legacy 'superadmin' roles to 'admin' - those accounts may still be blocked from the admin UI until this succeeds.");
   }
 
   try {
     await seedDefaultAdmin();
   } catch (err) {
-    logger.error({ err }, "[seed] Failed to seed default admin — the app will still start, but you may need to create an admin manually via /admin-signup/1.");
+    logger.error({ err }, "[seed] Failed to seed default admin - the app will still start, but you may need to create an admin manually via /admin-signup/1.");
   }
 
-  // Root-cause fix (round 3, items 2/6/8): warm storage.ts's in-memory
-  // Cloudinary cloud-name cache BEFORE the server starts accepting
-  // requests. Previously this cache only filled in lazily, async, on the
-  // first resolveFileUrl() call — which meant every request in the window
-  // between boot and that background fetch resolving got `null` URLs (the
-  // "Uploaded, but the file isn't loading back" symptom), on any deployment
-  // where the Cloudinary cloud name is DB-configured rather than an env var.
+  // Warms storage.ts's Cloudinary cloud-name cache so file URLs resolve
+  // instead of coming back null (see storage.ts).
   try {
     await warmStorageConfigCache();
   } catch (err) {
-    logger.error({ err }, "[storage] Failed to warm Cloudinary config cache — falling back to lazy refresh.");
+    logger.error({ err }, "[storage] Failed to warm Cloudinary config cache - falling back to lazy refresh.");
+  }
+}
+
+async function main(): Promise<void> {
+  const startup = runStartupTasks();
+
+  // Normal case: startup finishes quickly and we listen with everything warm,
+  // exactly as before. Slow-bridge case: after STARTUP_BUDGET_MS we listen
+  // anyway and let the remaining tasks finish in the background.
+  let budgetTimer: NodeJS.Timeout | undefined;
+  const timedOut = await Promise.race([
+    startup.then(() => false),
+    new Promise<boolean>((resolve) => {
+      budgetTimer = setTimeout(() => resolve(true), STARTUP_BUDGET_MS);
+    }),
+  ]);
+  if (budgetTimer) clearTimeout(budgetTimer);
+
+  if (timedOut) {
+    logger.warn(
+      { budgetMs: STARTUP_BUDGET_MS },
+      "Startup DB tasks still running - listening now and finishing them in the background.",
+    );
   }
 
   app.listen(port, (err) => {
@@ -84,6 +108,11 @@ async function main(): Promise<void> {
 
     logger.info({ port }, "Server listening");
   });
+
+  if (timedOut) {
+    await startup;
+    logger.info("Background startup tasks finished.");
+  }
 }
 
 main();

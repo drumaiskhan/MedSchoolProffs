@@ -13,6 +13,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { attachUser } from "./middlewares/auth";
 import { dbErrorMessage } from "./lib/dbErrors";
+import { bridgeHealthCheck } from "@workspace/db";
 
 const app: Express = express();
 
@@ -34,6 +35,74 @@ app.set(
         ? Number(trustProxyEnv)
         : trustProxyEnv,
 );
+
+// ---------------------------------------------------------------------------
+// CORS - must be the FIRST middleware so that every response Express itself
+// produces (including 4xx/5xx and the timeout guard below) carries the
+// Access-Control-* headers, and so OPTIONS preflights are answered without
+// touching the database, auth, or the logger.
+//
+// APP_URL = comma-separated list of allowed origins. Trailing slashes are
+// stripped because browsers send Origin WITHOUT one and an exact-match
+// against "https://example.com/" would silently fail.
+// ---------------------------------------------------------------------------
+const allowedOrigins = process.env.APP_URL
+  ?.split(",")
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin:
+      allowedOrigins && allowedOrigins.length > 0
+        ? allowedOrigins
+        : true,
+    credentials: true,
+    // Let browsers cache the preflight so only one OPTIONS per route per day
+    // has to cross the host proxy.
+    maxAge: 86400,
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Gateway-timeout guard.
+//
+// Hostinger's proxy (hcdn) answers 504 with an HTML page and NO CORS headers
+// when the app takes too long - which the browser reports as a CORS error.
+// If a request is still unanswered after API_REQUEST_TIMEOUT_MS we answer
+// ourselves with a JSON 503 (CORS headers already attached above) so the real
+// failure is visible. Long-running admin backup / import / export routes are
+// exempt.
+// ---------------------------------------------------------------------------
+const API_REQUEST_TIMEOUT_MS =
+  Number(process.env.API_REQUEST_TIMEOUT_MS) || 45_000;
+
+const LONG_RUNNING_PATH =
+  /^\/api\/admin\/[^/]*(backup|import|export)|^\/api\/uploads|^\/api\/books/i;
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === "OPTIONS" || LONG_RUNNING_PATH.test(req.path) || req.path === "/api/health") {
+    next();
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    if (res.headersSent) return;
+    logger.error(
+      { method: req.method, url: req.originalUrl.split("?")[0], afterMs: API_REQUEST_TIMEOUT_MS },
+      "Request exceeded the API timeout guard",
+    );
+    res.status(503).json({
+      error: "The server took too long to respond. Please try again.",
+      code: "API_TIMEOUT",
+    });
+  }, API_REQUEST_TIMEOUT_MS);
+
+  const clear = () => clearTimeout(timer);
+  res.on("finish", clear);
+  res.on("close", clear);
+  next();
+});
 
 // Compresses every JSON response over ~1KB.
 app.use(compression());
@@ -76,23 +145,6 @@ app.use(
   }),
 );
 
-// APP_URL can contain one or more comma-separated origins.
-const allowedOrigins = process.env.APP_URL
-  ?.split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-app.use(
-  cors({
-    origin:
-      allowedOrigins && allowedOrigins.length > 0
-        ? allowedOrigins
-        : true,
-
-    credentials: true,
-  }),
-);
-
 // Allow large bulk imports / JSON submissions.
 app.use(
   express.json({
@@ -110,163 +162,36 @@ app.use(
 app.use(cookieParser());
 
 /*
- * TEMPORARY BRIDGE HEALTH TEST
- *
- * Flow:
- *
- * Hostinger API
- *      ↓ HTTPS
- * cPanel DB bridge
- *      ↓ localhost:5432
- * PostgreSQL
- *
- * This route is intentionally registered BEFORE attachUser,
- * because attachUser may touch the database.
+ * Bridge health check (Hostinger -> cPanel bridge -> PostgreSQL).
+ * Registered BEFORE attachUser because attachUser may touch the database.
+ * Uses the same keep-alive / long-connect-timeout transport as every query.
  */
-app.get(
-  "/api/bridge-health",
-  async (_req: Request, res: Response) => {
-    try {
-      const bridgeUrl = process.env.DB_BRIDGE_URL;
-      const bridgeSecret = process.env.DB_BRIDGE_SECRET;
-
-      if (!bridgeUrl || !bridgeSecret) {
-        res.status(500).json({
-          ok: false,
-          error: "bridge_not_configured",
-        });
-
-        return;
-      }
-
-      const normalizedBridgeUrl = bridgeUrl.replace(/\/+$/, "");
-
-      const requestBridgeHealth =
-        async (): Promise<globalThis.Response> => {
-          return fetch(
-            `${normalizedBridgeUrl}/db-health`,
-            {
-              method: "GET",
-
-              headers: {
-                "x-bridge-key": bridgeSecret,
-                accept: "application/json",
-              },
-
-              signal: AbortSignal.timeout(30000),
-            },
-          );
-        };
-
-      let response: globalThis.Response;
-
-      try {
-        response = await requestBridgeHealth();
-      } catch (firstError) {
-        const firstCause =
-          firstError instanceof Error &&
-          "cause" in firstError
-            ? (firstError as Error & {
-                cause?: unknown;
-              }).cause
-            : undefined;
-
-        logger.warn(
-          {
-            err: firstError,
-            cause: firstCause,
-          },
-          "First DB bridge health request failed, retrying",
-        );
-
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 1000);
-        });
-
-        response = await requestBridgeHealth();
-      }
-
-      const contentType =
-        response.headers.get("content-type") ?? "";
-
-      if (!contentType.includes("application/json")) {
-        const body = await response.text();
-
-        logger.error(
-          {
-            status: response.status,
-            contentType,
-            body: body.slice(0, 500),
-          },
-          "Bridge returned a non-JSON response",
-        );
-
-        res.status(502).json({
-          ok: false,
-          error: "bridge_invalid_response",
-          status: response.status,
-        });
-
-        return;
-      }
-
-      const data = await response.json();
-
-      res.status(response.status).json(data);
-    } catch (error) {
-      const cause =
-        error instanceof Error &&
-        "cause" in error
-          ? (
-              error as Error & {
-                cause?: {
-                  code?: string;
-                  message?: string;
-                  errno?: number | string;
-                  syscall?: string;
-                  address?: string;
-                  port?: number;
-                  hostname?: string;
-                };
-              }
-            ).cause
-          : undefined;
-
-      logger.error(
-        {
-          err: error,
-          cause,
-        },
-        "DB bridge connection failed",
-      );
-
-      res.status(500).json({
-        ok: false,
-        error: "bridge_unreachable",
-
-        message:
-          error instanceof Error
-            ? error.message
-            : String(error),
-
-        cause: cause
-          ? {
-              code: cause.code,
-              message: cause.message,
-              errno: cause.errno,
-              syscall: cause.syscall,
-              address: cause.address,
-              port: cause.port,
-              hostname: cause.hostname,
-            }
-          : undefined,
-      });
-    }
-  },
-);
+app.get("/api/bridge-health", async (_req: Request, res: Response) => {
+  if (!process.env.DB_BRIDGE_URL || !process.env.DB_BRIDGE_SECRET) {
+    res.status(500).json({ ok: false, error: "bridge_not_configured" });
+    return;
+  }
+  const { status, body, elapsedMs } = await bridgeHealthCheck();
+  res.status(status).json({ ...(body as object), elapsedMs });
+});
 
 // Authentication middleware comes AFTER the bridge test.
-app.use(attachUser);
+// attachUser only touches the database when the request carries a session
+// token. If that lookup fails (bridge/DB hiccup) answer a clean, CORS-safe 503
+// instead of an unhandled 500 - and deliberately do NOT fall through as
+// "signed out", which would make the frontend bounce a logged-in user to the
+// login page on a transient outage.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  attachUser(req, res, next).catch((err: unknown) => {
+    logger.error({ err, url: req.originalUrl.split("?")[0] }, "attachUser failed");
+    if (!res.headersSent) {
+      res.status(503).json({
+        error: "Service temporarily unavailable. Please try again.",
+        code: "DB_UNAVAILABLE",
+      });
+    }
+  });
+});
 
 // Main application routes.
 app.use("/api", router);
