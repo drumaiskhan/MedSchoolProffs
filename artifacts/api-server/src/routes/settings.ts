@@ -46,6 +46,11 @@ const EDITABLE_KEYS = [
   // (bulk explanations, AI-generated MCQs/flashcards) — this only gates the
   // student-facing on-demand button.
   "AI_EXPLAIN_ENABLED",
+  // Admin overrides for the student achievement targets + profile rank steps
+  // (JSON, blank = shipped defaults). Parsed and sanitised on the student side
+  // (frontend-student/src/lib/progressAchievements.ts); only checked here for
+  // being valid JSON. Public via /site-content, since students need it.
+  "ACHIEVEMENT_CONFIG",
   // General Trial Mode — unlike REGISTRATION_ENABLED/AI_VISUALIZER_ENABLED
   // above (which default to ON, "false" is the opt-out), this defaults to
   // OFF: only the exact string "true" enables it (see
@@ -377,6 +382,12 @@ router.patch("/admin/settings", requireAdmin, async (req, res): Promise<void> =>
   if (deviceLimit !== undefined && deviceLimit.trim() !== "" && parseDeviceLimit(deviceLimit) === null) {
     res.status(400).json({ error: `Default device limit must be a whole number from 0 (unlimited) to ${MAX_DEVICES_CEILING}.` });
     return;
+  }
+  const achievementConfig = parsed.data.ACHIEVEMENT_CONFIG;
+  if (achievementConfig !== undefined && achievementConfig.trim() !== "") {
+    let ok = false;
+    try { const v = JSON.parse(achievementConfig); ok = !!v && typeof v === "object" && !Array.isArray(v); } catch { ok = false; }
+    if (!ok) { res.status(400).json({ error: "Achievement settings must be a valid JSON object (or blank to use the defaults)." }); return; }
   }
   const trialMcqLimit = parsed.data.TRIAL_DAILY_MCQ_LIMIT;
   if (trialMcqLimit !== undefined && trialMcqLimit.trim() !== "" && !(Number.isInteger(Number(trialMcqLimit)) && Number(trialMcqLimit) >= 0)) {

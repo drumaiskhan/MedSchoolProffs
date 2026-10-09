@@ -205,6 +205,8 @@ export interface SiteContent {
   // Flashcards.tsx. "false" = hidden; anything else = shown. Same
   // convention as AI_VISUALIZER_ENABLED above.
   AI_EXPLAIN_ENABLED: string;
+  /** Admin-saved JSON overrides for achievement targets + rank steps (see lib/progressAchievements.ts). */
+  ACHIEVEMENT_CONFIG?: string;
   // Admin-wide switch that grants every signed-in student full access
   // regardless of their own membership status — see requireActiveMembership
   // (api-server middlewares/auth.ts). Exact string "true" means on; anything

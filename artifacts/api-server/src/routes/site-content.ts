@@ -40,6 +40,8 @@ const SITE_CONTENT_KEYS = [
   // "false" = off / anything else = on convention as AI_VISUALIZER_ENABLED
   // above. See routes/settings.ts for the full comment.
   "AI_EXPLAIN_ENABLED",
+  // Achievement targets / rank steps overrides (JSON) — see routes/settings.ts.
+  "ACHIEVEMENT_CONFIG",
   // General Trial Mode — public/student-visible (same reasoning as
   // AI_VISUALIZER_ENABLED above) so the student app can show a banner
   // while it's on. The actual access grant is enforced server-side in

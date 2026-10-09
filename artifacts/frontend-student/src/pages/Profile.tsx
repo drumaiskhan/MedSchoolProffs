@@ -53,8 +53,24 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { ProfileHero, MembershipPass } from '@/components/profile/ProfileVisuals';
-import { Badge, ErrorState, Footer, IconField, PasswordStrength, SectionHeader, SkeletonPage, TeamSection, initials } from '@/lib/shared';
+import { Badge, ErrorState, Footer, IconField, PasswordStrength, SectionHeader, SkeletonPage, TeamSection, cn, initials } from '@/lib/shared';
+import { ProgressAchievements } from '@/components/ProgressAchievements';
+import { computeProgressAchievements, profileRank } from '@/lib/progressAchievements';
+import { SegTabs } from '@/lib/fx3d';
+import { useAchievementConfig } from '@/lib/useAchievementConfig';
 import { queryClient } from '@/lib/query-client';
+
+const PROFILE_TABS = [
+  { id: 'overview', label: 'Overview', icon: UserIcon },
+  { id: 'achievements', label: 'Achievements', icon: Trophy },
+  { id: 'account', label: 'Account', icon: Settings },
+  { id: 'appearance', label: 'Appearance', icon: Sun },
+] as const;
+type ProfileTab = (typeof PROFILE_TABS)[number]['id'];
+const tabFromSearch = (search: string): ProfileTab => {
+  const t = new URLSearchParams(search).get('tab');
+  return PROFILE_TABS.some((x) => x.id === t) ? (t as ProfileTab) : 'overview';
+};
 
 function Profile() {
   // Bug fix: this used to read `useGetCurrentUser()` from the generated
@@ -113,6 +129,21 @@ function Profile() {
   // Appearance (Light / Dark / Auto) — saved on this device only.
   const storedPref = useSyncExternalStore(subscribeThemePref, () => getStoredThemePref() ?? 'site');
   const activePref: ThemePref = storedPref === 'site' ? (document.documentElement.classList.contains('dark') ? 'dark' : 'light') : storedPref;
+  // Tabs — ?tab=achievements deep-links (used by the achievement toast).
+  const search = useSearch();
+  const [tab, setTab] = useState<ProfileTab>(() => tabFromSearch(search));
+  useEffect(() => { setTab(tabFromSearch(search)); }, [search]);
+  const selectTab = (t: ProfileTab) => {
+    setTab(t);
+    try { const url = new URL(window.location.href); if (t === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab', t); window.history.replaceState(window.history.state, '', url); } catch { /* ignore */ }
+  };
+  // Same query key as the Progress page + achievement toast, so this is a shared cache entry.
+  const progressQ = useQuery({ queryKey: ['progress-overview'], queryFn: analyticsApi.overview, staleTime: 30_000, retry: false });
+  const achCfg = useAchievementConfig();
+  const achievementList = progressQ.data ? computeProgressAchievements(progressQ.data, achCfg) : null;
+  const nextAchievement = achievementList?.filter((a) => !a.earned).sort((x, y) => y.progress - x.progress)[0];
+  const earnedCount = achievementList ? achievementList.filter((a) => a.earned).length : 0;
+  const rank = achievementList ? profileRank(earnedCount, achCfg.ranks) : null;
   if (q.isLoading) return <SkeletonPage />;
   if (!q.data) return <ErrorState retry={() => q.refetch()} />;
   const u = q.data;
@@ -135,8 +166,21 @@ function Profile() {
     }
   };
 
-  return <div className="max-w-4xl"><SectionHeader eyebrow="Your account" title="Profile & access" description="Your details, password and membership status." />
-  <div className="grid gap-5 md:grid-cols-2"><ProfileHero name={u.name} programYear={programYearLabel} avatarUrl={avatarUrl} isActive={dashboard.data?.membershipStatus === 'ACTIVE'} streak={dashboard.data?.streak ?? 0} progress={dashboard.data?.progress ?? 0} days={daysRemaining} /><MembershipPass name={u.name} manageHref="/payments" /></div>
+  return <div className="max-w-4xl"><SectionHeader eyebrow="Your account" title="Profile & access" description="Your membership, achievements, account details and settings." />
+  <SegTabs<ProfileTab> ariaLabel="Profile sections" scroll className="mt-4" value={tab} onChange={selectTab}
+    options={PROFILE_TABS.map((t) => ({ value: t.id, testId: `tab-profile-${t.id}`, label: <><t.icon size={13} />{t.label}{t.id === 'achievements' && achievementList ? <span className="ach-count">{earnedCount}</span> : null}</> }))} />
+  {tab === 'overview' && <div className="mt-5 grid gap-5">
+  <div className="grid gap-5 md:grid-cols-2"><ProfileHero name={u.name} programYear={programYearLabel} avatarUrl={avatarUrl} isActive={dashboard.data?.membershipStatus === 'ACTIVE'} streak={dashboard.data?.streak ?? 0} progress={dashboard.data?.progress ?? 0} days={daysRemaining} rank={rank} earned={earnedCount} total={achievementList?.length} /><MembershipPass name={u.name} manageHref="/payments" /></div>
+    {achievementList && <button type="button" onClick={() => selectTab('achievements')} className="pfx-sum group no-3d" data-testid="card-profile-achievements-summary">
+      <span className="pfx-sum__icon"><Trophy size={20} /></span>
+      <span className="min-w-0 flex-1"><span className="block text-xs font-extrabold">Achievements · {earnedCount} of {achievementList.length} unlocked</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{nextAchievement ? `Next up: ${nextAchievement.label} (${nextAchievement.current}/${nextAchievement.target})` : 'Every badge unlocked — legend!'}</span>
+        <span className="ach-meter mt-2 block"><i style={{ width: `${Math.round((earnedCount / achievementList.length) * 100)}%` }} /></span></span>
+      <ArrowRight size={15} className="shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+    </button>}
+    <TeamSection />
+  </div>}
+  {tab === 'achievements' && <div className="mt-5">{progressQ.isLoading ? <SkeletonPage /> : progressQ.data ? <ProgressAchievements overview={progressQ.data} /> : <ErrorState retry={() => progressQ.refetch()} />}</div>}
+  {tab === 'account' && <>
   <div className="mt-5 grid gap-5">
     <div className="rounded-2xl border border-border bg-card p-6"><div className="flex items-center justify-between"><h3 className="font-bold">Personal details</h3><button onClick={() => { setEditing((v) => !v); setPendingPicture(null); setPictureError(null); resetPasswordFields(); }} className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:opacity-80" data-testid="button-edit-profile"><Pencil size={13} /> {editing ? 'Cancel' : 'Edit'}</button></div>
       {editing ? <><form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); update.mutate({ name: String(f.get('name')), phone: String(f.get('phone') || ''), ...(pendingPicture ? { profilePicturePath: pendingPicture.storagePath } : {}) }); }} className="pf-edit mt-6 grid gap-4 sm:grid-cols-2">
@@ -164,9 +208,11 @@ function Profile() {
       </form></>
       : <div className="mt-6 grid gap-5 sm:grid-cols-2">{[['Full name', u.name], ['Email address', u.email], ['Institution', u.institution || 'Not added'], ['Programme', u.programKind || u.program || 'Not added'], ['Academic year', u.academicYear || 'Not added']].map(([label, value]) => <div key={label} className="pf-row"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-muted-foreground">{label}</div><div className="mt-2 text-sm font-semibold">{value}</div></div>)}</div>}
     </div></div>
+  </>}
+  {tab === 'appearance' && <>
   <div className="mt-5 rounded-2xl border border-border bg-card p-6" data-testid="card-appearance"><h3 className="font-bold">Appearance</h3><p className="mt-1 text-xs text-muted-foreground">Choose how MedSchoolProffs looks on this device. Auto follows your phone's setting.</p>
     <div role="radiogroup" aria-label="Theme" className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1.5">{([['light', 'Light', Sun], ['dark', 'Dark', Moon], ['auto', 'Auto', Monitor]] as const).map(([value, label, Icon]) => <button key={value} type="button" role="radio" aria-checked={activePref === value} onClick={() => setThemePref(value)} className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-all ${activePref === value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} data-testid={`button-theme-${value}`}><Icon size={14} />{label}</button>)}</div></div>
-  <TeamSection />
+  </>}
   <Footer variant="full" />
   </div>;
 }

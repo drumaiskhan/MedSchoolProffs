@@ -21,6 +21,7 @@ import { settingsApi, ApiRequestError, type TrialFeatureOption } from '@/lib/api
 import { AdminAccountSection, AdminImageUpload, ColorField, FaviconUploader, NotificationBroadcastPanel, SectionHeader } from '@/lib/shared';
 import { Button, Callout, Chip, Field, OptionCard, Panel, SaveBar, SecretInput, SelectInput, StatusPill, SubSection, TextArea, TextInput, ToggleRow } from '@/lib/admin-ui';
 import { queryClient } from '@/lib/query-client';
+import { AchievementConfigPanel } from '@/components/AchievementConfigPanel';
 import { cn } from '@/lib/utils';
 
 type TabId = 'general' | 'branding' | 'access' | 'ai' | 'email' | 'storage' | 'security' | 'notifications';
@@ -264,6 +265,8 @@ function AdminSettings() {
               <ToggleRow title={'"Ask AI to explain differently"'} description="The button on MCQs, flashcards and past papers. Doesn't touch admin-side AI generation or auto-explain-on-import (AI tab)." checked={values.AI_EXPLAIN_ENABLED !== 'false'} onChange={(on) => set('AI_EXPLAIN_ENABLED', on ? 'true' : 'false')} testId="checkbox-ai-explain-enabled" />
             </div>
           </Panel>
+
+          <AchievementConfigPanel value={values.ACHIEVEMENT_CONFIG ?? ''} onChange={(json) => set('ACHIEVEMENT_CONFIG', json)} />
 
           <Panel icon={Gift} tone={trialOn && !trialExpired ? 'amber' : 'default'} title="General trial mode"
             badge={trialOn ? (trialExpired ? <StatusPill tone="red">Ended</StatusPill> : <StatusPill tone="amber">Live</StatusPill>) : <StatusPill>Off</StatusPill>}

@@ -1,7 +1,7 @@
 // The dark "stage" at the top of the leaderboard: where you stand (rank,
 // percentile, gap to the next student) and your streak (flame, best run,
 // today's status and the last 14 days as coins).
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Link } from 'wouter';
 import { CheckCircle2, Flame, Target, Trophy, Zap, BookOpen } from 'lucide-react';
 import type { StreakCard } from '@/lib/api';
@@ -55,6 +55,21 @@ function StreakPanel({ streak, fallbackDays }: { streak: StreakCard | undefined;
   </div>;
 }
 
+function RankEmblem({ position, tone, beat }: { position: number; tone: ReturnType<typeof placeTone>; beat: number | null }) {
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const R = 46, C = 2 * Math.PI * R;
+  const frac = beat == null ? 1 : Math.max(0.04, beat / 100);
+  return <span className="lbx-emblem">
+    <span className="lbx-emblem__halo" />
+    <svg viewBox="0 0 100 100" className="lbx-emblem__ring" aria-hidden="true">
+      <defs><linearGradient id={`re${uid}`} x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff3bf" /><stop offset="1" stopColor="#5ef0c0" /></linearGradient></defs>
+      <circle className="lbx-emblem__bg" cx="50" cy="50" r={R} />
+      <circle className="lbx-emblem__fg" cx="50" cy="50" r={R} stroke={`url(#re${uid})`} strokeDasharray={C} strokeDashoffset={C * (1 - frac)} />
+    </svg>
+    <Medal tone={tone} size={76}><span data-testid="text-your-rank">#{position}</span></Medal>
+  </span>;
+}
+
 function StatChip({ icon: Icon, label, children }: { icon: typeof Zap; label: string; children: ReactNode }) {
   return <div className="lb-tile flex items-center gap-2.5 px-3 py-2.5">
     <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-white/10 text-[#9fe3c8]"><Icon size={15} /></span>
@@ -79,7 +94,7 @@ export function StandingHero({ you, ranked, rankedCount, metric, streak, periodL
         <div className="font-mono-app text-[10px] font-bold uppercase tracking-[.18em] text-[hsl(var(--sidebar-primary))]">Your standing · {periodLabel}</div>
         {you && position != null ? <>
           <div className="mt-4 flex items-center gap-4 sm:gap-5">
-            <Medal tone={placeTone(position, true)} size={92} className="shrink-0"><span data-testid="text-your-rank">#{position}</span></Medal>
+            <RankEmblem position={position} tone={placeTone(position, true)} beat={beat} />
             <div className="min-w-0">
               <div className="font-display text-3xl leading-tight text-white sm:text-4xl">{topPercent != null && rankedCount > 3 ? <>Top {topPercent}%</> : position === 1 ? 'You lead' : 'On the podium'}</div>
               {beat != null && <p className="mt-1 text-xs font-bold leading-5 text-white/70" data-testid="text-beat-percent">You are doing better than {beat}% of other players.</p>}

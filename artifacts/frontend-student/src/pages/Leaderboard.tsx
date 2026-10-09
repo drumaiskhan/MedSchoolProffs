@@ -81,10 +81,10 @@ function Leaderboard() {
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <div className="relative min-w-0 flex-1 sm:max-w-sm">
             <Search size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input value={search} onChange={(e: { target: { value: string } }) => setSearch(e.target.value)} placeholder="Find a student or college…" aria-label="Search the leaderboard" className="h-11 w-full rounded-2xl border border-border bg-card pl-10 pr-9 text-xs font-semibold outline-none" data-testid="input-leaderboard-search" />
+            <input value={search} onChange={(e: { target: { value: string } }) => setSearch(e.target.value)} placeholder="Find a student or college…" aria-label="Search the leaderboard" className="lbx-search w-full pl-10 pr-9 text-xs font-semibold outline-none" data-testid="input-leaderboard-search" />
             {search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search" className="no-3d absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-muted-foreground hover:bg-muted"><X size={13} /></button>}
           </div>
-          <span className="text-[11px] font-bold text-muted-foreground">{q ? `${listRows.length} match${listRows.length === 1 ? '' : 'es'}` : `${qualified.length} ranked${ranked.length > qualified.length ? ` · ${ranked.length - qualified.length} unranked` : ''}`}</span>
+          <span className="lbx-count">{q ? `${listRows.length} match${listRows.length === 1 ? '' : 'es'}` : `${qualified.length} ranked${ranked.length > qualified.length ? ` · ${ranked.length - qualified.length} unranked` : ''}`}</span>
         </div>
 
         <div key={`${range}-${metricKey}-${q ? 'q' : 'all'}`} className="mt-3 space-y-2.5" data-testid="list-leaderboard">

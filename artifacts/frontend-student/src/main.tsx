@@ -6,6 +6,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 
 import './index.css';
 import './profile3d.css';
+import './premium3d.css'; // v62: profile hero, achievement coins, leaderboard arena
 import './modern.css'; // shared visual layer: tokens + surfaces for every section
 import './perf.css'; // must stay last: overrides the heavy effects on phones
 import { initFx } from '@/lib/fx';
