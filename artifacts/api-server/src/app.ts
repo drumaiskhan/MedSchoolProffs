@@ -1,4 +1,9 @@
-import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import express, {
+  type Express,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import compression from "compression";
@@ -44,12 +49,15 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 // Lightweight liveness check.
 // This intentionally does not touch the database.
 app.get("/api/health", (_req: Request, res: Response) => {
-  res.status(200).json({ status: "ok" });
+  res.status(200).json({
+    status: "ok",
+  });
 });
 
 app.use(
   pinoHttp({
     logger,
+
     serializers: {
       req(req) {
         return {
@@ -80,12 +88,17 @@ app.use(
       allowedOrigins && allowedOrigins.length > 0
         ? allowedOrigins
         : true,
+
     credentials: true,
   }),
 );
 
 // Allow large bulk imports / JSON submissions.
-app.use(express.json({ limit: "25mb" }));
+app.use(
+  express.json({
+    limit: "25mb",
+  }),
+);
 
 app.use(
   express.urlencoded({
@@ -108,8 +121,7 @@ app.use(cookieParser());
  * PostgreSQL
  *
  * This route is intentionally registered BEFORE attachUser,
- * because attachUser may touch the existing direct Hostinger
- * PostgreSQL connection.
+ * because attachUser may touch the database.
  */
 app.get(
   "/api/bridge-health",
@@ -129,19 +141,47 @@ app.get(
 
       const normalizedBridgeUrl = bridgeUrl.replace(/\/+$/, "");
 
-      const response = await fetch(
-        `${normalizedBridgeUrl}/db-health`,
-        {
-          method: "GET",
+      /*
+       * Hostinger -> cPanel can occasionally take longer than expected
+       * to establish the HTTPS connection.
+       *
+       * Give the bridge up to 30 seconds per attempt and retry once
+       * before treating the bridge as unreachable.
+       */
+      const requestBridgeHealth = async (): Promise<globalThis.Response> => {
+        return fetch(
+          `${normalizedBridgeUrl}/db-health`,
+          {
+            method: "GET",
 
-          headers: {
-            "x-bridge-key": bridgeSecret,
-            accept: "application/json",
+            headers: {
+              "x-bridge-key": bridgeSecret,
+              accept: "application/json",
+            },
+
+            signal: AbortSignal.timeout(30000),
           },
+        );
+      };
 
-          signal: AbortSignal.timeout(10000),
-        },
-      );
+      let response: globalThis.Response;
+
+      try {
+        response = await requestBridgeHealth();
+      } catch (firstError) {
+        logger.warn(
+          {
+            err: firstError,
+          },
+          "First DB bridge health request failed, retrying",
+        );
+
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 1000);
+        });
+
+        response = await requestBridgeHealth();
+      }
 
       const contentType =
         response.headers.get("content-type") ?? "";
@@ -172,7 +212,9 @@ app.get(
       res.status(response.status).json(data);
     } catch (error) {
       logger.error(
-        { err: error },
+        {
+          err: error,
+        },
         "DB bridge connection failed",
       );
 
