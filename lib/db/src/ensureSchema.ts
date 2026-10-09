@@ -1009,6 +1009,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS med_ospe_exam_answers_attempt_station_idx
 ALTER TABLE med_ospe_exam_answers ADD COLUMN IF NOT EXISTS label_answers JSONB;
 
 COMMIT;
+
+-- Speeds up GET /past-papers MCQ counts and past-paper question lists.
+CREATE INDEX IF NOT EXISTS idx_med_mcqs_past_paper_id ON med_mcqs (past_paper_id);
 `;
 
 // Tracks whether the most recent ensureSchema() call succeeded. api-server's

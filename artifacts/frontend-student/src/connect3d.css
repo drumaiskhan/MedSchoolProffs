@@ -1,0 +1,71 @@
+/* v64 — "Connect with us" on the Profile → About tab.
+   Same rules as fx.ts / profile3d.css: depth = gradients + layered shadows + 2D
+   transforms; the only real 3D transform is the pointer tilt from .fx-tilt (one
+   hovered element, small angle). No preserve-3d, no translateZ, no infinite
+   decorative animation. The buttons are physical keys sitting in a recessed tray:
+   a hard bottom edge (the 6px solid shadow) that closes up when pressed. */
+
+@keyframes cnKeyIn { from { opacity: 0; transform: translateY(10px) scale(.92); } to { opacity: 1; transform: none; } }
+
+.cn3d { --fx-r: 1.75rem; }
+.cn3d > .fx-tilt__body { overflow: hidden; border-radius: 1.75rem; padding: 1.6rem 1.25rem 1.3rem; color: #eafff6; border: 1px solid hsl(0 0% 100% / .14);
+  background: radial-gradient(90% 80% at 0% 100%, #1f8f7a 0%, transparent 55%), radial-gradient(80% 80% at 100% 0%, #e5a95238 0%, transparent 60%), linear-gradient(140deg, #0c3340, #12304f);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .26), inset 0 -18px 30px -18px hsl(0 0% 0% / .5), 0 2px 0 #0a2630, 0 22px 40px -18px hsl(200 70% 12% / .6); }
+.cn3d__grid { position: absolute; inset: 0; pointer-events: none; opacity: .1;
+  background-image: linear-gradient(hsl(0 0% 100%) 1px, transparent 1px), linear-gradient(90deg, hsl(0 0% 100%) 1px, transparent 1px); background-size: 26px 26px;
+  -webkit-mask-image: radial-gradient(80% 70% at 50% 0%, #000 20%, transparent 100%); mask-image: radial-gradient(80% 70% at 50% 0%, #000 20%, transparent 100%); }
+.cn3d__copy { position: relative; text-align: center; }
+.cn3d__title { font-family: var(--app-font-serif); font-size: 1.85rem; line-height: 1.05; letter-spacing: -.03em; text-shadow: 0 2px 0 hsl(0 0% 0% / .25); }
+.cn3d__text { max-width: 24rem; margin: .55rem auto 0; font-size: .82rem; line-height: 1.55; color: hsl(0 0% 100% / .74); }
+
+/* The tray the keys sit in */
+.cn3d__tray { position: relative; margin-top: 1.35rem; padding: 1.25rem .8rem 1rem; border-radius: 1.4rem;
+  background: linear-gradient(180deg, hsl(205 70% 5% / .6), hsl(205 60% 9% / .35));
+  box-shadow: inset 0 3px 9px hsl(0 0% 0% / .55), inset 0 -1px 0 hsl(0 0% 100% / .08), 0 1px 0 hsl(0 0% 100% / .14); }
+.cn3d__keys { display: flex; flex-wrap: wrap; justify-content: center; gap: 1.1rem .5rem; margin: 0; padding: 0; list-style: none; }
+.cn3d__keys > li { width: 5.2rem; animation: cnKeyIn .45s cubic-bezier(.34, 1.56, .64, 1) backwards; animation-delay: calc(var(--i, 0) * 60ms + 80ms); }
+
+.cn3d__key { display: flex; flex-direction: column; align-items: center; gap: .7rem; color: inherit; text-decoration: none; outline: none; -webkit-tap-highlight-color: transparent; }
+.cn3d__cap { position: relative; display: grid; place-items: center; width: 3.9rem; height: 3.9rem; border-radius: 1.1rem; color: #fff;
+  background: linear-gradient(155deg, var(--k1), var(--k2));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .55), inset 0 -7px 10px -5px hsl(0 0% 0% / .4), 0 6px 0 var(--k3), 0 14px 14px -6px hsl(0 0% 0% / .6);
+  transition: transform .16s cubic-bezier(.34, 1.56, .64, 1), box-shadow .16s ease; }
+/* glossy top face */
+.cn3d__cap::after { content: ''; position: absolute; inset: 3px 3px 50% 3px; border-radius: .85rem .85rem 1.3rem 1.3rem / .85rem .85rem .7rem .7rem; pointer-events: none;
+  background: linear-gradient(180deg, hsl(0 0% 100% / .4), hsl(0 0% 100% / 0)); }
+.cn3d__cap svg { position: relative; z-index: 1; width: 1.65rem; height: 1.65rem; filter: drop-shadow(0 1px 1px hsl(0 0% 0% / .45)); }
+.cn3d__label { font-size: .72rem; font-weight: 800; color: hsl(0 0% 100% / .85); }
+
+@media (hover: hover) {
+  .cn3d__key:hover .cn3d__cap { transform: translateY(-3px);
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / .55), inset 0 -7px 10px -5px hsl(0 0% 0% / .4), 0 9px 0 var(--k3), 0 20px 18px -6px hsl(0 0% 0% / .6); }
+}
+/* pressed: the key drops onto its edge */
+.cn3d__key:active .cn3d__cap { transform: translateY(5px);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .4), inset 0 -4px 8px -5px hsl(0 0% 0% / .4), 0 1px 0 var(--k3), 0 4px 6px -2px hsl(0 0% 0% / .55); }
+.cn3d__key:focus-visible .cn3d__cap { outline: 3px solid #ffe08a; outline-offset: 4px; }
+
+.cn3d__empty { position: relative; text-align: center; font-size: .78rem; line-height: 1.5; color: hsl(0 0% 100% / .7); padding: .4rem .5rem; }
+
+/* key colours — brand hues, each with its own darker bottom edge */
+.cn3d__key[data-k="instagram"] { --k1: #ffbf47; --k2: #e8417f; --k3: #7b2a8f; }
+.cn3d__key[data-k="youtube"]   { --k1: #ff6a5c; --k2: #d51f1f; --k3: #8a1111; }
+.cn3d__key[data-k="facebook"]  { --k1: #5b8cf0; --k2: #2155d0; --k3: #16388f; }
+.cn3d__key[data-k="linkedin"]  { --k1: #3aa0e8; --k2: #0e66b0; --k3: #0a4274; }
+.cn3d__key[data-k="whatsapp"]  { --k1: #4fdc86; --k2: #1ba85a; --k3: #11703b; }
+
+/* ---------- Contact plates ---------- */
+.ab-plate { display: flex; align-items: center; gap: .85rem; padding: .85rem 1rem; border-radius: 1.1rem; text-decoration: none; color: inherit;
+  border: 1px solid hsl(var(--border)); background: linear-gradient(180deg, var(--sheen, transparent), transparent 46%), hsl(var(--card)); box-shadow: var(--raise-1, 0 4px 10px hsl(208 35% 19% / .06)); }
+a.ab-plate { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+@media (hover: hover) { a.ab-plate:hover { transform: translateY(-2px); border-color: hsl(var(--primary) / .4); box-shadow: var(--raise-2, 0 8px 20px hsl(208 35% 19% / .1)); } }
+.ab-puck { flex: none; display: grid; place-items: center; width: 2.6rem; height: 2.6rem; border-radius: .9rem; color: hsl(var(--primary-foreground));
+  background: linear-gradient(150deg, hsl(164 42% 50%), hsl(164 42% 34%)); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .4), inset 0 -4px 6px -3px hsl(0 0% 0% / .3), 0 4px 0 hsl(164 42% 22%); }
+.ab-plate__label { font-size: .68rem; font-weight: 700; color: hsl(var(--muted-foreground)); }
+.ab-plate__value { margin-top: .1rem; font-size: .84rem; font-weight: 800; overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cn3d__keys > li { animation: none; }
+  .cn3d__cap { transition: none; }
+}
+html[data-fx="lite"] .cn3d__keys > li { animation: none; }

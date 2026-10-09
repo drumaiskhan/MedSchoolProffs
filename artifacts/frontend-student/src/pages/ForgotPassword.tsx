@@ -52,12 +52,23 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // invalidateQueries after a save) already set their own options, which
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
-import { AuthLayout } from '@/lib/shared';
+import { AuthLayout, AuthField, BrandSpinner } from '@/lib/shared';
 
 function ForgotPassword() {
   const [sent, setSent] = useState(false);
   const submit = useMutation({ mutationFn: authApi.forgotPassword, onSuccess: () => setSent(true) });
-  return <AuthLayout><div className="w-full"><h1 className="font-display text-4xl tracking-[-.04em]">Reset your password.</h1><p className="mt-3 text-sm leading-6 text-muted-foreground">Enter your email and we'll send a reset link if an account exists.</p>{sent ? <div className="mt-6 rounded-xl border border-primary/30 bg-[#eef7f1] p-4 text-xs font-semibold text-primary" data-testid="text-forgot-sent">If that email is registered, a reset link is on its way.<span className="mt-2 block font-medium text-muted-foreground">Link won't open? The email also contains a reset code — <Link href="/reset-password" className="font-bold text-primary underline" data-testid="link-have-reset-code">enter it here</Link>.</span></div> : <form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); submit.mutate(String(f.get('email'))); }} className="mt-7 space-y-3"><label className="block text-xs font-bold">Email<input required type="email" name="email" className="mt-2 h-11 w-full rounded-xl border border-border bg-card px-3 text-sm" data-testid="input-forgot-email" /></label><button disabled={submit.isPending} className="mt-2 w-full rounded-xl bg-primary py-3.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-forgot-submit">{submit.isPending ? 'Sending…' : 'Send reset link'}</button></form>}<p className="mt-6 text-center text-xs text-muted-foreground"><Link href="/login" className="font-bold text-primary">Back to sign in</Link></p></div></AuthLayout>;
+  return <AuthLayout>
+    <h1 className="au-title">Reset your password</h1>
+    <p className="au-sub">Enter your email and we'll send a reset link if an account exists.</p>
+    {sent
+      ? <div className="au-ok mt-6 !items-start" data-testid="text-forgot-sent"><CheckCircle2 size={16} className="mt-0.5 shrink-0" /><span>If that email is registered, a reset link is on its way.<span className="mt-2 block font-medium text-muted-foreground">Link won't open? The email also contains a reset code — <Link href="/reset-password" className="au-link" data-testid="link-have-reset-code">enter it here</Link>.</span></span></div>
+      : <form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); submit.mutate(String(f.get('email')).trim()); }} className="mt-7">
+        <AuthField label="Email" icon={Mail} required type="email" name="email" inputMode="email" autoComplete="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="you@college.edu" data-testid="input-forgot-email" />
+        <button disabled={submit.isPending} className="au-btn mt-5" data-testid="button-forgot-submit">{submit.isPending ? <><BrandSpinner size={20} /> Sending…</> : 'Send reset link'}</button>
+      </form>}
+    <div className="au-or">Remembered it?</div>
+    <Link href="/login" className="au-btn au-btn--ghost" data-testid="link-back-to-login">Back to sign in</Link>
+  </AuthLayout>;
 }
 
 export default ForgotPassword;

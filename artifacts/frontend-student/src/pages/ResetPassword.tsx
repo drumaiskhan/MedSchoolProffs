@@ -52,7 +52,7 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // invalidateQueries after a save) already set their own options, which
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
-import { AuthLayout, ErrorState } from '@/lib/shared';
+import { AuthLayout, AuthField, AuthPassword, ErrorState } from '@/lib/shared';
 
 function ResetPassword() {
   const [, setLocation] = useLocation();
@@ -65,7 +65,17 @@ function ResetPassword() {
   const token = urlToken || extractCode(pastedCode);
   const [done, setDone] = useState(false);
   const submit = useMutation({ mutationFn: (password: string) => authApi.resetPassword(token, password), onSuccess: () => setDone(true) });
-  return <AuthLayout><div className="w-full"><h1 className="font-display text-4xl tracking-[-.04em]">Choose a new password.</h1>{done ? <div className="mt-6"><p className="text-sm text-muted-foreground">Your password has been updated.</p><button onClick={() => setLocation('/login')} className="mt-4 rounded-xl bg-primary px-5 py-3 text-xs font-extrabold text-primary-foreground" data-testid="button-reset-done">Go to sign in</button></div> : <form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); submit.mutate(String(f.get('password'))); }} className="mt-7 space-y-3">{!urlToken && <label className="block text-xs font-bold">Reset code from your email<input required value={pastedCode} onChange={(e) => setPastedCode(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Paste the code or the full reset link" className="mt-2 h-11 w-full rounded-xl border border-border bg-card px-3 font-mono-app text-xs" data-testid="input-reset-code" /></label>}<label className="block text-xs font-bold">New password<input required minLength={8} type="password" name="password" className="mt-2 h-11 w-full rounded-xl border border-border bg-card px-3 text-sm" data-testid="input-reset-password" /></label>{submit.isError && <ErrorState />}<button disabled={submit.isPending || !token} className="mt-2 w-full rounded-xl bg-primary py-3.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-reset-submit">{submit.isPending ? 'Updating…' : 'Update password'}</button></form>}</div></AuthLayout>;
+  return <AuthLayout>
+    <h1 className="au-title">Choose a new password</h1>
+    {done
+      ? <div className="mt-6"><p className="au-sub !mt-0">Your password has been updated.</p><button onClick={() => setLocation('/login')} className="au-btn mt-5" data-testid="button-reset-done">Go to sign in <ArrowRight size={16} className="au-btn__go" /></button></div>
+      : <form onSubmit={(e) => { e.preventDefault(); const f = new FormData(e.currentTarget); submit.mutate(String(f.get('password'))); }} className="mt-7">
+        {!urlToken && <AuthField label="Reset code from your email" icon={Hash} required value={pastedCode} onChange={(e) => setPastedCode(e.target.value)} autoComplete="off" autoCapitalize="off" spellCheck={false} placeholder="Paste the code or the full reset link" data-testid="input-reset-code" />}
+        <AuthPassword label="New password" required minLength={8} name="password" autoComplete="new-password" placeholder="At least 8 characters" toggleTestId="button-toggle-reset-password" data-testid="input-reset-password" />
+        {submit.isError && <div className="mt-4"><ErrorState /></div>}
+        <button disabled={submit.isPending || !token} className="au-btn mt-5" data-testid="button-reset-submit">{submit.isPending ? 'Updating…' : 'Update password'}</button>
+      </form>}
+  </AuthLayout>;
 }
 
 export default ResetPassword;

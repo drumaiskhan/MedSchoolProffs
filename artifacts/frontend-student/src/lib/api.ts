@@ -480,7 +480,7 @@ export const authApi = {
     request<{ user: AuthUser; message: string }>('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   adminRegister: (body: { name: string; email: string; password: string; inviteCode: string }) =>
     request<{ token: string; user: AuthUser }>('/auth/admin/register', { method: 'POST', body: JSON.stringify(body) }),
-  login: (body: { email: string; password: string }) =>
+  login: (body: { email: string; password: string; rememberMe?: boolean }) =>
     request<{ token: string; user: AuthUser }>('/auth/login', { method: 'POST', body: JSON.stringify(body) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   me: () => request<AuthUser>('/auth/me'),

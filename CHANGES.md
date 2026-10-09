@@ -12,7 +12,7 @@
 
 # Round 18 (v37) — 3D student UI, leaderboard + streaks, admin curriculum pages
 
-See AI_HANDOFF_NOTE_v37.md and REMAINING_THINGS.md. Student app gets a GPU-safe
+See docs/handoff/AI_HANDOFF_NOTE_v37.md and REMAINING_THINGS.md. Student app gets a GPU-safe
 "3D" depth system (no real 3D transforms — see v34); the Leaderboard is rebuilt
 (podium, streak flame + 14-day coins, rank by points/accuracy/streak/questions,
 search, floating "your place" dock). Streaks are now "live" (0 after a missed day)
@@ -28,7 +28,7 @@ v37.1: fixed the blank band at the bottom of the Leaderboard (`.page-enter` tran
 
 # Round 17 — Device limit (2 per account by default, admin-adjustable)
 
-See AI_HANDOFF_NOTE_v33.md. A student account can now be signed in on at most
+See docs/handoff/AI_HANDOFF_NOTE_v33.md. A student account can now be signed in on at most
 2 devices at once. Admins can change the platform default (Settings →
 Security) and override it per student, see the signed-in devices, and sign
 one or all of them out (Students → student drawer → Devices).
@@ -36,13 +36,13 @@ one or all of them out (Students → student drawer → Devices).
 Also: student app UI modernisation (admin-style sidebar/header, unified
 headers, card/button/focus polish) — see the note's last section.
 
-Also (v34): automatic per-subject icons, animated landing/sign-in visuals, real dark mode for the student app, phone bottom tab bar — see AI_HANDOFF_NOTE_v34.md.
+Also (v34): automatic per-subject icons, animated landing/sign-in visuals, real dark mode for the student app, phone bottom tab bar — see docs/handoff/AI_HANDOFF_NOTE_v34.md.
 
 ---
 
 # Round 16 — Shuffle bug fix, My Progress, secure paid-book reader
 
-See AI_HANDOFF_NOTE_v30.md. Fixed MCQ shuffle wiping per-option explanations;
+See docs/handoff/AI_HANDOFF_NOTE_v30.md. Fixed MCQ shuffle wiping per-option explanations;
 added the student My Progress page (MCQs, past papers, improvement, Pre-Proffs);
 paid books now open only in a server-rendered, watermarked reader with
 highlighting (no file download, URL never sent); admin shell polish;
@@ -52,7 +52,7 @@ integration tests in tests/integration/.
 
 # Round 15 — Trial mode overhaul, admin modernisation, Brevo slots
 
-See AI_HANDOFF_NOTE_v29.md for the full breakdown. Summary: multi-year and
+See docs/handoff/AI_HANDOFF_NOTE_v29.md for the full breakdown. Summary: multi-year and
 per-feature General Trial Mode with optional end date; rebuilt Settings and
 Site content admin pages, modernised sidebar/header; up to five Brevo API
 slots with failover or round robin and per-key test; duplicate settings
@@ -175,7 +175,7 @@ live DB/browser test.
 
 # Round 10 — what changed, by file
 
-See `AI_HANDOFF_NOTE.md` for the full writeup. Short version: (1) First
+See `docs/handoff/AI_HANDOFF_NOTE.md` for the full writeup. Short version: (1) First
 Year past papers showing in Third Year accounts was legacy content never
 tagged with real year/degree targeting (`level` text label only) — added
 a "Fix year targeting" backfill button in Admin → Past papers

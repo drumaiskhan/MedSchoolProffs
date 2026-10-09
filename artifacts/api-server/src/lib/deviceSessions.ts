@@ -92,6 +92,7 @@ export async function createDeviceSession(
   user: { id: number; role: string; maxDevices: number | null },
   req: Request,
   replaceTokenId?: string | null,
+  ttlMs: number = SESSION_TTL_MS,
 ): Promise<string> {
   const limit = await getEffectiveDeviceLimit(user);
   const tokenId = crypto.randomUUID();
@@ -115,7 +116,7 @@ export async function createDeviceSession(
       tokenId,
       deviceLabel: describeDevice(req.headers["user-agent"]),
       ip: clientIp(req),
-      expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+      expiresAt: new Date(Date.now() + ttlMs),
     });
     // housekeeping: forget rows that ended more than 30 days ago
     await tx
@@ -126,15 +127,27 @@ export async function createDeviceSession(
 }
 
 const TOUCH_EVERY_MS = 10 * 60 * 1000;
+const TOUCH_EVERY_IDLE_MS = 60 * 1000; // sessions with an idle limit are refreshed more often
 
-/** True when `tokenId` is a live session of `userId`. Also refreshes last_seen_at (at most every 10 min). */
-export async function isSessionActive(tokenId: string, userId: number): Promise<boolean> {
+/**
+ * True when `tokenId` is a live session of `userId`. Also refreshes last_seen_at
+ * (at most every 10 min — every minute for a session with an idle limit).
+ * `idleMs` is set for "remember me"-off sessions: if the device hasn't made a
+ * request for that long (browser/tab/app closed without signing out) the
+ * session is revoked here, which frees its slot against the device limit.
+ */
+export async function isSessionActive(tokenId: string, userId: number, idleMs?: number): Promise<boolean> {
   const [row] = await db
     .select({ id: userSessionsTable.id, lastSeenAt: userSessionsTable.lastSeenAt })
     .from(userSessionsTable)
     .where(and(eq(userSessionsTable.tokenId, tokenId), eq(userSessionsTable.userId, userId), isNull(userSessionsTable.revokedAt), gt(userSessionsTable.expiresAt, now())));
   if (!row) return false;
-  if (Date.now() - row.lastSeenAt.getTime() > TOUCH_EVERY_MS) {
+  const sinceSeen = Date.now() - row.lastSeenAt.getTime();
+  if (idleMs && sinceSeen > idleMs) {
+    void revokeByTokenId(tokenId).catch(() => undefined);
+    return false;
+  }
+  if (sinceSeen > (idleMs ? TOUCH_EVERY_IDLE_MS : TOUCH_EVERY_MS)) {
     void db.update(userSessionsTable).set({ lastSeenAt: now() }).where(eq(userSessionsTable.id, row.id)).catch(() => undefined);
   }
   return true;

@@ -8,8 +8,15 @@ if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
   console.warn("[auth] JWT_SECRET is not set. Using an insecure default — set JWT_SECRET in production.");
 }
 
-const JWT_EXPIRY = "7d";
-export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // keep in step with JWT_EXPIRY / cookie maxAge
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // default session (register, admin, clients that don't send rememberMe)
+// "Remember me" ticked: stay signed in across browser/app restarts.
+export const REMEMBER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// "Remember me" NOT ticked: a browser-session cookie (gone when the browser
+// closes), an absolute 12h cap, and an idle timeout — if the app stops
+// pinging for IDLE_TIMEOUT_MS (tab/browser/app closed without signing out)
+// the device slot is released automatically. See isSessionActive().
+export const TEMP_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
 
 export interface SessionPayload {
@@ -17,6 +24,7 @@ export interface SessionPayload {
   role: string; // student | admin (legacy "superadmin" rows are normalized to "admin" at boot — see lib/normalizeLegacyRoles.ts)
   passwordChangedAt: number; // ms epoch, used to invalidate tokens after password change
   sid?: string; // med_user_sessions.token_id — the device this token belongs to (see lib/deviceSessions.ts)
+  idle?: number; // ms of inactivity after which this (non-"remember me") session is signed out; absent = no idle limit
 }
 
 export async function hashPassword(plain: string): Promise<string> {
@@ -27,8 +35,8 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   return bcrypt.compare(plain, hash);
 }
 
-export function signSession(payload: SessionPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+export function signSession(payload: SessionPayload, ttlMs: number = SESSION_TTL_MS): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: Math.floor(ttlMs / 1000) });
 }
 
 export function verifySession(token: string): SessionPayload | null {
@@ -124,6 +132,12 @@ export const sessionCookieOptions = {
   httpOnly: true,
   sameSite: "none" as const,
   secure: true,
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+  maxAge: SESSION_TTL_MS,
   path: "/",
 };
+
+/** Cookie options for a given session lifetime. `null` = a browser-session cookie (no maxAge/expires), which the browser drops on close. */
+export function sessionCookieOptionsFor(ttlMs: number | null) {
+  const { maxAge: _maxAge, ...rest } = sessionCookieOptions;
+  return ttlMs === null ? rest : { ...rest, maxAge: ttlMs };
+}

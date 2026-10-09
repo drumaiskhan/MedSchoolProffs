@@ -1,0 +1,163 @@
+/* ===========================================================================
+   Student dashboard — depth layer ("2.5D").
+   Imported after index.css / premium3d.css and before perf.css.
+
+   House rule (see the v34 / v39 notes in index.css): NO perspective, rotateX,
+   rotateY, translateZ or preserve-3d — real 3D transforms corrupted the
+   compositor on some GPUs. Depth here is built from:
+     • layered gradients + specular highlights
+     • "slab" edges (a solid shadow under each surface, like a thick keycap)
+     • coloured, soft ambient shadows
+     • a floating glass-tile stage with pointer parallax (2D translate only)
+   Hover lifts only apply on devices that can hover; phones ("lite" fx) get the
+   same look with no endless motion. Everything uses theme tokens, so dark mode
+   follows automatically.
+   =========================================================================== */
+
+/* ---- page ambience: soft colour pools behind the grid ---- */
+.dash { position: relative; isolation: isolate; }
+.dash::before {
+  content: ''; position: absolute; z-index: -1; inset: -1.5rem -1rem auto -1rem; height: 34rem; pointer-events: none;
+  background:
+    radial-gradient(42% 60% at 8% 0%, hsl(var(--primary) / .13), transparent 70%),
+    radial-gradient(38% 55% at 96% 6%, hsl(var(--accent) / .14), transparent 72%);
+}
+
+/* ---- surfaces: slabs with a lit top edge and a solid underside ---- */
+.dash-card {
+  border-radius: 1.5rem;
+  border-color: hsl(var(--border) / .85);
+  background:
+    radial-gradient(120% 70% at 0% 0%, hsl(var(--primary) / .06), transparent 60%),
+    linear-gradient(180deg, var(--sheen), transparent 40%),
+    hsl(var(--card));
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / .75),
+    0 3px 0 hsl(var(--border)),
+    0 18px 30px -18px hsl(var(--primary) / .32),
+    0 30px 44px -30px hsl(208 35% 19% / .25);
+}
+.dark .dash-card {
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .08), 0 3px 0 hsl(0 0% 0% / .45), 0 22px 34px -18px hsl(0 0% 0% / .7);
+}
+@media (hover: hover) and (pointer: fine) {
+  .dash-card { transition: transform .2s ease, box-shadow .2s ease; }
+  .dash-card:hover {
+    transform: translateY(-3px);
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / .75), 0 5px 0 hsl(var(--border)), 0 26px 38px -18px hsl(var(--primary) / .4), 0 40px 52px -32px hsl(208 35% 19% / .3);
+  }
+  .dark .dash-card:hover { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .1), 0 5px 0 hsl(0 0% 0% / .5), 0 30px 40px -18px hsl(0 0% 0% / .75); }
+}
+
+/* ---- hero ---- */
+.dash-hero { container: dashhero / inline-size; border-radius: 2rem; }
+/* not the photo variant — it keeps its own image background from index.css */
+.dash-hero:not(.dash-hero--photo) {
+  background:
+    radial-gradient(70% 90% at 92% -10%, hsl(var(--accent) / .55), transparent 62%),
+    radial-gradient(60% 80% at -6% 108%, hsl(0 0% 100% / .16), transparent 62%),
+    radial-gradient(40% 50% at 55% 120%, hsl(var(--accent) / .22), transparent 70%),
+    linear-gradient(155deg, hsl(var(--primary)), var(--hero-deep));
+}
+.dash-hero {
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / .38), inset 0 -2px 0 hsl(0 0% 0% / .2),
+    0 6px 0 var(--edge-color), 0 34px 50px -26px hsl(var(--primary) / .8), 0 56px 70px -44px hsl(var(--primary) / .6);
+}
+/* a broad diagonal specular band that drifts a little with the pointer */
+.dash-hero::before {
+  content: ''; position: absolute; z-index: 0; top: -30%; bottom: -30%; left: 18%; width: 34%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, hsl(0 0% 100% / .13), transparent);
+  transform: translateX(calc(var(--px, 0) * 36px)) skewX(-16deg);
+}
+.dash-hero__name { font-size: clamp(2rem, 6.4vw, 3rem); text-shadow: 0 2px 0 hsl(0 0% 0% / .16), 0 12px 24px hsl(0 0% 0% / .25); }
+.dash-eyebrow--glass { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .35), 0 2px 0 hsl(0 0% 0% / .12); }
+.dash-streak {
+  border: 1px solid hsl(0 0% 100% / .16);
+  background: linear-gradient(165deg, hsl(0 0% 100% / .18), hsl(0 0% 100% / .06));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .3), 0 14px 22px -16px hsl(0 0% 0% / .55);
+}
+.dash-key--light { box-shadow: 0 4px 0 hsl(0 0% 0% / .28), 0 18px 26px -12px hsl(0 0% 0% / .55), inset 0 1px 0 #fff; }
+.dash-key--light:active { transform: translateY(3px); box-shadow: 0 1px 0 hsl(0 0% 0% / .28), 0 6px 10px -6px hsl(0 0% 0% / .5), inset 0 1px 0 #fff; }
+
+/* ---- floating glass-tile stage (wide heroes only) ---- */
+.dash-stage { display: none; }
+@container dashhero (min-width: 640px) {
+  .dash-hero__body { padding-right: clamp(0px, 24cqw, 15rem); }
+  .dash-stage { display: block; position: absolute; z-index: 1; top: 12%; right: 4%; bottom: 8%; width: min(22cqw, 13.5rem); pointer-events: none; }
+}
+.dash-stage__ground {
+  position: absolute; left: 6%; right: 6%; bottom: 0; height: 14%; border-radius: 50%;
+  background: radial-gradient(closest-side, hsl(0 0% 0% / .38), transparent);
+}
+.dash-stage__slot { position: absolute; will-change: transform; }
+.dash-stage__slot--a { left: 8%; top: 24%; }
+.dash-stage__slot--b { right: 2%; top: 4%; }
+.dash-stage__slot--c { right: 12%; bottom: 14%; }
+.dash-stage__tile {
+  display: grid; place-items: center; color: hsl(var(--primary-foreground));
+  border: 1px solid hsl(0 0% 100% / .38);
+  background: linear-gradient(150deg, hsl(0 0% 100% / .42), hsl(0 0% 100% / .12) 55%, hsl(0 0% 100% / .22));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .65), inset 0 -3px 6px hsl(0 0% 0% / .16), 0 5px 0 hsl(0 0% 0% / .2), 0 22px 28px -12px hsl(0 0% 0% / .5);
+  animation: dsBob 6s ease-in-out infinite;
+}
+.dash-stage__tile--a { width: clamp(4.4rem, 8cqw, 5.6rem); aspect-ratio: 1; border-radius: 1.5rem; }
+.dash-stage__tile--b { width: clamp(3.2rem, 6cqw, 4.2rem); aspect-ratio: 1; border-radius: 1.2rem; animation-delay: -2s; }
+.dash-stage__tile--c { width: clamp(2.8rem, 5cqw, 3.5rem); aspect-ratio: 1; border-radius: 1rem; color: #ffd98a; animation-delay: -4s; }
+@keyframes dsBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+
+/* ---- progress ring: a bezelled dial ---- */
+.dash-ring { border-radius: 50%; box-shadow: 0 16px 26px -14px hsl(var(--primary) / .55), 0 3px 0 hsl(var(--border)); background: radial-gradient(circle at 30% 20%, hsl(var(--card)), hsl(var(--muted) / .7)); }
+.dash-ring__arc { filter: none; }
+.dash-ring__value { font-size: 2.1rem; }
+
+/* ---- stat cells + chips: glass-on-slab ---- */
+.dash-stat {
+  background: linear-gradient(180deg, hsl(var(--card)), hsl(var(--muted) / .6));
+  border: 1px solid hsl(var(--border) / .7);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .7), 0 2px 0 hsl(var(--border)), 0 10px 14px -10px hsl(208 35% 19% / .3);
+}
+.dark .dash-stat { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .06), 0 2px 0 hsl(0 0% 0% / .4), 0 10px 14px -10px hsl(0 0% 0% / .6); }
+.dash-stat__icon { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .55), inset 0 -2px 3px hsl(0 0% 0% / .2), 0 3px 0 hsl(0 0% 0% / .22); }
+.dash-stat__value { font-size: 1.5rem; }
+
+/* ---- quick links: chunky keycaps ---- */
+.dash-tile {
+  border-radius: 1.35rem;
+  background: radial-gradient(90% 60% at 50% 0%, hsl(var(--primary) / .07), transparent 70%), linear-gradient(180deg, var(--sheen), transparent 55%), hsl(var(--card));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .75), 0 4px 0 hsl(var(--border)), 0 16px 22px -14px hsl(208 35% 19% / .35);
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.dark .dash-tile { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .07), 0 4px 0 hsl(0 0% 0% / .5), 0 16px 22px -14px hsl(0 0% 0% / .65); }
+.dash-tile:active { transform: translateY(3px); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .6), 0 1px 0 hsl(var(--border)), 0 6px 10px -8px hsl(208 35% 19% / .35); }
+@media (hover: hover) and (pointer: fine) {
+  .dash-tile:hover { transform: translateY(-4px); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .75), 0 7px 0 hsl(var(--border)), 0 24px 30px -14px hsl(var(--primary) / .4); }
+  .dash-tile:hover:active { transform: translateY(2px); }
+}
+.dash-tile__icon { width: 3.1rem; height: 3.1rem; border-radius: 1.05rem; box-shadow: inset 0 1px 0 hsl(0 0% 100% / .6), inset 0 -3px 5px hsl(0 0% 0% / .22), 0 4px 0 hsl(0 0% 0% / .24), 0 12px 16px -8px hsl(0 0% 0% / .45); }
+
+/* ---- progress meter: a glossy tube ---- */
+.dash-meter { height: .85rem; border: 1px solid hsl(var(--border) / .8); }
+.dash-meter__fill { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .5), inset 0 -3px 3px hsl(0 0% 0% / .16), 0 0 14px hsl(var(--primary) / .35); }
+
+/* ---- weekly chart: bars with a lit top and a shaded side ---- */
+.dash-chart { background: linear-gradient(180deg, hsl(var(--muted) / .65), hsl(var(--muted) / .35)); }
+.dash-bar-col__bar { position: relative; overflow: hidden; }
+.dash-bar-col__bar::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 22%; background: linear-gradient(180deg, hsl(0 0% 100% / .5), transparent); }
+.dash-bar-col__bar::after { content: ''; position: absolute; inset: 0 0 0 58%; background: linear-gradient(90deg, transparent, hsl(0 0% 0% / .22)); }
+
+/* ---- list rows + feed + range tiles ---- */
+.dash-row { border-radius: 1.15rem; box-shadow: inset 0 1px 0 hsl(0 0% 100% / .7), 0 3px 0 hsl(var(--border)), 0 12px 18px -14px hsl(208 35% 19% / .3); }
+.dark .dash-row { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .06), 0 3px 0 hsl(0 0% 0% / .45), 0 12px 18px -14px hsl(0 0% 0% / .6); }
+.dash-range-tile__value { background: linear-gradient(180deg, hsl(var(--foreground)), color-mix(in srgb, hsl(var(--foreground)) 60%, hsl(var(--primary)))); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.dash-member__icon { box-shadow: inset 0 1px 0 hsl(0 0% 100% / .55), inset 0 -3px 5px hsl(0 0% 0% / .2), 0 4px 0 hsl(0 0% 0% / .22), 0 12px 16px -8px hsl(0 0% 0% / .4); }
+
+/* ---- phones, reduced motion ---- */
+html[data-fx="lite"] .dash-stage__tile { animation: none; }
+html[data-fx="lite"] .dash::before { display: none; }
+html[data-fx="lite"] .dash-card:hover, html[data-fx="lite"] .dash-tile:hover { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .dash-stage__tile { animation: none; }
+  .dash-hero::before { transform: skewX(-16deg); }
+  .dash-card, .dash-tile { transition: none; }
+}

@@ -11,7 +11,7 @@ import {
   Flag, Trophy, MessageSquare, Landmark, Copy, QrCode, User as UserIcon, Mail, Phone, Hash,
   GraduationCap, Eye, EyeOff, Smartphone, UploadCloud, ImageOff,
   RotateCcw, ThumbsUp, ThumbsDown, CheckCheck, ClipboardCheck, AlertTriangle, Link2 as LinkIcon, Lightbulb,
-  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity, Sun, Moon, Monitor
+  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity, Sun, Moon, Monitor, Info,
 } from 'lucide-react';
 import { applyThemeVars, getStoredThemePref, setThemePref, subscribeThemePref, type ThemePref } from '@/lib/theme';
 import {
@@ -53,7 +53,8 @@ import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { ProfileHero, MembershipPass } from '@/components/profile/ProfileVisuals';
-import { Badge, ErrorState, Footer, IconField, PasswordStrength, SectionHeader, SkeletonPage, TeamSection, cn, initials } from '@/lib/shared';
+import { ProfileAbout } from '@/components/profile/ProfileAbout';
+import { Badge, ErrorState, IconField, PasswordStrength, SectionHeader, SkeletonPage, TeamSection, cn, initials } from '@/lib/shared';
 import { ProgressAchievements } from '@/components/ProgressAchievements';
 import { computeProgressAchievements, profileRank } from '@/lib/progressAchievements';
 import { SegTabs } from '@/lib/fx3d';
@@ -65,6 +66,7 @@ const PROFILE_TABS = [
   { id: 'achievements', label: 'Achievements', icon: Trophy },
   { id: 'account', label: 'Account', icon: Settings },
   { id: 'appearance', label: 'Appearance', icon: Sun },
+  { id: 'about', label: 'About', icon: Info },
 ] as const;
 type ProfileTab = (typeof PROFILE_TABS)[number]['id'];
 const tabFromSearch = (search: string): ProfileTab => {
@@ -213,7 +215,7 @@ function Profile() {
   <div className="mt-5 rounded-2xl border border-border bg-card p-6" data-testid="card-appearance"><h3 className="font-bold">Appearance</h3><p className="mt-1 text-xs text-muted-foreground">Choose how MedSchoolProffs looks on this device. Auto follows your phone's setting.</p>
     <div role="radiogroup" aria-label="Theme" className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1.5">{([['light', 'Light', Sun], ['dark', 'Dark', Moon], ['auto', 'Auto', Monitor]] as const).map(([value, label, Icon]) => <button key={value} type="button" role="radio" aria-checked={activePref === value} onClick={() => setThemePref(value)} className={`flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-extrabold transition-all ${activePref === value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`} data-testid={`button-theme-${value}`}><Icon size={14} />{label}</button>)}</div></div>
   </>}
-  <Footer variant="full" />
+  {tab === 'about' && <ProfileAbout />}
   </div>;
 }
 

@@ -13,4 +13,4 @@ node_modules
 .replit
 .replitignore
 tests
-AI_HANDOFF*.md
+docs/handoff

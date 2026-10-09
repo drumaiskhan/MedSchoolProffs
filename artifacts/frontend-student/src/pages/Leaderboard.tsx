@@ -3,8 +3,8 @@
 // floating "your place" dock. Ranking rules live in components/leaderboard/
 // metrics.ts; the API is unchanged apart from three extra streak fields per
 // row and GET /leaderboard/streak (routes/analytics.ts).
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Flame, RotateCcw, Search, Target, Trophy, Users, X, Zap } from 'lucide-react';
 import { analyticsApi, ApiRequestError } from '@/lib/api';
 import { EmptyState, SectionHeader, SkeletonPage } from '@/lib/shared';
@@ -24,34 +24,73 @@ function LiveBadge() {
   return <span className="d3-well inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-extrabold text-muted-foreground"><span className="relative flex size-1.5"><span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-75" /><span className="relative inline-flex size-1.5 rounded-full bg-primary" /></span>Live</span>;
 }
 
+// Rows are revealed in pages (instead of mounting the whole class at once) and
+// the next page loads as the sentinel nears the viewport — a board with
+// hundreds of students used to mount hundreds of glossy rows on every visit.
+const PAGE = 30;
+
+function RankList({ rows, metric, max, count, setCount }: { rows: ReturnType<typeof rankRows>; metric: (typeof METRICS)[MetricKey]; max: number; count: number; setCount: (fn: (c: number) => number) => void }) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || count >= rows.length) return;
+    if (typeof IntersectionObserver === 'undefined') { setCount(() => rows.length); return; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setCount((c) => Math.min(rows.length, c + PAGE));
+    }, { rootMargin: '600px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [count, rows.length, setCount]);
+  return <>
+    {rows.slice(0, count).map((row, i) => <RankRowCard key={row.userId} row={row} metric={metric} max={max} index={i} />)}
+    {count < rows.length && <div ref={sentinel} className="h-10" aria-hidden="true" />}
+  </>;
+}
+
 function Leaderboard() {
   const [range, setRange] = useState('30d');
   const [metricKey, setMetricKey] = useState<MetricKey>('points');
   const [search, setSearch] = useState('');
+  const [count, setCount] = useState(PAGE);
 
-  const board = useQuery({ queryKey: ['leaderboard', range], queryFn: () => analyticsApi.leaderboard(range), refetchInterval: 15_000, refetchIntervalInBackground: false });
+  // keepPreviousData: switching Weekly/Monthly keeps the old board on screen while the new one loads
+  // (no skeleton flash, no remount of every row). 30s polling, paused while the tab is hidden.
+  const board = useQuery({ queryKey: ['leaderboard', range], queryFn: () => analyticsApi.leaderboard(range), placeholderData: keepPreviousData, staleTime: 15_000, refetchInterval: 30_000, refetchIntervalInBackground: false });
   // Separate + non-fatal: an API build without /leaderboard/streak just loses
   // the 14-day coins; the flame falls back to the streak on your board row.
   const streakQ = useQuery({ queryKey: ['leaderboard-streak'], queryFn: () => analyticsApi.streak(), staleTime: 30_000, refetchInterval: 60_000, retry: false });
 
   const metric = METRICS[metricKey];
   const ranked = useMemo(() => rankRows(board.data ?? [], metricKey), [board.data, metricKey]);
-  const qualified = ranked.filter((r) => r.position != null);
-  const you = ranked.find((r) => r.isYou) ?? null;
-  const top3 = qualified.slice(0, 3);
-  const q = search.trim().toLowerCase();
-  const listRows = q ? ranked.filter((r) => r.name.toLowerCase().includes(q) || (r.institution ?? '').toLowerCase().includes(q)) : ranked.slice(top3.length);
-  const maxValue = qualified.reduce((m, r) => Math.max(m, metric.value(r)), 0);
+  const qualified = useMemo(() => ranked.filter((r) => r.position != null), [ranked]);
+  const you = useMemo(() => ranked.find((r) => r.isYou) ?? null, [ranked]);
+  const top3 = useMemo(() => qualified.slice(0, 3), [qualified]);
+  // Typing stays instant; filtering the list runs at a lower priority.
+  const deferredSearch = useDeferredValue(search);
+  const q = deferredSearch.trim().toLowerCase();
+  const listRows = useMemo(() => (q ? ranked.filter((r) => r.name.toLowerCase().includes(q) || (r.institution ?? '').toLowerCase().includes(q)) : ranked.slice(top3.length)), [q, ranked, top3.length]);
+  useEffect(() => { setCount(PAGE); }, [range, metricKey, q]);
+  const maxValue = useMemo(() => qualified.reduce((m, r) => Math.max(m, metric.value(r)), 0), [qualified, metric]);
   const periodLabel = (RANGES.find((r) => r.value === range)?.label ?? 'Monthly').toLowerCase();
 
   const youInPodium = !!you && !q && top3.some((r) => r.isYou);
   const ready = !board.isLoading;
   const heroVisible = useAnyVisible(['lb-hero'], [ready]);
-  const youVisible = useAnyVisible([youInPodium ? 'lb-podium' : 'lb-you-row'], [ready, youInPodium, ranked, q]);
+  const youVisible = useAnyVisible([youInPodium ? 'lb-podium' : 'lb-you-row'], [ready, youInPodium, you?.position, ranked.length, q, count]);
   const dockShow = !!you && ready && !heroVisible && !youVisible;
   const jumpToMe = () => {
-    const el = document.getElementById(youInPodium ? 'lb-podium' : 'lb-you-row') ?? document.getElementById('lb-hero');
-    el?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'center' });
+    const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+    const target = youInPodium ? 'lb-podium' : 'lb-you-row';
+    const el = document.getElementById(target);
+    if (el) { el.scrollIntoView({ behavior, block: 'center' }); return; }
+    // Your row is further down than the pages loaded so far: load up to it, then scroll.
+    const idx = listRows.findIndex((r) => r.isYou);
+    if (idx >= 0) {
+      setCount((c) => Math.max(c, idx + 6));
+      requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('lb-you-row')?.scrollIntoView({ behavior, block: 'center' })));
+      return;
+    }
+    document.getElementById('lb-hero')?.scrollIntoView({ behavior, block: 'center' });
   };
 
   const header = <SectionHeader eyebrow="Community" title="Leaderboard" description="See how you rank against other students — and keep your streak alive." action={<LiveBadge />} />;
@@ -87,8 +126,8 @@ function Leaderboard() {
           <span className="lbx-count">{q ? `${listRows.length} match${listRows.length === 1 ? '' : 'es'}` : `${qualified.length} ranked${ranked.length > qualified.length ? ` · ${ranked.length - qualified.length} unranked` : ''}`}</span>
         </div>
 
-        <div key={`${range}-${metricKey}-${q ? 'q' : 'all'}`} className="mt-3 space-y-2.5" data-testid="list-leaderboard">
-          {listRows.map((row, i) => <RankRowCard key={row.userId} row={row} metric={metric} max={maxValue} index={i} />)}
+        <div className="mt-3 space-y-2.5" data-testid="list-leaderboard">
+          <RankList rows={listRows} metric={metric} max={maxValue} count={count} setCount={setCount} />
           {!listRows.length && <EmptyState icon={Search} title={q ? 'No one matches that search' : 'That’s the whole podium'} body={q ? 'Try a different name or college.' : 'Everyone on this board is already up on the podium.'} />}
         </div>
       </>}

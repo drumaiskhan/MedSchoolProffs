@@ -26,6 +26,11 @@ import {
   readSessionCookie,
   sessionCookieNameFor,
   sessionCookieOptions,
+  sessionCookieOptionsFor,
+  SESSION_TTL_MS,
+  REMEMBER_TTL_MS,
+  TEMP_SESSION_TTL_MS,
+  IDLE_TIMEOUT_MS,
 } from "../lib/auth";
 import { createDeviceSession, DeviceLimitError, revokeAllForUser, revokeByTokenId } from "../lib/deviceSessions";
 import { sendEmail, otpEmailHtml, resetPasswordEmailHtml, welcomeEmailHtml } from "../lib/email";
@@ -101,19 +106,27 @@ function requestSession(req: import("express").Request): { sid: string | null; u
 // device limit — see lib/deviceSessions.ts), then sets the cookie. Throws
 // DeviceLimitError when the account is already on its maximum number of
 // devices; callers turn that into a 403 via sendDeviceLimit().
-async function setSessionCookie(req: import("express").Request, res: import("express").Response, user: typeof usersTable.$inferSelect) {
+//
+// `remember` (login only): true  = persistent cookie, 30 days.
+//                          false = browser-session cookie, 12h cap and signed out
+//                                  after 30 min without activity (so closing the
+//                                  browser/app without signing out frees the device slot).
+//                          undefined = the previous default (7 days, persistent).
+async function setSessionCookie(req: import("express").Request, res: import("express").Response, user: typeof usersTable.$inferSelect, remember?: boolean) {
+  const ttlMs = remember === true ? REMEMBER_TTL_MS : remember === false ? TEMP_SESSION_TTL_MS : SESSION_TTL_MS;
   // Signing in again from a browser that already holds a session for this same
   // account replaces that session rather than taking a second slot.
   const existing = requestSession(req);
   const replace = existing.userId === user.id ? existing.sid : null;
-  const sid = await createDeviceSession(user, req, replace);
+  const sid = await createDeviceSession(user, req, replace, ttlMs);
   const token = signSession({
     sub: user.id,
     role: user.role,
     passwordChangedAt: Math.floor(user.passwordChangedAt.getTime() / 1000),
     sid,
-  });
-  res.cookie(sessionCookieNameFor(req), token, sessionCookieOptions);
+    ...(remember === false ? { idle: IDLE_TIMEOUT_MS } : {}),
+  }, ttlMs);
+  res.cookie(sessionCookieNameFor(req), token, sessionCookieOptionsFor(remember === false ? null : ttlMs));
   return token;
 }
 
@@ -346,7 +359,9 @@ router.post("/auth/admin/register", async (req, res): Promise<void> => {
 // Login / logout / me
 // ---------------------------------------------------------------------------
 
-const LoginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
+// rememberMe: true = stay signed in (30 days); false = sign out when the browser/app is closed;
+// omitted = legacy behaviour (7 days) for clients that don't send it, e.g. the admin app.
+const LoginSchema = z.object({ email: z.string().email(), password: z.string().min(1), rememberMe: z.boolean().optional() });
 
 router.post("/auth/login", async (req, res): Promise<void> => {
   const parsed = LoginSchema.safeParse(req.body);
@@ -415,7 +430,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   // so a blocked attempt doesn't touch lastLoginAt.
   let token: string;
   try {
-    token = await setSessionCookie(req, res, user);
+    token = await setSessionCookie(req, res, user, parsed.data.rememberMe);
   } catch (err) {
     if (sendDeviceLimit(res, err)) return;
     throw err;

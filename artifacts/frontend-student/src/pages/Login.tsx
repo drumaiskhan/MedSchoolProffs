@@ -227,7 +227,7 @@ import {
 import { StepControls } from '@/components/visualizer/StepControls';
 import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 
-import { AuthLayout, BrandSpinner } from '@/lib/shared';
+import { AuthLayout, AuthField, AuthPassword, BrandSpinner } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
 
 // Android/Capacitor authentication.
@@ -236,24 +236,31 @@ import {
   isNativeApp,
   setNativeAuthToken,
 } from '@/lib/native-auth';
+import { markSession } from '@/lib/session-persistence';
 
 function Login() {
   const [, setLocation] = useLocation();
 
   const [error, setError] = useState<string | null>(null);
+  // Bumped on every failed attempt so the error banner remounts and shakes again.
+  const [errorTick, setErrorTick] = useState(0);
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const [resendDone, setResendDone] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  // "Remember me": ticked = stay signed in; unticked = signed out when the app is closed.
+  const [remember, setRemember] = useState(true);
 
   const login = useMutation({
     mutationFn: authApi.login,
 
-    onSuccess: async (res) => {
+    onSuccess: async (res, vars) => {
+      const keep = vars.rememberMe !== false;
+      markSession(keep);
+
       // Native Android/iOS app:
       // persist the JWT before loading authenticated pages.
       if (isNativeApp()) {
         try {
-          await setNativeAuthToken(res.token);
+          await setNativeAuthToken(res.token, keep);
         } catch (err) {
           console.warn('Could not persist native auth token:', err);
         }
@@ -266,6 +273,7 @@ function Login() {
 
     onError: (err: unknown, vars) => {
       setResendDone(false);
+      setErrorTick((n) => n + 1);
 
       if (err instanceof ApiRequestError) {
         setError(err.message);
@@ -302,111 +310,89 @@ function Login() {
 
   return (
     <AuthLayout>
-      <div className="w-full">
-        <div className="font-mono-app text-[10px] uppercase tracking-[.16em] text-primary">
-          Welcome back
-        </div>
+      <h1 className="au-title">Welcome back</h1>
+      <p className="au-sub">Sign in to pick up your practice where you left it.</p>
 
-        <h1 className="mt-3 font-display text-4xl tracking-[-.04em]">
-          Sign in to your desk.
-        </h1>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setError(null);
+          setUnverifiedEmail(null);
 
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Your next clear step is waiting.
-        </p>
+          const f = new FormData(e.currentTarget);
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            setError(null);
-            setUnverifiedEmail(null);
+          login.mutate({
+            email: String(f.get('email')).trim(),
+            password: String(f.get('password')),
+            rememberMe: remember,
+          });
+        }}
+        className="mt-7"
+      >
+        <AuthField
+          label="Email"
+          icon={Mail}
+          required
+          name="email"
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="you@college.edu"
+          data-testid="input-login-email"
+        />
 
-            const f = new FormData(e.currentTarget);
-
-            login.mutate({
-              email: String(f.get('email')),
-              password: String(f.get('password')),
-            });
-          }}
-          className="mt-8 space-y-4"
-        >
-          <label className="block text-xs font-bold">
-            Email
-
-            <div className="relative mt-2">
-              <Mail
-                size={15}
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-
-              <input
-                required
-                name="email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@college.edu"
-                className="h-12 w-full rounded-xl border border-border bg-card pl-10 pr-4 text-sm outline-none transition-shadow focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-                data-testid="input-login-email"
-              />
-            </div>
-          </label>
-
-          <label className="block text-xs font-bold">
-            Password
-
-            <div className="relative mt-2">
-              <LockKeyhole
-                size={15}
-                className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-
-              <input
-                required
-                name="password"
-                type={showPassword ? 'text' : 'password'}
-                autoComplete="current-password"
-                placeholder="At least 8 characters"
-                className="h-12 w-full rounded-xl border border-border bg-card pl-10 pr-11 text-sm outline-none transition-shadow focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-                data-testid="input-login-password"
-              />
-
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={() =>
-                  setShowPassword((v) => !v)
-                }
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                data-testid="button-toggle-login-password"
-              >
-                {showPassword ? (
-                  <EyeOff size={15} />
-                ) : (
-                  <Eye size={15} />
-                )}
-              </button>
-            </div>
-          </label>
-
-          <div className="flex justify-end">
+        <AuthPassword
+          required
+          name="password"
+          autoComplete="current-password"
+          placeholder="Your password"
+          labelAside={
             <Link
               href="/forgot-password"
-              className="text-xs font-bold text-primary hover:underline"
+              className="au-link"
               data-testid="button-forgot-password"
             >
               Forgot password?
             </Link>
-          </div>
+          }
+          toggleTestId="button-toggle-login-password"
+          data-testid="input-login-password"
+        />
 
-          {error && (
-            <div
-              className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs font-semibold text-destructive"
-              data-testid="text-login-error"
-            >
+        <label className="au-remember" data-testid="label-remember-me">
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            data-testid="checkbox-remember-me"
+          />
+          <span>
+            Remember me
+            <small>
+              {remember
+                ? 'Stay signed in on this device.'
+                : 'You’ll be signed out when you close the app.'}
+            </small>
+          </span>
+        </label>
+
+        {error && (
+          <div
+            key={errorTick}
+            className="au-alert is-shaking mt-4"
+            role="alert"
+            data-testid="text-login-error"
+          >
+            <AlertTriangle size={16} />
+
+            <div>
               {error}
 
               {unverifiedEmail && (
-                <div className="mt-2">
+                <div className="mt-1.5">
                   {resendDone ? (
                     <span className="font-bold text-primary">
                       Verification email sent — check your inbox.
@@ -414,11 +400,8 @@ function Login() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() =>
-                        resend.mutate(unverifiedEmail)
-                      }
+                      onClick={() => resend.mutate(unverifiedEmail)}
                       disabled={resend.isPending}
-                      className="font-bold text-primary underline disabled:opacity-50"
                       data-testid="button-resend-verification"
                     >
                       {resend.isPending
@@ -429,35 +412,35 @@ function Login() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        <button
+          disabled={login.isPending}
+          className="au-btn mt-5"
+          data-testid="button-login-submit"
+        >
+          {login.isPending ? (
+            <>
+              <BrandSpinner size={20} /> Signing in…
+            </>
+          ) : (
+            <>
+              Sign in <ArrowRight size={16} className="au-btn__go" />
+            </>
           )}
+        </button>
+      </form>
 
-          <button
-            disabled={login.isPending}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 text-xs font-extrabold text-primary-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
-            data-testid="button-login-submit"
-          >
-            {login.isPending && (
-              <BrandSpinner size={14} />
-            )}
+      <div className="au-or">New to MedschoolProffs?</div>
 
-            {login.isPending
-              ? 'Signing in…'
-              : 'Sign in'}
-          </button>
-        </form>
-
-        <p className="mt-7 text-center text-xs text-muted-foreground">
-          New to the desk?{' '}
-
-          <Link
-            href="/register"
-            className="font-bold text-primary hover:underline"
-            data-testid="link-register"
-          >
-            Create a student account
-          </Link>
-        </p>
-      </div>
+      <Link
+        href="/register"
+        className="au-btn au-btn--ghost"
+        data-testid="link-register"
+      >
+        Create a student account
+      </Link>
     </AuthLayout>
   );
 }

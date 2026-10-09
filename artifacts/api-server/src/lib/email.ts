@@ -210,8 +210,16 @@ async function sendViaSmtp(to: string, subject: string, html: string, config: Em
     port: Number(config.smtpPort),
     secure: Number(config.smtpPort) === 465,
     auth: { user: config.smtpUser, pass: config.smtpPass },
+    // Fail fast instead of hanging a request on a dead SMTP host.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
-  await transport.sendMail({ from: config.senderEmail, to, subject, html });
+  try {
+    await transport.sendMail({ from: config.senderEmail, to, subject, html });
+  } finally {
+    transport.close();
+  }
 }
 
 /**

@@ -1,10 +1,11 @@
 // Dashboard hero: greeting, a nudge chosen from the student's real numbers, the
 // streak flame with the last 7 days as coins, and the primary "resume" action.
-// Depth is faked (gradients, layered shadows, plain 2D float/scale) — never
-// perspective/rotateX/rotateY, see the v34 note in index.css.
+// Depth is faked (gradients, layered shadows, plain 2D float/scale + pointer
+// parallax) — never perspective/rotateX/rotateY, see the v34 note in index.css.
+// The floating glass tiles on the right (wide heroes only) are the "3D" layer.
 import { type ReactNode } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, Check, Play } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, Flame, Play, Target } from 'lucide-react';
 import { Count, DayPartIcon, FlameIcon } from '@/lib/fx3d';
 import { useParallax, depth } from '@/lib/motion';
 import type { StreakCard } from '@/lib/api';
@@ -35,6 +36,13 @@ export function DashHero({ firstName, hour, message, streak, action, chip, heroI
     <span className="dash-hero__orb dash-hero__orb--b float-med" style={depth(-14, -10)} aria-hidden="true" />
     <span className="dash-hero__ring" style={depth(-8, 6)} aria-hidden="true" />
     <div className="hero-grid" aria-hidden="true" />
+
+    <div className="dash-stage" aria-hidden="true">
+      <span className="dash-stage__ground" />
+      <span className="dash-stage__slot dash-stage__slot--a" style={depth(26, 16)}><span className="dash-stage__tile dash-stage__tile--a"><BookOpen size={34} /></span></span>
+      <span className="dash-stage__slot dash-stage__slot--b" style={depth(-18, -10)}><span className="dash-stage__tile dash-stage__tile--b"><Target size={26} /></span></span>
+      <span className="dash-stage__slot dash-stage__slot--c" style={depth(34, 22)}><span className="dash-stage__tile dash-stage__tile--c"><Flame size={22} fill="currentColor" /></span></span>
+    </div>
 
     <div className="dash-hero__body">
       <div className="dash-hero__top">

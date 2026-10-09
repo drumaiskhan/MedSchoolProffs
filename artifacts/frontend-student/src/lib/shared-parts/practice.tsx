@@ -77,7 +77,7 @@ export function ProgressBadge({ tone, label }: { tone: 'up' | 'down' | 'flat' | 
 // wrong answers" section at the end so mistakes are easy to find again.
 
 import { ResultInsights } from '@/components/study/ResultInsights';
-export function PracticeResultCard({ mcqs, answers, backHref, backLabel, onRestart }: { mcqs: Mcq[]; answers: Record<number, string | null>; backHref: string; backLabel: string; onRestart: () => void }) {
+export function PracticeResultCard({ mcqs, answers, backHref, backLabel, onRestart, onRedoWrong }: { mcqs: Mcq[]; answers: Record<number, string | null>; backHref: string; backLabel: string; onRestart: () => void; onRedoWrong?: (wrong: Mcq[]) => void }) {
   const total = mcqs.length;
   const attempted = mcqs.filter((m) => answers[m.id] != null).length;
   const correct = mcqs.filter((m) => answers[m.id] != null && answers[m.id] === m.correctAnswer).length;
@@ -118,7 +118,10 @@ export function PracticeResultCard({ mcqs, answers, backHref, backLabel, onResta
         <div className="rounded-xl bg-[#fff6f3] py-3"><div className="font-display text-lg text-[#a34c3e]" data-testid="text-result-wrong">{wrong}</div><div className="text-[10px] font-bold text-muted-foreground">Wrong</div></div>
         <div className="rounded-xl bg-muted/40 py-3"><div className="font-display text-lg" data-testid="text-result-skipped">{skipped}</div><div className="text-[10px] font-bold text-muted-foreground">Skipped</div></div>
       </div>
-      <div className="mt-7 flex flex-wrap justify-center gap-2"><button onClick={onRestart} className="rounded-xl bg-primary px-5 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-practice-again"><RotateCcw size={13} className="mr-1.5 inline" /> Practice again</button><Link href={backHref} className="rounded-xl border border-border bg-card px-5 py-2.5 text-xs font-bold" data-testid="link-result-back">{backLabel}</Link></div>
+      {onRedoWrong && wrongMcqs.length > 0 && <button type="button" onClick={() => onRedoWrong(wrongMcqs)} className="redo3d mt-7" data-testid="button-redo-wrong">
+        <span className="redo3d__face"><span className="redo3d__icon"><RotateCcw size={20} strokeWidth={2.6} /></span><span className="redo3d__text"><span className="redo3d__title">Redo wrong answers</span><span className="redo3d__sub">{wrongMcqs.length === 1 ? '1 question to fix' : `${wrongMcqs.length} questions to fix`}</span></span></span>
+      </button>}
+      <div className="mt-4 flex flex-wrap justify-center gap-2"><button onClick={onRestart} className="rounded-xl bg-primary px-5 py-2.5 text-xs font-extrabold text-primary-foreground" data-testid="button-practice-again"><RotateCcw size={13} className="mr-1.5 inline" /> Practice again</button><Link href={backHref} className="rounded-xl border border-border bg-card px-5 py-2.5 text-xs font-bold" data-testid="link-result-back">{backLabel}</Link></div>
     </div>
     <ResultInsights mcqs={mcqs} answers={answers} />
 

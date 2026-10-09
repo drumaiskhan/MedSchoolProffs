@@ -1,0 +1,61 @@
+/* ===========================================================================
+   Leaderboard smoothness. Imported after premium3d.css / index.css (so it wins)
+   and before perf.css.
+
+   What made the board janky, and what changes here:
+   • every row ran a staggered entrance + a spring "hover lift" with a glow  →
+     only the first screenful animates in; the lift is hover-capable devices only
+   • each row's progress bar animated `width` (layout every frame, ×rows) and had
+     a blurred glow                                                          →
+     it scales with transform and the glow is gone
+   • each rank number was gradient-clipped text (expensive paint, ×rows)     → solid colour
+   • medals/avatars stacked a 9–14px blurred drop shadow per row             → a crisp edge instead
+   • the "you need to practise today" banner animated box-shadow (repaints
+     every frame)                                                            → an opacity/scale ring
+   • blurred, endlessly drifting orbs behind the hero and a blurred beam/
+     sparkle filter over the podium                                          → static soft masks
+   =========================================================================== */
+
+/* ---- rows ---- */
+.lbx-row { animation: none; transition: border-color .18s ease; }
+.lbx-row--enter { animation: lbRise .38s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(min(var(--i, 0), 7) * 35ms); }
+.lbx-row:hover { box-shadow: var(--raise-1); }
+.lbx-row--you:hover { box-shadow: var(--raise-1), 0 0 0 1px hsl(var(--primary) / .3), 0 14px 30px -16px hsl(var(--primary) / .6); }
+@media (hover: hover) and (pointer: fine) {
+  .lbx-row { transition: transform .16s ease, border-color .18s ease; }
+  .lbx-row:hover { transform: translateY(-2px); }
+}
+@media (hover: none) { .lbx-row:hover { transform: none; } }
+
+.lbx-row__bar { box-shadow: none; }
+.lbx-meter > i { width: 100%; transform-origin: 0 50%; box-shadow: none; transition: transform .45s cubic-bezier(.22, 1, .36, 1); }
+@supports (background-clip: text) or (-webkit-background-clip: text) {
+  .lbx-num { background: none; -webkit-background-clip: border-box; background-clip: border-box; -webkit-text-fill-color: currentColor; }
+}
+.lbx-row .medal { box-shadow: inset 0 2px 1px hsl(0 0% 100% / .65), inset 0 -3px 4px hsl(0 0% 0% / .2), 0 2px 0 var(--medal-3); }
+.lbx-row .avatar-3d { box-shadow: inset 0 -4px 6px hsl(0 0% 0% / .1), inset 0 2px 2px hsl(0 0% 100% / .8), 0 2px 0 hsl(var(--border)); }
+
+/* ---- hero + podium ---- */
+.lb-hero .orb {
+  filter: none; animation: none;
+  -webkit-mask-image: radial-gradient(closest-side, #000, transparent); mask-image: radial-gradient(closest-side, #000, transparent);
+}
+.lbx-beam { filter: none; will-change: transform, opacity; }
+.lbx-spark { filter: none; }
+.lbx-halo::before, .lbx-emblem__halo { will-change: transform; }
+
+.streak-alert { animation: none; position: relative; }
+.streak-alert::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; border: 2px solid hsl(38 95% 55% / .55); animation: lbAlertRing 2.2s ease-out infinite; }
+@keyframes lbAlertRing { 0% { opacity: .9; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.08); } }
+
+/* The floating "your place" bar is nearly opaque already — skip re-blurring the page behind it on every scroll frame. */
+.lb-dock > div { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ---- phones + reduced motion ---- */
+html[data-fx="lite"] .lbx-row--enter, html[data-fx="lite"] .lbx-row { animation: none; }
+html[data-fx="lite"] :is(.lbx-beam, .lbx-spark, .lbx-halo::before, .lbx-emblem__halo) { animation: none; }
+html[data-fx="lite"] .streak-alert::after { animation: none; opacity: .6; }
+@media (prefers-reduced-motion: reduce) {
+  .lbx-row--enter, .streak-alert::after { animation: none !important; }
+  .lbx-meter > i, .lbx-row { transition: none; }
+}

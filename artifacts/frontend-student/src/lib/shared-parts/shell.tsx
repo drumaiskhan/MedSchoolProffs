@@ -20,6 +20,7 @@ import { Aurora, AuthShowcase } from '@/lib/landing-visuals';
 import { SubjectIcon, resolveSubjectIcon } from '@/lib/subject-icons';
 import { queryClient } from '@/lib/query-client';
 import { isNativeApp, clearNativeAuthToken } from '@/lib/native-auth';
+import { clearSessionMark } from '@/lib/session-persistence';
 import { SidebarNav, SidebarProfile, type SidebarGroup } from '@/components/nav/SidebarNav';
 import { AchievementToaster } from '@/components/AchievementToaster';
 import {
@@ -115,7 +116,7 @@ export function SideNav({ user, onClose }: { user: User; onClose: () => void }) 
   // Native app: call the backend while the bearer token still exists, then
   // always drop the local token (even if the network call failed, so the
   // user is never stuck "signed in" with a token the server may have revoked).
-  const finishLogout = () => { queryClient.clear(); window.location.href = '/login'; };
+  const finishLogout = () => { clearSessionMark(); queryClient.clear(); window.location.href = '/login'; };
   const logout = useMutation({
     mutationFn: async () => {
       if (!isNativeApp()) return authApi.logout();

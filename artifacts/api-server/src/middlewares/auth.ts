@@ -85,7 +85,7 @@ export async function attachUser(req: Request, _res: Response, next: NextFunctio
   // what enforces the per-account device limit and lets an admin sign a
   // device out. Tokens minted before device sessions existed carry no `sid`
   // and are treated as signed out (one re-login, then everything is tracked).
-  if (!payload.sid || !(await isSessionActive(payload.sid, user.id))) {
+  if (!payload.sid || !(await isSessionActive(payload.sid, user.id, payload.idle))) {
     debugAuth(req, "token rejected: device session missing, revoked or expired", { userId: user.id, hasSid: Boolean(payload.sid) });
     return next();
   }

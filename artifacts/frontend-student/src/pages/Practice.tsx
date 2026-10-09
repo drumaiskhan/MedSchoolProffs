@@ -199,6 +199,20 @@ function Practice() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trialRemainingNow, trialLimited, finished, mode, answeredCount]);
   const restartSession = () => { setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setSavedIds(new Set()); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); askAi.reset(); };
+  // Starting a session from the (long) setup screen used to leave the page scrolled down to the
+  // question navigator. Land on the first question instead.
+  useEffect(() => {
+    if (!mode) return;
+    const id = requestAnimationFrame(() => window.scrollTo?.({ top: 0 }));
+    return () => cancelAnimationFrame(id);
+  }, [mode]);
+  // Redo only the questions missed this session: same screen, same questions, fresh answers, no timer.
+  const redoWrong = (wrong: Mcq[]) => {
+    if (!wrong.length) return;
+    setOrderedMcqs(wrong); setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setSavedIds(new Set()); setPanel(null); setPaused(false);
+    setFinished(false); setMode('untimed'); setRemainingSeconds(0); sessionStartRef.current = Date.now(); askAi.reset();
+    window.scrollTo?.({ top: 0 });
+  };
 
   useEffect(() => {
     if (mode !== 'timed' || finished || paused) return;
@@ -222,7 +236,7 @@ function Practice() {
   if (q.isLoading) return <SkeletonPage />;
 
   if (finished) {
-    return <div className="max-w-6xl"><SectionHeader eyebrow="Daily practice" title="Session complete" /><PracticeResultCard mcqs={activeMcqs} answers={answers} onRestart={restartSession} backHref={pastPaperId ? '/past-papers' : '/blocks'} backLabel={pastPaperId ? 'Back to past papers' : 'Back to blocks'} /></div>;
+    return <div className="max-w-6xl"><SectionHeader eyebrow="Daily practice" title="Session complete" /><PracticeResultCard mcqs={activeMcqs} answers={answers} onRestart={restartSession} onRedoWrong={redoWrong} backHref={pastPaperId ? '/past-papers' : '/blocks'} backLabel={pastPaperId ? 'Back to past papers' : 'Back to blocks'} /></div>;
   }
 
   if (!mode) {

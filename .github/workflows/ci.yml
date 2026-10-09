@@ -1,0 +1,31 @@
+name: CI (typecheck + build)
+
+# Verification only — does NOT deploy. Deploys stay in hostinger-build.yml.
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build:api
+      - run: pnpm run build:student
+        env:
+          VITE_API_BASE_URL: https://api.medschoolproffs.live
+      - run: pnpm run build:admin
+        env:
+          VITE_API_BASE_URL: https://api.medschoolproffs.live

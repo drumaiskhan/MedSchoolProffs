@@ -1,7 +1,7 @@
 // Auto-extracted shared helpers/components/hooks used across page modules.
 // Split out of the original monolithic App.tsx so route-level pages can be
 // lazy-loaded independently without dragging this along more than once.
-import { type ReactNode, type ComponentProps, type TouchEvent, useState, useEffect, useRef, createContext, useContext } from 'react';
+import { type ReactNode, type ComponentProps, type TouchEvent, type KeyboardEvent as ReactKeyboardEvent, useId, useState, useEffect, useRef, createContext, useContext } from 'react';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Route, Switch, useLocation, useParams, useSearch, Router as WouterRouter } from 'wouter';
 import {
@@ -48,7 +48,87 @@ import { cn } from './ui';
 import { Logo } from './shell';
 
 
-export function AuthLayout({ children, register = false }: { children: ReactNode; register?: boolean }) { return <div className="grid min-h-[100dvh] bg-background lg:grid-cols-[.9fr_1.1fr]"><div className="safe-top flex flex-col p-6 md:p-10"><Logo /><div className="mx-auto flex w-full max-w-sm flex-1 items-center py-10">{children}</div><Footer /></div><div className="relative hidden overflow-hidden bg-sidebar p-14 text-sidebar-foreground lg:flex lg:flex-col lg:justify-between"><Aurora /><div className="relative"><div className="font-mono-app text-[10px] uppercase tracking-[.18em] text-sidebar-foreground/70">Practice &amp; learn — no exam pressure</div><h2 className="mt-8 max-w-lg font-display text-6xl leading-[.93] tracking-[-.04em]">Every MCQ<br /><em className="text-shimmer not-italic" style={{ backgroundImage: 'linear-gradient(100deg, hsl(var(--sidebar-primary)) 10%, #b9f5ea 40%, hsl(var(--sidebar-primary)) 70%)' }}>you'll need.</em></h2></div><div className="relative"><AuthShowcase /></div><div className="relative max-w-sm"><div className="mb-4 h-px bg-sidebar-border" /><p className="text-sm leading-6 text-sidebar-foreground/80">One MCQ bank across every college, subject, and topic for MBBS &amp; BDS students — built for steady daily practice, not timed exams.</p><div className="mt-5 flex items-center gap-2 text-xs font-bold"><span className="grid size-7 place-items-center rounded-full bg-sidebar-primary text-sidebar-primary-foreground"><Check size={14} /></span> Instant explanations on every question</div></div></div></div>; }
+// v64 — account-entry shell. Phones/tablets get a navy header with a question that
+// answers itself once (the product in one glance) and a sheet the form sits on;
+// desktop keeps the two-column layout with the showcase panel. Styles: auth.css.
+function AuthMcq() {
+  const [picked, setPicked] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    if (picked) return;
+    const t = window.setTimeout(() => setPicked(true), 1200);
+    return () => window.clearTimeout(t);
+  }, [picked]);
+  const opts = ['Radial', 'Axillary', 'Median', 'Ulnar'];
+  return <div className="au-mcq" aria-hidden="true">
+    <p className="au-mcq__q">Which nerve is at risk in a fracture of the surgical neck of the humerus?</p>
+    <div className="au-mcq__opts">{opts.map((t, i) => <div key={t} className={cn('au-mcq__opt', picked && i === 1 && 'is-right')}><span className="au-mcq__key">{picked && i === 1 ? <Check size={12} strokeWidth={3} /> : 'ABCD'[i]}</span>{t}</div>)}</div>
+    <p className={cn('au-mcq__why', picked && 'is-on')}><b>Axillary nerve.</b> It wraps the surgical neck, so deltoid weakness is the classic sign.</p>
+  </div>;
+}
+
+export function AuthLayout({ children, register = false }: { children: ReactNode; register?: boolean }) {
+  return <div className="au-shell">
+    <div className="au-main">
+      <header className="au-hero" data-compact={register ? '' : undefined}>
+        <div className="hero-grid" />
+        <div className="au-hero__inner">
+          <Logo dark />
+          <p className="au-hero__line">{register ? 'MCQs for MBBS & BDS students.' : 'Every question comes with the reason why.'}</p>
+          {!register && <AuthMcq />}
+        </div>
+      </header>
+      <div className="au-sheet">
+        <div className="au-desktop-logo"><Logo /></div>
+        <div className="au-sheet__body" data-wide={register ? '' : undefined}>{children}</div>
+        <div className="au-foot"><Footer /></div>
+      </div>
+    </div>
+    <div className="relative hidden overflow-hidden bg-sidebar p-14 text-sidebar-foreground lg:flex lg:flex-col lg:justify-between"><Aurora /><div className="relative"><div className="font-mono-app text-[10px] uppercase tracking-[.18em] text-sidebar-foreground/70">Practice &amp; learn — no exam pressure</div><h2 className="mt-8 max-w-lg font-display text-6xl leading-[.93] tracking-[-.04em]">Every MCQ<br /><em className="text-shimmer not-italic" style={{ backgroundImage: 'linear-gradient(100deg, hsl(var(--sidebar-primary)) 10%, #b9f5ea 40%, hsl(var(--sidebar-primary)) 70%)' }}>you'll need.</em></h2></div><div className="relative"><AuthShowcase /></div><div className="relative max-w-sm"><div className="mb-4 h-px bg-sidebar-border" /><p className="text-sm leading-6 text-sidebar-foreground/80">One MCQ bank across every college, subject, and topic for MBBS &amp; BDS students — built for steady daily practice, not timed exams.</p><div className="mt-5 flex items-center gap-2 text-xs font-bold"><span className="grid size-7 place-items-center rounded-full bg-sidebar-primary text-sidebar-primary-foreground"><Check size={14} /></span> Instant explanations on every question</div></div></div>
+  </div>;
+}
+
+/** Labelled input with an icon chip — the one field style used across sign-in, registration and recovery. */
+export function AuthField({ label, icon: Icon, labelAside, hint, trailing, id, className, ...input }: {
+  label: ReactNode; icon: typeof UserIcon; labelAside?: ReactNode; hint?: ReactNode; trailing?: ReactNode;
+} & ComponentProps<'input'>) {
+  const auto = useId();
+  const fid = id ?? auto;
+  return <div className="au-field">
+    <div className="au-label"><label htmlFor={fid}>{label}</label>{labelAside}</div>
+    <div className="au-input-wrap">
+      <span className="au-ico" aria-hidden="true"><Icon size={16} /></span>
+      <input {...input} id={fid} className={cn('au-input', className)} />
+      {trailing}
+    </div>
+    {hint}
+  </div>;
+}
+
+/** Password field with a show/hide toggle and a Caps Lock warning. Works controlled or uncontrolled. */
+export function AuthPassword({ label = 'Password', toggleTestId, onKeyUp, onKeyDown, onBlur, ...props }: Omit<ComponentProps<typeof AuthField>, 'icon' | 'type' | 'trailing' | 'hint'> & { toggleTestId?: string }) {
+  const [show, setShow] = useState(false);
+  const [caps, setCaps] = useState(false);
+  const watch = (e: ReactKeyboardEvent<HTMLInputElement>) => setCaps(!!e.getModifierState?.('CapsLock'));
+  return <AuthField {...props} label={label} icon={LockKeyhole} type={show ? 'text' : 'password'} className="au-input--pw"
+    onKeyUp={(e) => { watch(e); onKeyUp?.(e); }}
+    onKeyDown={(e) => { watch(e); onKeyDown?.(e); }}
+    onBlur={(e) => { setCaps(false); onBlur?.(e); }}
+    trailing={<button type="button" className="au-eye" aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show} onClick={() => setShow((v) => !v)} data-testid={toggleTestId}>{show ? <EyeOff size={17} /> : <Eye size={17} />}</button>}
+    hint={caps ? <div className="au-hint au-hint--warn" role="status"><AlertTriangle size={13} /> Caps Lock is on</div> : undefined} />;
+}
+
+/** Two-step progress for registration. On step 2 the first step becomes a way back. */
+export function AuthSteps({ step, onBack }: { step: 1 | 2; onBack?: () => void }) {
+  const state = (n: number) => (step > n ? 'done' : step === n ? 'current' : 'todo');
+  const dot = (n: number) => <span className="au-step__dot">{state(n) === 'done' ? <Check size={13} strokeWidth={3} /> : n}</span>;
+  return <div className="au-steps" role="list" aria-label="Registration progress">
+    {step === 2 && onBack
+      ? <button type="button" role="listitem" className="au-step" data-state="done" onClick={onBack} data-testid="step-indicator-1">{dot(1)}About you</button>
+      : <div role="listitem" className="au-step" data-state={state(1)} aria-current={step === 1 ? 'step' : undefined} data-testid="step-indicator-1">{dot(1)}About you</div>}
+    <span className="au-steps__line" data-on={step === 2 ? '' : undefined} />
+    <div role="listitem" className="au-step" data-state={state(2)} aria-current={step === 2 ? 'step' : undefined} data-testid="step-indicator-2">{dot(2)}Plan &amp; payment</div>
+  </div>;
+}
 
 export function Stepper({ step }: { step: 1 | 2 }) {
   const steps = [{ n: 1, label: 'Your details' }, { n: 2, label: 'Membership & payment' }];

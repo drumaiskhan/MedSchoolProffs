@@ -55,14 +55,17 @@ export function peekNativeAuthToken(): string | null {
 }
 
 /**
- * Persists a freshly issued login token. The in-memory copy is updated first,
+ * Stores a freshly issued login token. The in-memory copy is updated first,
  * so both API clients can use it immediately even before the write finishes.
+ * `persist` = the "Remember me" box: when false the token lives in memory only
+ * (any previously saved one is removed), so closing the app signs the user out.
  */
-export async function setNativeAuthToken(token: string): Promise<void> {
+export async function setNativeAuthToken(token: string, persist: boolean = true): Promise<void> {
   if (!isNativeApp()) return;
   await restoreNativeAuthToken();
   memoryToken = token;
-  await Preferences.set({ key: TOKEN_KEY, value: token });
+  if (persist) await Preferences.set({ key: TOKEN_KEY, value: token });
+  else await Preferences.remove({ key: TOKEN_KEY });
 }
 
 /** Forgets the token (logout / expired session). Never rejects. */
