@@ -1,67 +1,63 @@
 import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import * as schema from "./schema";
 import { RemotePgPool } from "./remotePg";
+
+const databaseUrl = process.env.DATABASE_URL;
 
 const bridgeUrl = process.env.DB_BRIDGE_URL;
 const bridgeSecret = process.env.DB_BRIDGE_SECRET;
 
-if (!bridgeUrl) {
-  throw new Error(
-    "DB_BRIDGE_URL must be set.",
-  );
-}
-
-if (!bridgeSecret) {
-  throw new Error(
-    "DB_BRIDGE_SECRET must be set.",
-  );
-}
-
 /**
- * PostgreSQL now lives behind the authenticated cPanel HTTPS bridge.
+ * Database selection:
  *
- * Hostinger does NOT open a direct TCP connection to PostgreSQL.
- *
- * Flow:
- *
- * MedSchoolProffs API
- *        |
- *        v
- * RemotePgPool
- *        |
- *      HTTPS
- *        |
- *        v
- * cPanel DB bridge
- *        |
- *        v
- * pg.Pool
- *        |
- *        v
+ * cPanel:
+ *   DATABASE_URL
+ *      ↓
+ * direct PostgreSQL connection
+ *      ↓
  * 127.0.0.1:5432
- *        |
- *        v
- * cPanel PostgreSQL
+ *
+ * Hostinger fallback:
+ *   DB_BRIDGE_URL + DB_BRIDGE_SECRET
+ *      ↓
+ * HTTPS bridge
  */
-export const pool = new RemotePgPool();
+if (!databaseUrl && (!bridgeUrl || !bridgeSecret)) {
+  throw new Error(
+    "DATABASE_URL must be set, or DB_BRIDGE_URL and DB_BRIDGE_SECRET must both be set.",
+  );
+}
+
+export const pool = databaseUrl
+  ? new Pool({
+      connectionString: databaseUrl,
+      max: 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    })
+  : new RemotePgPool();
 
 /**
- * Keep the existing node-postgres Drizzle adapter.
+ * Keep the node-postgres Drizzle adapter.
  *
- * RemotePgPool implements the Pool behavior MedSchoolProffs uses.
  * The cast is intentional because RemotePgPool is structurally compatible
- * with the runtime operations we need but is not literally pg.Pool.
+ * with the runtime operations MedSchoolProffs uses but is not literally pg.Pool.
  */
-export const db = drizzle(
-  pool as any,
-  {
-    schema,
-  },
-);
+export const db = drizzle(pool as any, {
+  schema,
+});
 
 export * from "./schema";
 
-export { bridgeHealthCheck, bridgeTransportStats } from "./remotePg";
+/**
+ * Bridge diagnostics remain exported so the Hostinger/bridge deployment
+ * can continue to use them when DATABASE_URL is not present.
+ */
+export {
+  bridgeHealthCheck,
+  bridgeTransportStats,
+} from "./remotePg";
 
 export {
   ensureSchema,
