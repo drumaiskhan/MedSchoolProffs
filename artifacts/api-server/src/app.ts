@@ -1,4 +1,9 @@
-import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import express, {
+  type Express,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import compression from "compression";
@@ -44,12 +49,15 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 // Lightweight liveness check.
 // This intentionally does not touch the database.
 app.get("/api/health", (_req: Request, res: Response) => {
-  res.status(200).json({ status: "ok" });
+  res.status(200).json({
+    status: "ok",
+  });
 });
 
 app.use(
   pinoHttp({
     logger,
+
     serializers: {
       req(req) {
         return {
@@ -80,12 +88,17 @@ app.use(
       allowedOrigins && allowedOrigins.length > 0
         ? allowedOrigins
         : true,
+
     credentials: true,
   }),
 );
 
 // Allow large bulk imports / JSON submissions.
-app.use(express.json({ limit: "25mb" }));
+app.use(
+  express.json({
+    limit: "25mb",
+  }),
+);
 
 app.use(
   express.urlencoded({
@@ -108,8 +121,7 @@ app.use(cookieParser());
  * PostgreSQL
  *
  * This route is intentionally registered BEFORE attachUser,
- * because attachUser may touch the existing direct Hostinger
- * PostgreSQL connection.
+ * because attachUser may touch the database.
  */
 app.get(
   "/api/bridge-health",
@@ -129,19 +141,50 @@ app.get(
 
       const normalizedBridgeUrl = bridgeUrl.replace(/\/+$/, "");
 
-      const response = await fetch(
-        `${normalizedBridgeUrl}/db-health`,
-        {
-          method: "GET",
+      const requestBridgeHealth =
+        async (): Promise<globalThis.Response> => {
+          return fetch(
+            `${normalizedBridgeUrl}/db-health`,
+            {
+              method: "GET",
 
-          headers: {
-            "x-bridge-key": bridgeSecret,
-            accept: "application/json",
+              headers: {
+                "x-bridge-key": bridgeSecret,
+                accept: "application/json",
+              },
+
+              signal: AbortSignal.timeout(30000),
+            },
+          );
+        };
+
+      let response: globalThis.Response;
+
+      try {
+        response = await requestBridgeHealth();
+      } catch (firstError) {
+        const firstCause =
+          firstError instanceof Error &&
+          "cause" in firstError
+            ? (firstError as Error & {
+                cause?: unknown;
+              }).cause
+            : undefined;
+
+        logger.warn(
+          {
+            err: firstError,
+            cause: firstCause,
           },
+          "First DB bridge health request failed, retrying",
+        );
 
-          signal: AbortSignal.timeout(10000),
-        },
-      );
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 1000);
+        });
+
+        response = await requestBridgeHealth();
+      }
 
       const contentType =
         response.headers.get("content-type") ?? "";
@@ -171,18 +214,52 @@ app.get(
 
       res.status(response.status).json(data);
     } catch (error) {
+      const cause =
+        error instanceof Error &&
+        "cause" in error
+          ? (
+              error as Error & {
+                cause?: {
+                  code?: string;
+                  message?: string;
+                  errno?: number | string;
+                  syscall?: string;
+                  address?: string;
+                  port?: number;
+                  hostname?: string;
+                };
+              }
+            ).cause
+          : undefined;
+
       logger.error(
-        { err: error },
+        {
+          err: error,
+          cause,
+        },
         "DB bridge connection failed",
       );
 
       res.status(500).json({
         ok: false,
         error: "bridge_unreachable",
+
         message:
           error instanceof Error
             ? error.message
             : String(error),
+
+        cause: cause
+          ? {
+              code: cause.code,
+              message: cause.message,
+              errno: cause.errno,
+              syscall: cause.syscall,
+              address: cause.address,
+              port: cause.port,
+              hostname: cause.hostname,
+            }
+          : undefined,
       });
     }
   },
