@@ -1,3 +1,8 @@
+import {
+  Agent,
+  fetch as undiciFetch,
+} from "undici";
+
 type QueryConfig = {
   text: string;
   values?: unknown[];
@@ -30,16 +35,49 @@ type BridgeResponse = {
   sessionId?: string;
 };
 
+type NetworkCause = {
+  code?: string;
+  message?: string;
+  errno?: string | number;
+  syscall?: string;
+  address?: string;
+  port?: number;
+  hostname?: string;
+};
+
+/*
+ * Hostinger -> cPanel HTTPS bridge connection.
+ *
+ * Node's built-in fetch/Undici normally has its own connection timeout
+ * of roughly 10 seconds. AbortSignal.timeout() does NOT override that
+ * connection-establishment timeout.
+ *
+ * We therefore provide our own dispatcher with a 30-second TCP/TLS
+ * connection timeout.
+ */
+const bridgeDispatcher = new Agent({
+  connect: {
+    timeout: 30_000,
+  },
+});
+
 function getBridgeConfig() {
-  const url = process.env.DB_BRIDGE_URL?.replace(/\/+$/, "");
-  const secret = process.env.DB_BRIDGE_SECRET;
+  const url =
+    process.env.DB_BRIDGE_URL?.replace(/\/+$/, "");
+
+  const secret =
+    process.env.DB_BRIDGE_SECRET;
 
   if (!url) {
-    throw new Error("DB_BRIDGE_URL must be set.");
+    throw new Error(
+      "DB_BRIDGE_URL must be set.",
+    );
   }
 
   if (!secret) {
-    throw new Error("DB_BRIDGE_SECRET must be set.");
+    throw new Error(
+      "DB_BRIDGE_SECRET must be set.",
+    );
   }
 
   return {
@@ -48,63 +86,205 @@ function getBridgeConfig() {
   };
 }
 
+function getNetworkCause(
+  error: unknown,
+): NetworkCause | undefined {
+  if (
+    !(error instanceof Error) ||
+    !("cause" in error)
+  ) {
+    return undefined;
+  }
+
+  const cause = (
+    error as Error & {
+      cause?: NetworkCause;
+    }
+  ).cause;
+
+  return cause;
+}
+
+/*
+ * Only retry failures where the HTTPS connection was never successfully
+ * established.
+ *
+ * We intentionally DO NOT retry arbitrary fetch errors, HTTP failures,
+ * PostgreSQL errors, or dropped responses because retrying a SQL POST
+ * blindly could execute a write twice.
+ */
+function isSafeConnectFailure(
+  error: unknown,
+): boolean {
+  const cause = getNetworkCause(error);
+
+  const code = cause?.code;
+
+  return (
+    code === "UND_ERR_CONNECT_TIMEOUT" ||
+    code === "ETIMEDOUT" ||
+    code === "ENETUNREACH" ||
+    code === "EHOSTUNREACH" ||
+    code === "EAI_AGAIN"
+  );
+}
+
+function sleep(
+  milliseconds: number,
+): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(
+      resolve,
+      milliseconds,
+    );
+  });
+}
+
+async function performBridgeFetch(
+  url: string,
+  secret: string,
+  body: Record<string, unknown>,
+) {
+  return undiciFetch(
+    url,
+    {
+      method: "POST",
+
+      headers: {
+        "content-type": "application/json",
+        "x-bridge-key": secret,
+        accept: "application/json",
+      },
+
+      body: JSON.stringify(body),
+
+      /*
+       * Overall request timeout.
+       *
+       * Large backup/restore operations can legitimately take several
+       * minutes once the connection has been established.
+       */
+      signal:
+        AbortSignal.timeout(
+          650_000,
+        ),
+
+      dispatcher:
+        bridgeDispatcher,
+    },
+  );
+}
+
 async function bridgeRequest(
   path: string,
   body: Record<string, unknown>,
 ): Promise<BridgeResponse> {
-  const { url, secret } = getBridgeConfig();
+  const {
+    url,
+    secret,
+  } = getBridgeConfig();
 
-  const response = await fetch(`${url}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-bridge-key": secret,
-      accept: "application/json",
-    },
-    body: JSON.stringify(body),
+  const requestUrl =
+    `${url}${path}`;
 
-    // Restores can legitimately take several minutes.
-    signal: AbortSignal.timeout(650_000),
-  });
+  let response: Awaited<
+    ReturnType<
+      typeof performBridgeFetch
+    >
+  >;
+
+  try {
+    response =
+      await performBridgeFetch(
+        requestUrl,
+        secret,
+        body,
+      );
+  } catch (firstError) {
+    /*
+     * Retry exactly once only when the connection itself could not
+     * be established.
+     *
+     * UND_ERR_CONNECT_TIMEOUT occurs before the SQL request reaches
+     * the bridge, so retrying this case does not duplicate a query.
+     */
+    if (
+      !isSafeConnectFailure(
+        firstError,
+      )
+    ) {
+      throw firstError;
+    }
+
+    await sleep(750);
+
+    response =
+      await performBridgeFetch(
+        requestUrl,
+        secret,
+        body,
+      );
+  }
 
   let data: BridgeResponse;
 
   try {
-    data = (await response.json()) as BridgeResponse;
+    data =
+      (await response.json()) as BridgeResponse;
   } catch {
     throw new Error(
       `Database bridge returned invalid JSON (HTTP ${response.status}).`,
     );
   }
 
-  if (!response.ok || !data.ok) {
+  if (
+    !response.ok ||
+    !data.ok
+  ) {
     const remoteError =
-      typeof data.error === "object" && data.error !== null
+      typeof data.error === "object" &&
+      data.error !== null
         ? data.error
         : undefined;
 
     const message =
       remoteError?.message ??
-      (typeof data.error === "string"
-        ? data.error
-        : `Database bridge request failed (HTTP ${response.status}).`);
+      (
+        typeof data.error === "string"
+          ? data.error
+          : `Database bridge request failed (HTTP ${response.status}).`
+      );
 
-    const error = new Error(message) as Error & {
-      code?: string;
-      detail?: string;
-      hint?: string;
-      constraint?: string;
-      table?: string;
-      column?: string;
-    };
+    const error =
+      new Error(
+        message,
+      ) as Error & {
+        code?: string;
+        detail?: string;
+        hint?: string;
+        constraint?: string;
+        table?: string;
+        column?: string;
+      };
 
     if (remoteError) {
-      error.code = remoteError.code;
-      error.detail = remoteError.detail;
-      error.hint = remoteError.hint;
-      error.constraint = remoteError.constraint;
-      error.table = remoteError.table;
-      error.column = remoteError.column;
+      error.code =
+        remoteError.code;
+
+      error.detail =
+        remoteError.detail;
+
+      error.hint =
+        remoteError.hint;
+
+      error.constraint =
+        remoteError.constraint;
+
+      error.table =
+        remoteError.table;
+
+      error.column =
+        remoteError.column;
     }
 
     throw error;
@@ -117,20 +297,38 @@ function normalizeQuery(
   query: string | QueryConfig,
   values?: unknown[],
 ) {
-  if (typeof query === "string") {
+  if (
+    typeof query === "string"
+  ) {
     return {
       sql: query,
-      params: values ?? [],
-      rowMode: undefined as "array" | undefined,
-      drizzleTypes: false,
+      params:
+        values ?? [],
+      rowMode:
+        undefined as
+          | "array"
+          | undefined,
+      drizzleTypes:
+        false,
     };
   }
 
   return {
-    sql: query.text,
-    params: query.values ?? values ?? [],
-    rowMode: query.rowMode,
-    drizzleTypes: Boolean(query.types),
+    sql:
+      query.text,
+
+    params:
+      query.values ??
+      values ??
+      [],
+
+    rowMode:
+      query.rowMode,
+
+    drizzleTypes:
+      Boolean(
+        query.types,
+      ),
   };
 }
 
@@ -164,12 +362,21 @@ export class RemotePgClient {
       );
     }
 
-    const normalized = normalizeQuery(query, values);
+    const normalized =
+      normalizeQuery(
+        query,
+        values,
+      );
 
-    const data = await bridgeRequest("/query", {
-      ...normalized,
-      sessionId: this.sessionId,
-    });
+    const data =
+      await bridgeRequest(
+        "/query",
+        {
+          ...normalized,
+          sessionId:
+            this.sessionId,
+        },
+      );
 
     if (!data.result) {
       throw new Error(
@@ -180,16 +387,22 @@ export class RemotePgClient {
     return data.result;
   }
 
-  async release(_err?: unknown): Promise<void> {
+  async release(
+    _err?: unknown,
+  ): Promise<void> {
     if (this.released) {
       return;
     }
 
     this.released = true;
 
-    await bridgeRequest("/session/release", {
-      sessionId: this.sessionId,
-    });
+    await bridgeRequest(
+      "/session/release",
+      {
+        sessionId:
+          this.sessionId,
+      },
+    );
   }
 }
 
@@ -218,12 +431,17 @@ export class RemotePgPool {
     query: string | QueryConfig,
     values?: unknown[],
   ): Promise<RemoteResult> {
-    const normalized = normalizeQuery(query, values);
+    const normalized =
+      normalizeQuery(
+        query,
+        values,
+      );
 
-    const data = await bridgeRequest(
-      "/query",
-      normalized,
-    );
+    const data =
+      await bridgeRequest(
+        "/query",
+        normalized,
+      );
 
     if (!data.result) {
       throw new Error(
@@ -234,11 +452,13 @@ export class RemotePgPool {
     return data.result;
   }
 
-  async connect(): Promise<RemotePgClient> {
-    const data = await bridgeRequest(
-      "/session/start",
-      {},
-    );
+  async connect():
+    Promise<RemotePgClient> {
+    const data =
+      await bridgeRequest(
+        "/session/start",
+        {},
+      );
 
     if (!data.sessionId) {
       throw new Error(
@@ -253,7 +473,9 @@ export class RemotePgPool {
 
   on(
     _event: string,
-    _handler: (...args: any[]) => void,
+    _handler: (
+      ...args: any[]
+    ) => void,
   ) {
     // Compatibility with the pg.Pool API.
     //
@@ -262,7 +484,8 @@ export class RemotePgPool {
     return this;
   }
 
-  async end(): Promise<void> {
+  async end():
+    Promise<void> {
     // Nothing to close on Hostinger.
     //
     // The actual PostgreSQL connection pool exists inside
