@@ -29,10 +29,10 @@ jobs:
 
       - name: Build Student + Admin + API
         env:
-          API_URL: https://api.medschoolproffs.live
-          VITE_API_BASE_URL: https://api.medschoolproffs.live
+          API_URL: https://site.medschoolproffs.live
+          VITE_API_BASE_URL: https://site.medschoolproffs.live
           VITE_STUDENT_URL: https://medschoolproffs.live
-          VITE_ADMIN_API_URL: https://api.medschoolproffs.live
+          VITE_ADMIN_API_URL: https://site.medschoolproffs.live
         run: bash scripts/build-hostinger.sh
 
       - name: Verify build output
@@ -102,3 +102,4 @@ jobs:
           done
           echo "::error::Could not push hostinger-api after 5 attempts"
           exit 1
+

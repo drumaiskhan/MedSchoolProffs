@@ -9,7 +9,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-API_URL="${API_URL:-https://api.medschoolproffs.live}"
+API_URL="${API_URL:-https://site.medschoolproffs.live}"
 OUT="hostinger-out"
 
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
@@ -129,3 +129,4 @@ else
   echo "'zip' not found."
   echo "Zip the CONTENTS of each folder manually if needed."
 fi
+

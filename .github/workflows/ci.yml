@@ -25,7 +25,9 @@ jobs:
       - run: pnpm run build:api
       - run: pnpm run build:student
         env:
-          VITE_API_BASE_URL: https://api.medschoolproffs.live
+          VITE_API_BASE_URL: https://site.medschoolproffs.live
       - run: pnpm run build:admin
         env:
-          VITE_API_BASE_URL: https://api.medschoolproffs.live
+          VITE_API_BASE_URL: https://site.medschoolproffs.live
+
+
