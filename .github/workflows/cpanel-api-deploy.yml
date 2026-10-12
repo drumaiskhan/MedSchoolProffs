@@ -1,6 +1,9 @@
 name: Deploy API to cPanel
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -64,6 +67,7 @@ jobs:
               --connect-timeout 10 \
               --max-time 20 \
               "https://site.medschoolproffs.live/api/health"; then
+
               echo
               echo "cPanel API deployment successful."
               exit 0
