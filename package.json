@@ -1,0 +1,19 @@
+{
+  "name": "medschoolproffs-api-runtime",
+  "private": true,
+  "type": "module",
+  "main": "server.cjs",
+  "scripts": {
+    "build": "echo API runtime already built",
+    "start": "node --enable-source-maps server.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.15",
+    "pdfjs-dist": "4.10.38",
+    "@napi-rs/canvas": "0.1.100",
+    "mysql2": "^3.15.4"
+  }
+}
