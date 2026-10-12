@@ -6,16 +6,37 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: cpanel-api-deployment
+  cancel-in-progress: false
+
 jobs:
   deploy-api:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
+
+      # ==================================================
+      # 1. CHECKOUT
+      # ==================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ==================================================
+      # 2. SETUP PNPM
+      # ==================================================
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+
+      # ==================================================
+      # 3. SETUP NODE
+      # ==================================================
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -23,59 +44,253 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # ==================================================
+      # 4. BUILD API
+      # ==================================================
+
       - name: Build API
         run: |
+          set -euo pipefail
+
           pnpm install --no-frozen-lockfile
           pnpm run build:api
 
+      # ==================================================
+      # 5. EMBED DEPLOYMENT VERSION
+      # ==================================================
+
+      - name: Embed GitHub commit and deployment version
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          bundle = Path("artifacts/api-server/dist/index.mjs")
+
+          if not bundle.is_file():
+              raise SystemExit("API bundle not found.")
+
+          content = bundle.read_text(encoding="utf-8")
+
+          commit = os.environ["GITHUB_SHA"]
+
+          deployed_at = (
+              datetime.now(timezone.utc)
+              .isoformat(timespec="seconds")
+              .replace("+00:00", "Z")
+          )
+
+          deployment_id = (
+              os.environ["GITHUB_RUN_ID"]
+              + "-"
+              + os.environ["GITHUB_RUN_ATTEMPT"]
+          )
+
+          replacements = {
+              "__DEPLOY_COMMIT__": commit,
+              "__DEPLOYED_AT__": deployed_at,
+              "__DEPLOY_RUN_ID__": deployment_id,
+          }
+
+          for placeholder, value in replacements.items():
+              if placeholder not in content:
+                  raise SystemExit(
+                      f"Missing deployment placeholder: {placeholder}. "
+                      "Check health.ts and the API build."
+                  )
+
+              content = content.replace(placeholder, value)
+
+          bundle.write_text(content, encoding="utf-8")
+
+          print("Deployment information embedded.")
+          print(f"Commit: {commit}")
+          print(f"Deployed at: {deployed_at}")
+          print(f"Deployment ID: {deployment_id}")
+          PY
+
+      # ==================================================
+      # 6. VERIFY BUILD
+      # ==================================================
+
       - name: Verify API build
         run: |
-          test -f artifacts/api-server/dist/index.mjs
+          set -euo pipefail
+
+          test -s artifacts/api-server/dist/index.mjs
+
           ls -lh artifacts/api-server/dist/index.mjs
+
+          if grep -q "__DEPLOY_COMMIT__" \
+            artifacts/api-server/dist/index.mjs; then
+
+            echo "::error::Deployment version was not embedded."
+            exit 1
+
+          fi
+
+          echo "API build verified."
+
+      # ==================================================
+      # 7. SAVE RECOVERY ARTIFACT
+      # ==================================================
+
+      - name: Save API build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpanel-api-${{ github.run_number }}
+          path: artifacts/api-server/dist/index.mjs
+          retention-days: 7
+
+      # ==================================================
+      # 8. DEPLOY API TO CPANEL
+      # ==================================================
 
       - name: Deploy index.mjs to cPanel
         env:
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
-          curl --fail --show-error --silent \
+          set -euo pipefail
+
+          echo "Uploading API build..."
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
             --ssl-reqd \
+            --retry 3 \
+            --retry-delay 5 \
+            --connect-timeout 20 \
             --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
             --upload-file artifacts/api-server/dist/index.mjs \
             "ftp://business300.mypowerfulserver.com/index.mjs"
+
+          echo "API uploaded successfully."
+
+      # ==================================================
+      # 9. RESTART CPANEL API
+      # ==================================================
 
       - name: Restart cPanel API
         env:
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
-          echo "GitHub deployment $(date -u +%Y-%m-%dT%H:%M:%SZ)" > restart.txt
+          set -euo pipefail
 
-          curl --fail --show-error --silent \
+          echo "Deployment: ${GITHUB_SHA}" > restart.txt
+          echo "Run: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> restart.txt
+          echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> restart.txt
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
             --ssl-reqd \
+            --retry 3 \
+            --retry-delay 5 \
+            --connect-timeout 20 \
             --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
             --upload-file restart.txt \
             "ftp://business300.mypowerfulserver.com/tmp/restart.txt"
 
+          echo "cPanel restart requested."
+
+      # ==================================================
+      # 10. WAIT FOR RESTART
+      # ==================================================
+
       - name: Wait for API restart
         run: sleep 15
 
-      - name: Verify production API
-        run: |
-          for attempt in 1 2 3 4 5; do
-            echo "Health check $attempt/5"
+      # ==================================================
+      # 11. VERIFY EXACT DEPLOYED VERSION
+      # ==================================================
 
-            if curl --fail --show-error --silent \
+      - name: Verify production API version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXPECTED_COMMIT="$GITHUB_SHA"
+
+          EXPECTED_DEPLOYMENT="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          HEALTH_URL="https://site.medschoolproffs.live/api/healthz"
+
+          echo "Expected commit: $EXPECTED_COMMIT"
+          echo "Expected deployment: $EXPECTED_DEPLOYMENT"
+
+          for attempt in {1..12}; do
+
+            echo "=================================="
+            echo "Verification attempt $attempt/12"
+            echo "=================================="
+
+            if RESPONSE=$(curl \
+              --fail \
+              --show-error \
+              --silent \
               --connect-timeout 10 \
               --max-time 20 \
-              "https://site.medschoolproffs.live/api/health"; then
+              -H "Cache-Control: no-cache" \
+              "${HEALTH_URL}?deployment=${EXPECTED_DEPLOYMENT}"); then
 
-              echo
-              echo "cPanel API deployment successful."
-              exit 0
+              echo "API response:"
+              echo "$RESPONSE"
+
+              if echo "$RESPONSE" | jq -e \
+                --arg commit "$EXPECTED_COMMIT" \
+                --arg deployment "$EXPECTED_DEPLOYMENT" \
+                '
+                  .status == "ok" and
+                  .version == $commit and
+                  .deploymentId == $deployment
+                ' >/dev/null; then
+
+                echo ""
+                echo "=================================="
+                echo "API DEPLOYMENT VERIFIED"
+                echo "=================================="
+                echo "Correct commit is running."
+                echo "Correct deployment ID confirmed."
+                echo "API health status is OK."
+                echo "=================================="
+
+                exit 0
+
+              fi
+
+              echo "Production is not reporting this deployment yet."
+
+            else
+
+              echo "API health endpoint is not ready."
+
             fi
 
-            echo "API not ready yet. Waiting 10 seconds..."
-            sleep 10
+            if (( attempt < 12 )); then
+              echo "Waiting 10 seconds..."
+              sleep 10
+            fi
+
           done
 
-          echo "::error::API health check failed after deployment."
+          echo "::error::Production API did not report the expected deployment version."
           exit 1
+
+      # ==================================================
+      # 12. DEPLOYMENT SUCCESS
+      # ==================================================
+
+      - name: Deployment completed
+        run: |
+          echo "=========================================="
+          echo "MedSchoolProffs API Deployment Successful"
+          echo "=========================================="
+          echo "API: https://site.medschoolproffs.live"
+          echo "Commit: $GITHUB_SHA"
+          echo "Deployment: $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "Status: Verified"
+          echo "=========================================="
