@@ -1,0 +1,77 @@
+name: Deploy API to cPanel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build API
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm run build:api
+
+      - name: Verify API build
+        run: |
+          test -f artifacts/api-server/dist/index.mjs
+          ls -lh artifacts/api-server/dist/index.mjs
+
+      - name: Deploy index.mjs to cPanel
+        env:
+          FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
+        run: |
+          curl --fail --show-error --silent \
+            --ssl-reqd \
+            --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
+            --upload-file artifacts/api-server/dist/index.mjs \
+            "ftp://business300.mypowerfulserver.com/index.mjs"
+
+      - name: Restart cPanel API
+        env:
+          FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
+        run: |
+          echo "GitHub deployment $(date -u +%Y-%m-%dT%H:%M:%SZ)" > restart.txt
+
+          curl --fail --show-error --silent \
+            --ssl-reqd \
+            --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
+            --upload-file restart.txt \
+            "ftp://business300.mypowerfulserver.com/tmp/restart.txt"
+
+      - name: Wait for API restart
+        run: sleep 15
+
+      - name: Verify production API
+        run: |
+          for attempt in 1 2 3 4 5; do
+            echo "Health check $attempt/5"
+
+            if curl --fail --show-error --silent \
+              --connect-timeout 10 \
+              --max-time 20 \
+              "https://site.medschoolproffs.live/api/health"; then
+              echo
+              echo "cPanel API deployment successful."
+              exit 0
+            fi
+
+            echo "API not ready yet. Waiting 10 seconds..."
+            sleep 10
+          done
+
+          echo "::error::API health check failed after deployment."
+          exit 1
