@@ -6,10 +6,13 @@ const router: IRouter = Router();
 router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
 
+  res.setHeader("Cache-Control", "no-store");
+
   res.json({
     ...data,
-    version: process.env.DEPLOY_COMMIT || "unknown",
-    deployedAt: process.env.DEPLOYED_AT || "unknown",
+    version: "__DEPLOY_COMMIT__",
+    deployedAt: "__DEPLOYED_AT__",
+    deploymentId: "__DEPLOY_RUN_ID__",
   });
 });
 
