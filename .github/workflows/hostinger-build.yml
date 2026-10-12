@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 
-# Prevent two frontend deployments from running over each other.
+# Prevent multiple frontend deployments from running at the same time
 concurrency:
   group: hostinger-frontends
   cancel-in-progress: false
@@ -19,8 +19,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ============================================================
+      # NODE + PNPM
+      # ============================================================
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -31,10 +39,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Keep using the existing build script.
-      # It also builds the API, but this workflow only deploys
-      # the Student and Admin frontend output.
-      - name: Build frontends
+      # ============================================================
+      # BUILD
+      # ============================================================
+
+      - name: Build Student + Admin
         env:
           API_URL: https://site.medschoolproffs.live
           VITE_API_BASE_URL: https://site.medschoolproffs.live
@@ -42,20 +51,32 @@ jobs:
           VITE_ADMIN_API_URL: https://site.medschoolproffs.live
         run: bash scripts/build-hostinger.sh
 
+      # ============================================================
+      # VERIFY BUILD
+      # ============================================================
+
       - name: Verify frontend builds
         run: |
           echo "Checking Student build..."
+
           test -s hostinger-out/student/index.html
           test -d hostinger-out/student/assets
 
+          echo "Student build OK."
+
           echo "Checking Admin build..."
+
           test -s hostinger-out/admin/index.html
           test -d hostinger-out/admin/assets
 
-          echo "Frontend builds verified."
+          echo "Admin build OK."
 
-      # Keep a downloadable copy in GitHub Actions in case
-      # Hostinger FTP has a temporary problem.
+          echo "Both frontend builds verified."
+
+      # ============================================================
+      # SAVE RECOVERY COPY
+      # ============================================================
+
       - name: Save frontend builds
         uses: actions/upload-artifact@v4
         with:
@@ -67,7 +88,7 @@ jobs:
           retention-days: 7
 
       # ============================================================
-      # STUDENT DEPLOYMENT
+      # STUDENT DEPLOYMENT - ATTEMPT 1
       # ============================================================
 
       - name: Deploy Student - attempt 1
@@ -75,18 +96,23 @@ jobs:
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/student/
           server-dir: ./
 
+      # ============================================================
+      # STUDENT DEPLOYMENT - ATTEMPT 2
+      # ============================================================
+
       - name: Wait before Student retry 2
         if: steps.student_1.outcome == 'failure'
         run: |
-          echo "Student attempt 1 failed. Waiting 20 seconds..."
+          echo "Student deployment attempt 1 failed."
+          echo "Waiting 20 seconds before retry..."
           sleep 20
 
       - name: Deploy Student - attempt 2
@@ -95,20 +121,25 @@ jobs:
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/student/
           server-dir: ./
+
+      # ============================================================
+      # STUDENT DEPLOYMENT - ATTEMPT 3
+      # ============================================================
 
       - name: Wait before Student retry 3
         if: >
           steps.student_1.outcome == 'failure' &&
           steps.student_2.outcome == 'failure'
         run: |
-          echo "Student attempt 2 failed. Waiting 40 seconds..."
+          echo "Student deployment attempt 2 failed."
+          echo "Waiting 40 seconds before final retry..."
           sleep 40
 
       - name: Deploy Student - attempt 3
@@ -118,16 +149,16 @@ jobs:
           steps.student_2.outcome == 'failure'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: ${{ secrets.FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/student/
           server-dir: ./
 
       # ============================================================
-      # ADMIN DEPLOYMENT
+      # ADMIN DEPLOYMENT - ATTEMPT 1
       # ============================================================
 
       - name: Deploy Admin - attempt 1
@@ -135,18 +166,23 @@ jobs:
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.ADMIN_FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.ADMIN_FTP_USERNAME }}
           password: ${{ secrets.ADMIN_FTP_PASSWORD }}
-          port: ${{ secrets.ADMIN_FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/admin/
           server-dir: ./
 
+      # ============================================================
+      # ADMIN DEPLOYMENT - ATTEMPT 2
+      # ============================================================
+
       - name: Wait before Admin retry 2
         if: steps.admin_1.outcome == 'failure'
         run: |
-          echo "Admin attempt 1 failed. Waiting 20 seconds..."
+          echo "Admin deployment attempt 1 failed."
+          echo "Waiting 20 seconds before retry..."
           sleep 20
 
       - name: Deploy Admin - attempt 2
@@ -155,20 +191,25 @@ jobs:
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.ADMIN_FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.ADMIN_FTP_USERNAME }}
           password: ${{ secrets.ADMIN_FTP_PASSWORD }}
-          port: ${{ secrets.ADMIN_FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/admin/
           server-dir: ./
+
+      # ============================================================
+      # ADMIN DEPLOYMENT - ATTEMPT 3
+      # ============================================================
 
       - name: Wait before Admin retry 3
         if: >
           steps.admin_1.outcome == 'failure' &&
           steps.admin_2.outcome == 'failure'
         run: |
-          echo "Admin attempt 2 failed. Waiting 40 seconds..."
+          echo "Admin deployment attempt 2 failed."
+          echo "Waiting 40 seconds before final retry..."
           sleep 40
 
       - name: Deploy Admin - attempt 3
@@ -178,19 +219,27 @@ jobs:
           steps.admin_2.outcome == 'failure'
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.ADMIN_FTP_HOST }}
+          server: 194.5.156.45
           username: ${{ secrets.ADMIN_FTP_USERNAME }}
           password: ${{ secrets.ADMIN_FTP_PASSWORD }}
-          port: ${{ secrets.ADMIN_FTP_PORT }}
+          port: 21
           protocol: ftp
           local-dir: ./hostinger-out/admin/
           server-dir: ./
 
-      - name: Deployment summary
+      # ============================================================
+      # SUCCESS
+      # ============================================================
+
+      - name: Deployment completed
         if: success()
         run: |
-          echo "======================================"
-          echo "Frontend deployment completed."
-          echo "Student: https://medschoolproffs.live"
-          echo "Admin:   https://admin.medschoolproffs.live"
-          echo "======================================"
+          echo "=========================================="
+          echo "HOSTINGER FRONTEND DEPLOYMENT SUCCESSFUL"
+          echo "=========================================="
+          echo "Student frontend deployed successfully."
+          echo "Admin frontend deployed successfully."
+          echo ""
+          echo "API deployment is NOT handled here."
+          echo "The cPanel API workflow remains separate."
+          echo "=========================================="
