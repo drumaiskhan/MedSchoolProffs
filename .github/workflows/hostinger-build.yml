@@ -1,5 +1,4 @@
-
-name: Deploy Student + Admin + API to Hostinger
+name: Deploy Student + Admin to Hostinger
 
 on:
   push:
@@ -8,7 +7,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+# Prevent two frontend deployments from running over each other.
+concurrency:
+  group: hostinger-frontends
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -27,7 +31,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Build Student + Admin + API
+      # Keep using the existing build script.
+      # It also builds the API, but this workflow only deploys
+      # the Student and Admin frontend output.
+      - name: Build frontends
         env:
           API_URL: https://site.medschoolproffs.live
           VITE_API_BASE_URL: https://site.medschoolproffs.live
@@ -35,71 +42,155 @@ jobs:
           VITE_ADMIN_API_URL: https://site.medschoolproffs.live
         run: bash scripts/build-hostinger.sh
 
-      - name: Verify build output
+      - name: Verify frontend builds
         run: |
-          echo "Student build:"
-          ls -la hostinger-out/student/
+          echo "Checking Student build..."
+          test -s hostinger-out/student/index.html
+          test -d hostinger-out/student/assets
 
-          echo "Admin build:"
-          ls -la hostinger-out/admin/
+          echo "Checking Admin build..."
+          test -s hostinger-out/admin/index.html
+          test -d hostinger-out/admin/assets
 
-          echo "API build:"
-          ls -la hostinger-out/api/
-          ls -la hostinger-out/api/dist/
+          echo "Frontend builds verified."
 
-      - name: Deploy Student frontend
+      # Keep a downloadable copy in GitHub Actions in case
+      # Hostinger FTP has a temporary problem.
+      - name: Save frontend builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: hostinger-frontends-${{ github.run_number }}
+          path: |
+            hostinger-out/student/
+            hostinger-out/admin/
+          include-hidden-files: true
+          retention-days: 7
+
+      # ============================================================
+      # STUDENT DEPLOYMENT
+      # ============================================================
+
+      - name: Deploy Student - attempt 1
+        id: student_1
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: 194.5.156.45
+          server: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          port: 21
+          port: ${{ secrets.FTP_PORT }}
           protocol: ftp
           local-dir: ./hostinger-out/student/
           server-dir: ./
 
-      - name: Deploy Admin frontend
+      - name: Wait before Student retry 2
+        if: steps.student_1.outcome == 'failure'
+        run: |
+          echo "Student attempt 1 failed. Waiting 20 seconds..."
+          sleep 20
+
+      - name: Deploy Student - attempt 2
+        id: student_2
+        if: steps.student_1.outcome == 'failure'
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: 194.5.156.45
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ secrets.FTP_PORT }}
+          protocol: ftp
+          local-dir: ./hostinger-out/student/
+          server-dir: ./
+
+      - name: Wait before Student retry 3
+        if: >
+          steps.student_1.outcome == 'failure' &&
+          steps.student_2.outcome == 'failure'
+        run: |
+          echo "Student attempt 2 failed. Waiting 40 seconds..."
+          sleep 40
+
+      - name: Deploy Student - attempt 3
+        id: student_3
+        if: >
+          steps.student_1.outcome == 'failure' &&
+          steps.student_2.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ secrets.FTP_PORT }}
+          protocol: ftp
+          local-dir: ./hostinger-out/student/
+          server-dir: ./
+
+      # ============================================================
+      # ADMIN DEPLOYMENT
+      # ============================================================
+
+      - name: Deploy Admin - attempt 1
+        id: admin_1
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.ADMIN_FTP_HOST }}
           username: ${{ secrets.ADMIN_FTP_USERNAME }}
           password: ${{ secrets.ADMIN_FTP_PASSWORD }}
-          port: 21
+          port: ${{ secrets.ADMIN_FTP_PORT }}
           protocol: ftp
           local-dir: ./hostinger-out/admin/
           server-dir: ./
 
-      - name: Update API deployment branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Wait before Admin retry 2
+        if: steps.admin_1.outcome == 'failure'
         run: |
-          rm -rf /tmp/medschoolproffs-api-deploy
-          mkdir -p /tmp/medschoolproffs-api-deploy
-          cp -r hostinger-out/api/. /tmp/medschoolproffs-api-deploy/
+          echo "Admin attempt 1 failed. Waiting 20 seconds..."
+          sleep 20
 
-          cd /tmp/medschoolproffs-api-deploy
+      - name: Deploy Admin - attempt 2
+        id: admin_2
+        if: steps.admin_1.outcome == 'failure'
+        continue-on-error: true
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.ADMIN_FTP_HOST }}
+          username: ${{ secrets.ADMIN_FTP_USERNAME }}
+          password: ${{ secrets.ADMIN_FTP_PASSWORD }}
+          port: ${{ secrets.ADMIN_FTP_PORT }}
+          protocol: ftp
+          local-dir: ./hostinger-out/admin/
+          server-dir: ./
 
-          git init
-          git checkout -b hostinger-api
+      - name: Wait before Admin retry 3
+        if: >
+          steps.admin_1.outcome == 'failure' &&
+          steps.admin_2.outcome == 'failure'
+        run: |
+          echo "Admin attempt 2 failed. Waiting 40 seconds..."
+          sleep 40
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Deploy Admin - attempt 3
+        id: admin_3
+        if: >
+          steps.admin_1.outcome == 'failure' &&
+          steps.admin_2.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.ADMIN_FTP_HOST }}
+          username: ${{ secrets.ADMIN_FTP_USERNAME }}
+          password: ${{ secrets.ADMIN_FTP_PASSWORD }}
+          port: ${{ secrets.ADMIN_FTP_PORT }}
+          protocol: ftp
+          local-dir: ./hostinger-out/admin/
+          server-dir: ./
 
-          git add .
-          git commit -m "Deploy API runtime from main"
-
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          # GitHub occasionally answers a push with a transient "Internal Server
-          # Error". Retry with backoff instead of failing the whole deploy (the
-          # frontends have already been uploaded by this point, so a failed push
-          # leaves the API one version behind them).
-          for attempt in 1 2 3 4 5; do
-            if git push origin hostinger-api --force; then
-              exit 0
-            fi
-            echo "Push failed (attempt $attempt/5), retrying in $((attempt * 15))s..."
-            sleep $((attempt * 15))
-          done
-          echo "::error::Could not push hostinger-api after 5 attempts"
-          exit 1
-
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "======================================"
+          echo "Frontend deployment completed."
+          echo "Student: https://medschoolproffs.live"
+          echo "Admin:   https://admin.medschoolproffs.live"
+          echo "======================================"
