@@ -4,6 +4,7 @@
 // every network request and external resource. Never inject this HTML into the
 // app DOM directly.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Pause, Play } from 'lucide-react';
 import type { WidgetSpec } from '@/lib/api';
 
 const CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; base-uri 'none'";
@@ -21,9 +22,25 @@ function buildSrcDoc(html: string, dark: boolean): string {
 <style>:root{${vars}color-scheme:${dark ? 'dark' : 'light'}}
 *{box-sizing:border-box}html,body{margin:0;padding:0}
 body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:4px}
-svg{max-width:100%;height:auto}input[type=range]{width:100%;accent-color:var(--accent)}
+svg{max-width:100%;height:auto}
+@keyframes msp-flow{to{stroke-dashoffset:-24}}
+@keyframes msp-flow-rev{to{stroke-dashoffset:24}}
+@keyframes msp-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@keyframes msp-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+@keyframes msp-blink{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes msp-spin{to{transform:rotate(360deg)}}
+.msp-flow{stroke-dasharray:6 6;animation:msp-flow var(--msp-dur,1s) linear infinite}
+.msp-flow.msp-rev{animation-name:msp-flow-rev}
+.msp-pulse{animation:msp-pulse var(--msp-dur,1s) ease-in-out infinite}
+.msp-float{animation:msp-float var(--msp-dur,3s) ease-in-out infinite}
+.msp-blink{animation:msp-blink var(--msp-dur,1.2s) ease-in-out infinite}
+.msp-spin{animation:msp-spin var(--msp-dur,4s) linear infinite}
+body.msp-paused *{animation-play-state:paused!important}
+@media (prefers-reduced-motion:reduce){.msp-flow,.msp-pulse,.msp-float,.msp-blink,.msp-spin{animation:none}}input[type=range]{width:100%;accent-color:var(--accent)}
 button{font:inherit;color:inherit;cursor:pointer}</style></head><body>${html}
 <script>(function(){function post(){try{var h=Math.ceil(document.documentElement.scrollHeight);parent.postMessage({__widgetHeight:h},'*')}catch(e){}}
+window.__mspPaused=false;
+window.addEventListener('message',function(e){var d=e.data;if(d&&typeof d.__mspPaused==='boolean'){window.__mspPaused=d.__mspPaused;document.body.classList.toggle('msp-paused',d.__mspPaused);try{var svgs=document.querySelectorAll('svg');for(var i=0;i<svgs.length;i++){d.__mspPaused?svgs[i].pauseAnimations():svgs[i].unpauseAnimations()}}catch(x){}}});
 window.addEventListener('load',post);window.addEventListener('resize',post);
 try{new ResizeObserver(post).observe(document.body)}catch(e){setInterval(post,500)}})();</script></body></html>`;
 }
@@ -31,6 +48,12 @@ try{new ResizeObserver(post).observe(document.body)}catch(e){setInterval(post,50
 export default function WidgetStage({ spec }: { spec: WidgetSpec }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(520);
+  const [paused, setPaused] = useState(false);
+  const togglePause = () => {
+    const next = !paused;
+    setPaused(next);
+    try { ref.current?.contentWindow?.postMessage({ __mspPaused: next }, '*'); } catch { /* iframe not ready */ }
+  };
   const srcDoc = useMemo(() => buildSrcDoc(spec.html, isDark()), [spec.html]);
 
   useEffect(() => {
@@ -45,7 +68,12 @@ export default function WidgetStage({ spec }: { spec: WidgetSpec }) {
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4 sm:p-5" data-testid="stage-visualizer-widget">
-      <h2 className="font-display text-lg">{spec.title}</h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="font-display text-lg">{spec.title}</h2>
+        <button type="button" onClick={togglePause} aria-pressed={paused} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground" data-testid="button-widget-pause">
+          {paused ? <Play size={12} /> : <Pause size={12} />}{paused ? 'Play animation' : 'Pause animation'}
+        </button>
+      </div>
       {spec.description && <p className="mt-1 text-xs leading-6 text-muted-foreground">{spec.description}</p>}
       <iframe
         ref={ref}

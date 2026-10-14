@@ -1,3 +1,14 @@
+## v73 — fix "Session not saved" after finishing a practice session
+- `POST /practice-sessions` loaded the whole MCQ bank on every submit; it now fetches only the graded rows (id + correctAnswer) with `inArray`. On Hostinger the slow request was cut off by the proxy (504, no CORS headers), which the browser reports as a generic network error — the toast then showed the "Couldn't record this session" text.
+- `bumpStreak` failure after the session is saved no longer fails the request.
+- Practice.tsx: submit auto-retries twice on network errors; clearer toast text.
+- NOTE: not built/typechecked here (no node_modules). Run `pnpm run typecheck && pnpm run build:student`.
+
+## v71 — animated 2D diagrams + faster AI MCQ Maker
+- 2D widgets: the AI prompt now REQUIRES a live, animated diagram; host provides helper classes (msp-flow/pulse/float/blink/spin, speed via --msp-dur), a Pause/Play button, reduced-motion handling; widgets without any animation are rejected and retried.
+- MCQ Maker: batches of 3 fired 4-at-a-time in parallel (each with its own sub-topic `part`), quiz opens after the first batch and the rest stream in; shorter per-option explanations; rate limit raised to 30 requests/10 min.
+- Not verified: full typecheck/build (no node_modules in this sandbox), live AI output.
+
 ## v68 — Student dashboard: renamed "Overview" -> "Dashboard", plus Focus areas and per-section errors
 - Sidebar / quick-jump label for `/dashboard` is now **Dashboard** (was "Overview"; the page title already said Dashboard). Route is unchanged, so no links break. The Progress and Profile tabs named "Overview" are different screens and were left alone.
 - **New "Focus areas" card** (`FocusAreas` in `components/dashboard/DashCards.tsx`): the 3 weakest topics from `/student/progress-overview` (`needsWork`, shared react-query cache with Progress/Study) each linking to `/practice?topic=<id>`, plus a "Clear N recent mistakes" row (this device's mistake ledger) linking to `/practice?set=mistakes`. Links to the Study plan.
@@ -1097,3 +1108,12 @@ No backend / schema / route changes.
 - Admin: `GET /students/:id` now includes `progress`; Student 360 Overview shows a "Question progress" tile.
 - Auth: soft-deleted students (`status = DELETED`) could still sign in; login now rejects them with the generic invalid-credentials message, and `DELETE /students/:id` revokes all their sessions immediately.
 - Not run: pnpm typecheck / build / DB (no node_modules); syntax-checked with tsc only.
+
+## v72 — Student AI MCQs silently added to the Qbank
+No schema / route-shape changes; nothing new for students to see or wait for.
+- API: after `POST /ai/mcq-maker` has already responded, `lib/studentQbankContribution.ts` runs in the background: one AI call files every generated question into the existing tree (year → block → module → subject → topic) by choosing a topic id from the real curriculum (shortlisted by keyword overlap when there are >300 topics). Module/subject ids are derived from the chosen topic in the DB, never taken from the AI. Low-confidence or no-fit questions are skipped rather than forced.
+- Checks before saving: exactly 4 distinct options, correct answer matches an option, near-duplicate skip (Jaccard ≥ 0.72 vs. the topic's existing questions and within the batch), max 100 saved questions per student per day. Failures are logged and swallowed, so a student's session is never affected.
+- Saved as `source = student_ai`, tag `student-ai`, `explanationStatus = AI_GENERATED`, `status = draft` (hidden from students until an admin publishes). Audit log action `STUDENT_AI_MCQS_SAVED_TO_QBANK` with the new ids.
+- Admin Settings → Student features → AI MCQ Maker: new toggles "Add student-made MCQs to the Qbank" (on by default; `AI_MCQ_MAKER_SAVE_TO_QBANK`) and "Publish them straight away" (off by default; `AI_MCQ_MAKER_AUTO_PUBLISH`). Both admin-only, not exposed via /site-content.
+- Student page note updated: it previously said questions aren't kept in the question bank, which is no longer true.
+- Not run: pnpm typecheck / build / DB / live AI (no node_modules or credentials here); structurally syntax-checked only. Test with one real student account before announcing.

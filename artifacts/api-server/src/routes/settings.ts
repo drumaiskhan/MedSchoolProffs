@@ -37,6 +37,11 @@ const EDITABLE_KEYS = [
   // Same on/off pattern for the student AI MCQ Maker page (POST /ai/mcq-maker).
   // Missing = on, "false" = off (nav link hidden and the route refuses).
   "AI_MCQ_MAKER_ENABLED",
+  // Silent Qbank contribution from the AI MCQ Maker (lib/studentQbankContribution.ts). SAVE_TO_QBANK is
+  // on unless "false"; AUTO_PUBLISH is off unless "true" (off = saved as drafts awaiting admin review).
+  // Admin-only: deliberately NOT added to the public /site-content list.
+  "AI_MCQ_MAKER_SAVE_TO_QBANK",
+  "AI_MCQ_MAKER_AUTO_PUBLISH",
   // Same on/off pattern as AI_VISUALIZER_ENABLED above, but for the "Ask AI
   // to explain differently" button itself — the one that shows up on MCQs
   // (Practice.tsx), flashcards (Flashcards.tsx), and anywhere else those

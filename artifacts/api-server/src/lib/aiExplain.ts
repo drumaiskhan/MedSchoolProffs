@@ -1291,9 +1291,11 @@ export interface StudentMcqRequest {
   count: number;
   /** Questions already generated in this session — told to the model so batches don't repeat. */
   avoid?: string[];
+  /** Batches are generated in parallel, so each gets its own slice of the topic instead of seeing the others. */
+  part?: { index: number; total: number };
 }
 
-function buildStudentMcqPrompt({ prompt, difficulty, count, avoid }: StudentMcqRequest): string {
+function buildStudentMcqPrompt({ prompt, difficulty, count, avoid, part }: StudentMcqRequest): string {
   const difficultyInstruction = difficulty === "mixed"
     ? "Vary the difficulty across the set (a mix of easy, moderate and hard)."
     : `Every single question must be difficulty exactly "${difficulty}".`;
@@ -1307,13 +1309,16 @@ function buildStudentMcqPrompt({ prompt, difficulty, count, avoid }: StudentMcqR
     `Produce exactly ${count} single-best-answer multiple-choice questions on that request. If the request is not a medical/health-science topic, still write the questions about the closest relevant medical subject matter.`,
     "Each question needs exactly 4 options (plain strings, not labeled A-D) and one correct answer that is an exact string match to one of the options.",
     `Assign each question a difficulty of exactly "easy", "moderate", or "hard" by the reasoning required. ${difficultyInstruction}`,
-    "For EVERY option write a short 1-2 sentence explanation of why that option is right or wrong (distractor analysis). Also give an overall explanation of the correct answer.",
+    "For EVERY option write ONE short sentence (under 20 words) saying why it is right or wrong (distractor analysis). The overall explanation of the correct answer is at most 2 short sentences. Keep the whole response compact.",
+    part && part.total > 1
+      ? `This is part ${part.index + 1} of ${part.total} of a larger set written in parallel by different authors. Split the request into ${part.total} distinct sub-areas and write ONLY about sub-area number ${part.index + 1}, so the parts don't overlap.`
+      : "",
     "Make stems varied: mix factual recall with short clinical vignettes where the topic allows. Only include facts you are confident are accurate.",
     avoidBlock,
     "Respond with ONLY a valid JSON array — start with [ and end with ], no prose, no code fences — in this exact shape (optionExplanations has one entry per option in the same order):",
     '[{"question": "...", "options": ["...", "...", "...", "..."], "correctAnswer": "...", "explanation": "...", "optionExplanations": ["...", "...", "...", "..."], "difficulty": "moderate"}]',
     NO_REASONING_INSTRUCTION,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 export async function generateStudentMcqs(request: StudentMcqRequest): Promise<GeneratedMcq[]> {

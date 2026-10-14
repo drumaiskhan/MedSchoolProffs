@@ -809,7 +809,28 @@ export const challengesApi = {
 };
 
 export const aiVisualizerApi = {
-  generate: (prompt: string, mode: VisualizerMode = 'auto') => request<{ visualization: AnyVisualization }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
+  // Generation runs as a background job (it can outlast the host proxy's request
+  // limit): start it, then poll until it's done.
+  generate: async (prompt: string, mode: VisualizerMode = 'auto'): Promise<{ visualization: AnyVisualization }> => {
+    const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) });
+    const deadline = Date.now() + 4 * 60 * 1000;
+    let failures = 0;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const res = await request<{ status: 'pending' | 'done'; visualization?: AnyVisualization }>(`/ai/visualizer/job/${jobId}`);
+        failures = 0;
+        if (res.status === 'done' && res.visualization) return { visualization: res.visualization };
+      } catch (err) {
+        // A real answer from the server about THIS job (failed / expired / auth) is final;
+        // anything else (dropped connection, proxy 502/504 on the poll itself) is retried.
+        const data = err instanceof ApiRequestError ? (err.data as { status?: string } | null) : null;
+        const final = err instanceof ApiRequestError && (data?.status === 'error' || err.status === 404 || err.status === 401 || err.status === 403 || err.status === 429);
+        if (final || ++failures >= 6) throw err;
+      }
+    }
+    throw new ApiRequestError(504, 'The visualization is taking too long. Please try again with a simpler prompt.', null);
+  },
   explainStep: (overallTitle: string, stepTitle: string, stepDescription: string) =>
     request<{ explanation: string }>('/ai/visualizer/explain-step', { method: 'POST', body: JSON.stringify({ overallTitle, stepTitle, stepDescription }) }),
 };
@@ -818,7 +839,7 @@ export type AiMcqDifficulty = 'easy' | 'moderate' | 'hard' | 'mixed';
 export interface AiMcq { question: string; options: string[]; correctAnswer: string; explanation: string; optionExplanations: string[]; difficulty: string }
 /** Student AI MCQ Maker — the page requests small batches (<= 5) and stitches up to 25 together. */
 export const aiMcqMakerApi = {
-  generate: (body: { prompt: string; difficulty: AiMcqDifficulty; count: number; avoid?: string[] }) =>
+  generate: (body: { prompt: string; difficulty: AiMcqDifficulty; count: number; avoid?: string[]; part?: { index: number; total: number } }) =>
     request<{ questions: AiMcq[] }>('/ai/mcq-maker', { method: 'POST', body: JSON.stringify(body) }),
   /** Saves a finished set as a practice session so it counts toward stats, streak and leaderboard. */
   saveSession: (body: { answered: number; correct: number; durationSeconds?: number }) =>

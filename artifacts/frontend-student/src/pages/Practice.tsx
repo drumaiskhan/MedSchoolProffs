@@ -134,8 +134,12 @@ function Practice() {
   // that convention.
   const submitAnswer = useMutation({
     mutationFn: analyticsApi.submitSession,
+    // Network blips / dropped connections (no HTTP response at all) are retried
+    // twice automatically; real server answers (4xx/5xx JSON) are not.
+    retry: (failureCount: number, err: unknown) => !(err instanceof ApiRequestError) && failureCount < 2,
+    retryDelay: (attempt: number) => 1000 * (attempt + 1),
     onSuccess: invalidatePracticeQueries,
-    onError: (err: unknown) => toast({ title: 'Session not saved', description: err instanceof ApiRequestError ? err.message : "Couldn't record this session — your answers below are still visible, but it won't count toward your stats or the leaderboard.", variant: 'destructive' }),
+    onError: (err: unknown) => toast({ title: 'Session not saved', description: err instanceof ApiRequestError ? err.message : "Couldn't reach the server to record this session — check your connection. Your answers below are still visible; tap Finish again after reconnecting.", variant: 'destructive' }),
   });
   const saveNote = useMutation({ mutationFn: notebookApi.create });
   const reportFlag = useMutation({

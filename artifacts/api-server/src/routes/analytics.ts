@@ -68,9 +68,17 @@ router.post("/practice-sessions", requireAuth, requireMembershipFor(["mcqs", "pa
     if (capError) { res.status(403).json({ error: capError, code: "TRIAL_DAILY_LIMIT_REACHED" }); return; }
   }
 
-  const mcqIds = data.answers.map((a) => a.mcqId);
-  const mcqs = await db.select().from(mcqsTable);
-  const mcqMap = new Map(mcqs.filter((m) => mcqIds.includes(m.id)).map((m) => [m.id, m]));
+  // Only fetch the rows being graded (id + correct answer). This used to load
+  // the ENTIRE MCQ bank (every question, option and explanation) on every
+  // submit, which got slower as the bank grew until Hostinger's proxy cut the
+  // request off (a 504 with no CORS headers -> the browser's generic network
+  // error -> "Session not saved").
+  const mcqIds = [...new Set(data.answers.map((a) => a.mcqId))];
+  const mcqs = await db
+    .select({ id: mcqsTable.id, correctAnswer: mcqsTable.correctAnswer })
+    .from(mcqsTable)
+    .where(inArray(mcqsTable.id, mcqIds));
+  const mcqMap = new Map(mcqs.map((m) => [m.id, m]));
 
   let correctCount = 0;
   for (const answer of data.answers) {
@@ -116,7 +124,9 @@ router.post("/practice-sessions", requireAuth, requireMembershipFor(["mcqs", "pa
     data.answers.map((a) => ({ attemptId: attempt.id, mcqId: a.mcqId, selectedAnswer: a.selectedAnswer, correct: mcqMap.get(a.mcqId)?.correctAnswer === a.selectedAnswer })),
   );
 
-  await bumpStreak(req.user!.id, data.tz ?? 0);
+  // The session is already saved — a streak hiccup must not turn it into an
+  // error (the client would report "not saved" and the student would redo it).
+  try { await bumpStreak(req.user!.id, data.tz ?? 0); } catch (err) { console.error("bumpStreak failed after saving session", err); }
 
   res.status(201).json({ ...attempt, scorePercent: Number(attempt.scorePercent) });
 });

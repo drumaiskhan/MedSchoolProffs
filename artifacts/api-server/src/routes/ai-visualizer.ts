@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { desc } from "drizzle-orm";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 import { db, aiVisualizerLogsTable, usersTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor, requireAdmin } from "../middlewares/auth";
 import { checkRateLimit } from "../lib/rateLimit";
@@ -9,6 +10,10 @@ import { generateAny } from "../lib/aiAnatomy";
 import { getAllSettings } from "../lib/settings";
 
 const router: IRouter = Router();
+
+type Job = { userId: number; status: "pending" | "done" | "error"; createdAt: number; visualization?: unknown; error?: string; httpStatus?: number };
+const jobs = new Map<string, Job>();
+setInterval(() => { const cutoff = Date.now() - 15 * 60 * 1000; for (const [id, j] of jobs) if (j.createdAt < cutoff) jobs.delete(id); }, 5 * 60 * 1000).unref?.();
 
 // ---------------------------------------------------------------------------
 // Student: generate a visualization
@@ -31,25 +36,45 @@ router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer")
   const limit = checkRateLimit(`ai-visualizer:${req.user!.id}`, 10, 10 * 60 * 1000); // 10 generations / 10 min / student
   if (!limit.allowed) { res.status(429).json({ error: "You're generating visualizations too quickly. Try again in a minute." }); return; }
 
+  // Generation (esp. 2D widgets) can take far longer than the host proxy's ~26s
+  // request ceiling, so it runs in the background: this returns a job id right
+  // away and the client polls GET /ai/visualizer/job/:id. In-memory (same
+  // single-process assumption as rateLimit.ts).
+  const userId = req.user!.id;
+  const { prompt, mode } = parsed.data;
+  const jobId = randomUUID();
+  jobs.set(jobId, { userId, status: "pending", createdAt: Date.now() });
+  void runJob(jobId, userId, prompt, mode ?? "auto");
+  res.status(202).json({ jobId });
+});
+
+router.get("/ai/visualizer/job/:id", requireAuth, requireMembershipFor("ai_visualizer"), (req, res): void => {
+  const job = jobs.get(String(req.params.id));
+  if (!job || job.userId !== req.user!.id) { res.status(404).json({ error: "This visualization request expired. Please generate it again." }); return; }
+  if (job.status === "pending") { res.json({ status: "pending" }); return; }
+  if (job.status === "error") { res.status(job.httpStatus ?? 502).json({ status: "error", error: job.error }); return; }
+  res.json({ status: "done", visualization: job.visualization });
+});
+
+async function runJob(jobId: string, userId: number, prompt: string, mode: "auto" | "model" | "scene" | "widget"): Promise<void> {
+  const job = jobs.get(jobId)!;
   try {
-    const visualization = await generateAny(parsed.data.prompt, parsed.data.mode ?? "auto");
-    await db.insert(aiVisualizerLogsTable).values({ userId: req.user!.id, prompt: parsed.data.prompt, status: "success", visualizationType: visualization.type });
-    res.json({ visualization });
+    const visualization = await generateAny(prompt, mode);
+    await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: visualization.type });
+    Object.assign(job, { status: "done", visualization });
   } catch (err) {
     const errorMessage = err instanceof AiNotConfiguredError ? err.message : err instanceof InvalidVisualizationError ? `Invalid AI output: ${err.issues}` : (err instanceof Error ? err.message.slice(0, 300) : "Unknown error");
     // Capped well under the DB's practical limits — this is for admin
     // diagnosis (Admin -> AI Visualizer activity), not a full transcript.
     const rawResponse = err instanceof InvalidVisualizationError && err.raw ? err.raw.slice(0, 8000) : null;
-    await db.insert(aiVisualizerLogsTable).values({ userId: req.user!.id, prompt: parsed.data.prompt, status: "error", errorMessage, rawResponse });
-    if (err instanceof AiNotConfiguredError) { res.status(503).json({ error: err.message }); return; }
-    if (err instanceof InvalidVisualizationError) {
+    try { await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "error", errorMessage, rawResponse }); } catch { /* logging is best-effort */ }
+    if (err instanceof AiNotConfiguredError) Object.assign(job, { status: "error", httpStatus: 503, error: err.message });
+    else if (err instanceof InvalidVisualizationError) {
       const timedOut = err.issues.includes("too long to complete in time");
-      res.status(502).json({ error: timedOut ? err.issues : "The AI produced an unusable visualization. Try rephrasing your prompt or regenerating." });
-      return;
-    }
-    res.status(502).json({ error: "Couldn't generate a visualization right now. Try again shortly." });
+      Object.assign(job, { status: "error", httpStatus: 502, error: timedOut ? err.issues : "The AI produced an unusable visualization. Try rephrasing your prompt or regenerating." });
+    } else Object.assign(job, { status: "error", httpStatus: 502, error: "Couldn't generate a visualization right now. Try again shortly." });
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Student: explain one step further (not logged — high-frequency follow-up,

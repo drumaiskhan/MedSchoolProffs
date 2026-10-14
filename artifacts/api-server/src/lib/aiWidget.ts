@@ -31,7 +31,9 @@ const MAX_PROMPT_LENGTH = 500;
 const MAX_HTML_CHARS = 60_000;
 const WIDGET_MAX_TOKENS = 7000;
 const WIDGET_RETRY_MAX_TOKENS = 9000;
-const MAX_TOTAL_GENERATION_MS = 40_000;
+// Runs as a background job (see routes/ai-visualizer.ts), so the old ~26s proxy
+// ceiling no longer applies; keep a sane overall cap so a retry can still fit.
+const MAX_TOTAL_GENERATION_MS = 150_000;
 
 const WIDGET_INSTRUCTIONS = `You are an interactive medical-education widget designer for MedschoolProffs, an MBBS/BDS exam-prep platform. A student describes a physiological, anatomical, pharmacological, pathological or biochemical concept. You respond with ONE self-contained, FLAT 2D interactive widget (HTML + inline CSS + inline SVG + vanilla JavaScript) that makes the concept click by letting the student change something and see the result immediately. NOT 3D, no WebGL, no canvas 3D.
 
@@ -43,14 +45,18 @@ OUTPUT FORMAT (strict):
 
 HARD CONSTRAINTS (the widget runs in a locked sandbox):
 - Everything inline. NO external resources of any kind: no <script src>, no <link>, no @import, no web fonts, no <img src="http...">, no fetch/XMLHttpRequest/WebSocket, no iframes, no forms that submit, no localStorage/cookies, no window.parent/top.
-- Vanilla JS only, no libraries. Keep it under ~350 lines total.
+- Vanilla JS only, no libraries. Keep it compact — under ~250 lines total — so it generates quickly.
 - Must work with mouse AND touch, and on a narrow phone screen (~360px wide): use fluid widths (width:100%, flex-wrap, grid with auto-fit), SVG with viewBox and width:100%, tap targets at least 36px.
 
 DESIGN:
 - Use these host-provided CSS variables for ALL colours so it works in light and dark mode: --bg, --card, --fg, --muted, --border, --accent. Add a few fixed accent colours for data (e.g. #8b7bdc purple, #22a98f teal, #ef8a8a coral, #f0b34a amber, #4aa3e8 blue) that are readable on both light and dark backgrounds.
 - Clean, modern, roomy: rounded cards (border-radius 14-18px), a clear heading, a one-line instruction ("Drag the slider to…"), big readable numbers, subtle transitions. Font: inherit (host sets system-ui).
 - Layout: [short intro] -> [live SVG diagram or bars that visibly respond] -> [controls: range sliders with the current value shown big, and/or segmented toggle buttons] -> [result tiles / table of live values with units] -> [a small "Educational note / Exam pearl" line].
-- The visual must be a meaningful 2D diagram of the actual structures (e.g. a labelled heart with chambers and vessels whose flow arrows/animation change with heart rate; stacked bars for fluid compartments that resize with body weight; a nephron schematic; a pressure-volume loop that deforms; an oxygen-haemoglobin curve whose marker moves with pO2 and shifts with pH/2,3-BPG/temperature). Animate meaningful things (flow dashes, pulsing at the real rate) but keep it calm; respect prefers-reduced-motion.
+- ANIMATION IS REQUIRED. The diagram must be visibly alive the moment it loads, without any interaction: blood/fluid/ion/impulse flow along the vessels or pathways, the heart/lung/cell pulsing or contracting at the real rate, molecules moving, a trace being drawn, a marker travelling along a curve, etc. Then the controls must change the animation (speed, direction, amplitude, colour) as well as the numbers.
+- The host page already defines these ready-made helpers you can put on SVG shapes (use them instead of writing your own keyframes for simple motion): class "msp-flow" (marching dashes along a stroke — set stroke-dasharray yourself or use the default 6 6; add "msp-rev" to reverse; override speed with style="--msp-dur:0.6s"), class "msp-pulse" (gentle scale pulse; set style="transform-origin:center;transform-box:fill-box;--msp-dur:0.8s"), class "msp-float" (slow vertical drift), class "msp-blink" (opacity blink), class "msp-spin" (continuous rotation, set transform-origin like msp-pulse). Update --msp-dur from JavaScript (el.style.setProperty('--msp-dur', seconds+'s')) so the rate follows the sliders (e.g. 60/HR seconds per beat).
+- For motion along a path (a blood cell travelling around a circuit, a dot moving along a curve) use a requestAnimationFrame loop or SVG <animateMotion>; keep it to ~20-60 small shapes at most so it stays smooth on a phone.
+- The host provides a Pause/Play button and reduced-motion handling. For your own JS loops, check window.__mspPaused (true when paused) and skip updating while it is true, and keep the loop cheap.
+- The visual must be a meaningful 2D diagram of the actual structures (e.g. a labelled heart with chambers and vessels whose flow arrows/animation change with heart rate; stacked bars for fluid compartments that resize with body weight; a nephron schematic; a pressure-volume loop that deforms; an oxygen-haemoglobin curve whose marker moves with pO2 and shifts with pH/2,3-BPG/temperature). Animate meaningful things (flow dashes, pulsing at the real rate); keep it smooth and calm, never flashing faster than 3 Hz.
 - Choose controls that teach the key relationship (preload/afterload, dose, concentration, time, body weight, pH...). 1-4 controls is ideal. Show the governing equation when there is one (e.g. CO = HR x SV) and compute it live.
 - Add short text labels directly on the diagram parts. Labels must not overlap.
 
@@ -82,11 +88,14 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\b(?:localStorage|sessionStorage|document\.cookie|indexedDB)\b/, "browser storage"],
 ];
 
+const ANIMATION_RE = /\bmsp-(?:flow|pulse|float|blink|spin)\b|@keyframes|\banimation\s*:|<animate(?:Motion|Transform)?\b|requestAnimationFrame|setInterval/i;
+
 function validate(html: string): string | null {
   if (html.length < 400) return "Response was too short to be a widget";
   if (html.length > MAX_HTML_CHARS) return "Widget was too large";
   if (!/<script\b/i.test(html)) return "Widget had no interactivity (no <script>)";
   if (!/<(svg|div|section|main)\b/i.test(html)) return "Widget had no markup";
+  if (!ANIMATION_RE.test(html)) return "Widget diagram was not animated (use the msp-flow/msp-pulse helper classes, <animate>/<animateMotion>, CSS @keyframes or requestAnimationFrame)";
   for (const [re, name] of FORBIDDEN) {
     // The SVG namespace URL is the one legitimate "//host.tld" string.
     const scrubbed = html.replace(/http:\/\/www\.w3\.org\/\d{4}\/svg/g, "").replace(/http:\/\/www\.w3\.org\/1999\/xlink/g, "");
