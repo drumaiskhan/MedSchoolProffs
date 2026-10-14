@@ -648,25 +648,25 @@ export const analyticsApi = {
 // pipeline (none of the existing AI routes are either).
 // ---------------------------------------------------------------------------
 
-export type VizPoint = { x: number; y: number };
-export type VizElement =
-  | { kind: 'shape'; id: string; shapeType: 'circle' | 'rect' | 'ellipse'; x: number; y: number; width?: number; height?: number; radius?: number; color?: string; label?: string }
-  | { kind: 'label'; id: string; text: string; x: number; y: number }
-  | { kind: 'arrow'; id: string; fromId: string; toId: string; label?: string; style?: 'solid' | 'dashed' }
-  | { kind: 'particle'; id: string; text?: string; color?: string; fromId: string; toId: string };
-
-export type VizStep = { title: string; description: string; elements: VizElement[]; highlightIds?: string[] };
-
+// AI Visualizer (v60): one interactive 3D scene per prompt — mirrors the Zod
+// schema in api-server/src/lib/aiVisualizer.ts.
+export type SceneShape = 'sphere' | 'box' | 'cylinder' | 'torus' | 'cone' | 'capsule' | 'ellipsoid';
+export type SceneLayout = 'auto' | 'ring' | 'line' | 'layers';
+export type SceneNode = {
+  id: string; label: string; shape: SceneShape; group?: string; color?: string; size?: number; tag?: string;
+  description: string; facts?: string[]; x?: number; y?: number; z?: number;
+};
+export type SceneLink = { fromId: string; toId: string; label?: string; style?: 'solid' | 'dashed'; flow?: boolean; order?: number };
 export type FormulaNode = { op: 'add' | 'subtract' | 'multiply' | 'divide'; left: FormulaNode; right: FormulaNode } | { var: string } | { const: number };
-
-export type VisualizationSpec =
-  | { type: 'process' | 'cycle'; title: string; description: string; loop?: boolean; steps: VizStep[] }
-  | { type: 'flowchart'; title: string; description: string; nodes: Array<{ id: string; label: string; x: number; y: number }>; edges: Array<{ fromId: string; toId: string; label?: string }> }
-  | { type: 'timeline'; title: string; description: string; events: Array<{ label: string; time: string; description: string }> }
-  | { type: 'equation'; title: string; description: string; displayFormula: string; variables: Array<{ name: string; label: string; unit?: string; min: number; max: number; default: number; step?: number }>; resultLabel: string; resultUnit?: string; formula: FormulaNode }
-  | { type: 'comparison'; title: string; description: string; items: Array<{ name: string; attributes: Array<{ label: string; value: string }> }> }
-  | { type: 'graph'; title: string; description: string; chartType: 'line' | 'bar'; xLabel: string; yLabel: string; series: Array<{ name: string; points: Array<{ x: string | number; y: number }> }> }
-  | { type: 'anatomy'; title: string; description: string; elements: VizElement[] };
+export type SceneCalculator = {
+  displayFormula: string;
+  variables: Array<{ name: string; label: string; unit?: string; min: number; max: number; default: number; step?: number }>;
+  resultLabel: string; resultUnit?: string; formula: FormulaNode;
+};
+export type VisualizationSpec = {
+  type: 'scene'; title: string; description: string; layout?: SceneLayout; cycle?: boolean;
+  nodes: SceneNode[]; links: SceneLink[]; calculator?: SceneCalculator;
+};
 
 // ---------------------------------------------------------------------------
 // Challenge a friend — search for another student and race them on the

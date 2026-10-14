@@ -1,12 +1,6 @@
-// Frontend copy of the discriminated-union types matching the backend Zod
-// schema in artifacts/api-server/src/lib/aiVisualizer.ts. Kept as plain
-// types, not a second Zod schema — validation only needs to happen once,
-// server-side. Re-exported from lib/api.ts (single source of truth) so
-// these components and api.ts never drift.
+// Frontend types for the AI Visualizer's 3D scene. The single source of truth
+// is lib/api.ts (mirrors the backend Zod schema in
+// api-server/src/lib/aiVisualizer.ts); re-exported here for the components.
 export type {
-  VizPoint,
-  VizElement,
-  VizStep,
-  FormulaNode,
-  VisualizationSpec,
+  SceneShape, SceneLayout, SceneNode, SceneLink, SceneCalculator, FormulaNode, VisualizationSpec,
 } from '@/lib/api';

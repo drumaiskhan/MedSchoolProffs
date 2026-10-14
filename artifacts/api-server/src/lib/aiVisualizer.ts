@@ -1,17 +1,23 @@
 /**
- * AI Visualizer: turns a student's plain-language prompt about a medical
- * process/relationship into a structured, typed JSON spec (never
- * executable code) that the frontend renders with hand-written React
- * components. Mirrors the shape of aiExplain.ts — same provider
- * abstraction (runPrompt), same "strip fences, parse, validate" pattern.
+ * AI Visualizer (v60 — single-screen 3D scene).
+ *
+ * Turns a student's plain-language prompt about a medical process /
+ * relationship into ONE structured, typed JSON "scene" (never executable
+ * code). The frontend renders it with three.js: every structure is a 3D node
+ * the student can click/drag/orbit, flows between structures are animated
+ * links, and everything lives on a single screen — there are no steps.
+ *
+ * A multi-step mechanism (cardiac cycle, muscle contraction, ...) is
+ * expressed as nodes + ordered links: each link carries an optional `order`
+ * (1, 2, 3 ...) that the frontend shows as a numbered badge, so the sequence
+ * is readable at a glance without any step navigation.
  *
  * Security posture (do not weaken):
- * - The AI only ever produces JSON matching VisualizationSpec below.
+ * - The AI only ever produces JSON matching SceneSpec below.
  * - Every string/array field has a `.max()` bound so an oversized or
- *   malformed response is rejected outright, never forwarded to the
- *   frontend.
- * - No `eval`/`new Function` anywhere — formulas are a small AST
- *   (FormulaNode) interpreted client-side, never a string to evaluate.
+ *   malformed response is rejected outright, never forwarded.
+ * - No `eval`/`new Function` anywhere — the optional calculator formula is a
+ *   small AST (FormulaNode) interpreted client-side.
  */
 
 import { z } from "zod";
@@ -23,162 +29,108 @@ export { AiNotConfiguredError };
 // Schema — the AI may ONLY produce this. Anything else is rejected.
 // ---------------------------------------------------------------------------
 
-// A point on a normalized 0-100 x 0-100 canvas so the SVG viewBox is always
-// "0 0 100 100" regardless of screen size (responsive by construction).
-const VizElement = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("shape"), id: z.string().max(40), shapeType: z.enum(["circle", "rect", "ellipse"]), x: z.number().min(0).max(100), y: z.number().min(0).max(100), width: z.number().min(0).max(100).optional(), height: z.number().min(0).max(100).optional(), radius: z.number().min(0).max(50).optional(), color: z.string().max(30).optional(), label: z.string().max(80).optional() }),
-  z.object({ kind: z.literal("label"), id: z.string().max(40), text: z.string().max(120), x: z.number().min(0).max(100), y: z.number().min(0).max(100) }),
-  z.object({ kind: z.literal("arrow"), id: z.string().max(40), fromId: z.string().max(40), toId: z.string().max(40), label: z.string().max(60).optional(), style: z.enum(["solid", "dashed"]).optional() }),
-  // A "particle" is how something visually moves between two structures
-  // across the step (e.g. Ca2+ moving SR -> troponin). The renderer
-  // animates it with a CSS/SVG transition — no AI-authored motion code.
-  z.object({ kind: z.literal("particle"), id: z.string().max(40), text: z.string().max(20).optional(), color: z.string().max(30).optional(), fromId: z.string().max(40), toId: z.string().max(40) }),
-]);
+const SHAPES = ["sphere", "box", "cylinder", "torus", "cone", "capsule", "ellipsoid"] as const;
+const LAYOUTS = ["auto", "ring", "line", "layers"] as const;
 
-const Step = z.object({
-  title: z.string().max(120),
-  description: z.string().max(600),
-  elements: z.array(VizElement).max(40),
-  highlightIds: z.array(z.string().max(40)).max(20).optional(),
+const SceneNode = z.object({
+  id: z.string().min(1).max(40),
+  // Short on purpose: labels are drawn next to the 3D object and must never
+  // collide with each other. Long explanations belong in `description`.
+  label: z.string().min(1).max(32),
+  shape: z.enum(SHAPES),
+  group: z.string().max(28).optional(),
+  color: z.string().max(30).optional(),
+  size: z.number().min(0.5).max(3).optional(),
+  tag: z.string().max(18).optional(), // e.g. "Day 3", "Phase 2", "Type 1"
+  description: z.string().min(1).max(420),
+  facts: z.array(z.string().max(140)).max(5).optional(),
+  // Optional AI-suggested position on a 0-100 cube. The client re-lays-out
+  // when these are missing or crowded, so they are a hint, not a requirement.
+  x: z.number().min(0).max(100).optional(),
+  y: z.number().min(0).max(100).optional(),
+  z: z.number().min(0).max(100).optional(),
 });
 
-const ProcessSpec = z.object({
-  type: z.enum(["process", "cycle"]),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  loop: z.boolean().optional(), // true for "cycle" (last step connects back to first)
-  steps: z.array(Step).min(1).max(20),
+const SceneLink = z.object({
+  fromId: z.string().max(40),
+  toId: z.string().max(40),
+  label: z.string().max(36).optional(),
+  style: z.enum(["solid", "dashed"]).optional(),
+  flow: z.boolean().optional(), // false = static connection, no travelling particles
+  order: z.number().int().min(1).max(60).optional(),
 });
 
-const FlowchartSpec = z.object({
-  type: z.literal("flowchart"),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  nodes: z.array(z.object({ id: z.string().max(40), label: z.string().max(100), x: z.number().min(0).max(100), y: z.number().min(0).max(100) })).min(2).max(30),
-  edges: z.array(z.object({ fromId: z.string().max(40), toId: z.string().max(40), label: z.string().max(60).optional() })).max(60),
-});
-
-const TimelineSpec = z.object({
-  type: z.literal("timeline"),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  events: z.array(z.object({ label: z.string().max(80), time: z.string().max(40), description: z.string().max(300) })).min(2).max(30),
-});
-
-// Formulas are a small AST, never a string to eval(). Interpreter in
-// EquationRenderer.tsx (frontend) walks this recursively — add/sub/mul/div/var/const only.
+// Formulas are a small AST, never a string to eval().
 const FormulaNode: z.ZodType<unknown> = z.lazy(() => z.union([
   z.object({ op: z.enum(["add", "subtract", "multiply", "divide"]), left: FormulaNode, right: FormulaNode }),
   z.object({ var: z.string().max(20) }),
   z.object({ const: z.number() }),
 ]));
 
-const EquationSpec = z.object({
-  type: z.literal("equation"),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  displayFormula: z.string().max(80), // human-readable, e.g. "CO = HR x SV" — display only, never evaluated
+const Calculator = z.object({
+  displayFormula: z.string().max(80),
   variables: z.array(z.object({ name: z.string().max(20), label: z.string().max(60), unit: z.string().max(20).optional(), min: z.number(), max: z.number(), default: z.number(), step: z.number().optional() })).min(1).max(6),
   resultLabel: z.string().max(40),
   resultUnit: z.string().max(20).optional(),
   formula: FormulaNode,
 });
 
-const ComparisonSpec = z.object({
-  type: z.literal("comparison"),
+export const VisualizationSpec = z.object({
+  type: z.literal("scene"),
   title: z.string().max(160),
   description: z.string().max(500),
-  items: z.array(z.object({ name: z.string().max(60), attributes: z.array(z.object({ label: z.string().max(40), value: z.string().max(120) })).max(10) })).min(2).max(4),
+  layout: z.enum(LAYOUTS).optional(),
+  cycle: z.boolean().optional(), // true when the sequence loops back to its start
+  nodes: z.array(SceneNode).min(2).max(40),
+  links: z.array(SceneLink).max(80),
+  calculator: Calculator.optional(),
 });
-
-const GraphSpec = z.object({
-  type: z.literal("graph"),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  chartType: z.enum(["line", "bar"]),
-  xLabel: z.string().max(40),
-  yLabel: z.string().max(40),
-  series: z.array(z.object({ name: z.string().max(40), points: z.array(z.object({ x: z.union([z.string(), z.number()]), y: z.number() })).max(100) })).min(1).max(6),
-});
-
-const AnatomySpec = z.object({
-  type: z.literal("anatomy"),
-  title: z.string().max(160),
-  description: z.string().max(500),
-  elements: z.array(VizElement).max(60),
-});
-
-// "cycle" shares ProcessSpec's shape via the `type` enum on ProcessSpec
-// itself (z.enum(["process", "cycle"])) — a discriminatedUnion can't have
-// two branches sharing one literal, so cycle is just process with
-// type: "cycle" and loop: true, handled by the same branch below.
-export const VisualizationSpec = z.discriminatedUnion("type", [
-  ProcessSpec, FlowchartSpec, TimelineSpec, EquationSpec, ComparisonSpec, GraphSpec, AnatomySpec,
-]);
 export type VisualizationSpecT = z.infer<typeof VisualizationSpec>;
 
 // ---------------------------------------------------------------------------
 // Prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM_INSTRUCTIONS = `You are a medical education visualization generator for MedschoolProffs, an MBBS/BDS exam-prep platform. A student will describe a physiological, anatomical, pharmacological, or biochemical process or relationship in plain language. You must respond with ONLY a single valid JSON object — no prose, no markdown code fences, no explanation before or after — matching EXACTLY one of the JSON shapes below, chosen by which best fits the concept. Use the field names shown below verbatim — do not rename, add, or omit fields, and do not invent your own structure for any type.
+const SYSTEM_INSTRUCTIONS = `You are a medical education visualization generator for MedschoolProffs, an MBBS/BDS exam-prep platform. A student describes a physiological, anatomical, pharmacological, or biochemical process or relationship. You respond with ONLY one valid JSON object — no prose, no markdown fences — describing a SINGLE interactive 3D SCENE that is shown on ONE screen. There are no steps and no pages: the student sees every structure at once, rotates the scene, clicks any structure to read about it, and watches particles flow along the links.
 
-MEDICAL ACCURACY RULES (do not violate these):
-- Use standard, textbook medical physiology/anatomy/pharmacology only.
-- Do not invent mechanisms, structures, or sequences that are not established science.
-- Preserve the correct physiological sequence of events exactly.
-- Use correct, standard medical terminology (the audience is medical students, not laypeople).
-- If a detail is genuinely uncertain or debated, say so briefly in the relevant description field rather than presenting it as settled fact.
-- Prefer several short, concrete steps over one dense block of text. Each "description" field should be 1-4 sentences, exam-focused, not a textbook paragraph.
+MEDICAL ACCURACY RULES (do not violate):
+- Standard textbook physiology/anatomy/pharmacology only. Do not invent mechanisms, structures, or sequences.
+- Preserve the correct physiological sequence exactly (use link "order" for sequences).
+- Use correct standard terminology (audience: medical students).
+- If something is genuinely debated, say so briefly in that node's description.
 
-SHAPE RULE (applies to every "shape" element, in every type below): "shapeType" must be EXACTLY one of "circle", "rect", or "ellipse" — never "line", "polygon", "triangle", "path", "square", "oval", "diamond", "star", or any other value. There is no fourth option. To represent a line, dendrite, axon, vessel, membrane, or any other elongated structure, use a thin "rect" (small height, longer width) instead of inventing a new shape type.
+JSON SHAPE (use these field names verbatim; add nothing else):
+{
+ "type":"scene",
+ "title":"...", "description":"1-2 sentence overview",
+ "layout":"auto"|"ring"|"line"|"layers",
+ "cycle":false,
+ "nodes":[{"id":"sr","label":"Sarcoplasmic reticulum","shape":"sphere","group":"Organelles","color":"#3b82f6","size":1.4,"tag":"Phase 1","description":"2-4 exam-focused sentences about this structure and its role.","facts":["Short high-yield fact","Another fact"],"x":20,"y":60,"z":40}],
+ "links":[{"fromId":"sr","toId":"troponin","label":"Ca2+ release","style":"solid","flow":true,"order":1}],
+ "calculator":{"displayFormula":"CO = HR x SV","variables":[{"name":"HR","label":"Heart Rate","unit":"bpm","min":40,"max":180,"default":70,"step":1}],"resultLabel":"Cardiac Output","resultUnit":"L/min","formula":{"op":"multiply","left":{"var":"HR"},"right":{"var":"SV"}}}
+}
 
-LAYOUT RULE (round 3 — applies to every "shape"/"label" element on the 0-100 canvas, in every type below): elements must NOT overlap or stack on top of each other.
-- Never give two different elements the same (x, y), or coordinates closer than about 12 units apart on this 0-100 canvas, unless one is a small "label" element deliberately placed just outside the edge of the shape it names (e.g. a label at y = shape's y minus (shape's radius/height + 4), not centered on the shape itself).
-- Size every shape to comfortably fit its own label text — a wide/long label needs a wider "rect", not a shape sized independently of what's written on or next to it.
-- Spread elements to use the full 0-100 canvas rather than clustering everything near the center — plan rough (x, y) positions for every element in a step BEFORE writing them out, as if sketching a real, legible diagram, not a pile of shapes at one point.
-- For a multi-step "process"/"cycle", keep each recurring structure's (x, y) position CONSISTENT across steps (reuse the same id and position) so the diagram doesn't visually jump around step to step — only the highlighted/active elements and particles should change.
+NODE RULES:
+- Between 4 and 24 nodes is ideal (hard max 40). Each node is ONE structure, molecule, event, phase, drug, organ, or item being compared.
+- "id": unique, short, no spaces. "label": SHORT — at most 3 words / 32 characters. The label is drawn beside the 3D object, so long labels cause clutter; put detail in "description" and "facts" instead.
+- "shape" must be EXACTLY one of: sphere, box, cylinder, torus, cone, capsule, ellipsoid. Choose meaningfully: sphere = cell/molecule/ion/compartment, ellipsoid = organ/chamber, box = barrier/tissue/table cell, cylinder = vessel/duct/tubule/filament, torus = ring/channel/pore/receptor, cone = direction/outflow/drug, capsule = rod-like structure/neuron/bacterium.
+- "group": a short category (e.g. "Ions", "Proteins", "Phase 1", "Type 1 DM"). Nodes of the same group get the same colour and cluster together, and the groups become a clickable legend. Use 2-6 groups. For a COMPARISON, make one group per compared item and make every item list the same kinds of nodes (e.g. Onset, Mechanism, Treatment) so they line up.
+- "size" 0.5-3 (importance; default 1). "tag" optional short badge (a time point, phase name).
+- "facts": up to 5 short high-yield bullet facts per node (each under 140 characters).
+- "x","y","z" optional (0-100 cube). If you give positions, spread nodes across the whole cube with at least 15 units between any two nodes; if unsure, omit them — the client lays the scene out automatically.
 
-TYPE CHOICE RULE (round 3): if the student's request is for an interactive DIAGRAM of an anatomical or physiological system (e.g. "heart and body fluids, interactive", "interactive nephron diagram") — as opposed to a request for a specific numeric calculation or formula — choose "anatomy", "process", or "cycle" (all of which contain real shape/label/arrow diagram elements), NOT "equation". "equation" produces only a formula and a slider calculator with no diagram at all, which is the wrong output for a request asking to see/visualize a structure. Only choose "equation" when the request is explicitly about computing or exploring a numeric formula (e.g. "cardiac output equation", "Fick's principle calculator", "show me how stroke volume affects cardiac output"). A slider/variable IS allowed as a labeled element inside an "anatomy"/"process" diagram's own elements (e.g. a small equation readout alongside the real diagram) — it just cannot be the entire response when a diagram was asked for.
+LINK RULES:
+- A link is a directed relationship or flow from one node to another (movement, activation, inhibition, causation, next phase). fromId/toId must be existing node ids.
+- "label": at most 3 words / 36 characters, or omit. "order": 1,2,3... for the sequence of a process (every link of a sequential process should have an order; omit for non-sequential relationships). "flow": true (default) shows travelling particles; false for static anatomical connections. "style": "solid" or "dashed" (dashed = indirect/inhibitory/weak).
+- At most about 2 links per node on average; do not connect everything to everything.
 
-CHOOSE ONE TYPE AND FOLLOW ITS EXACT JSON SHAPE:
+LAYOUT CHOICE: "ring" for cycles (set "cycle":true), "line" for timelines/linear pathways, "layers" for comparisons or hierarchies (one layer per group), otherwise "auto".
 
-1. "process" or "cycle" — a multi-step mechanism (cycle loops back to step 1; process has a clear end):
-{"type":"process","title":"...","description":"...","loop":false,"steps":[{"title":"...","description":"...","elements":[{"kind":"shape","id":"sr","shapeType":"circle","x":30,"y":40,"radius":8,"color":"#3b82f6","label":"SR"},{"kind":"label","id":"lbl1","text":"Ca2+","x":30,"y":30},{"kind":"arrow","id":"a1","fromId":"sr","toId":"troponin","label":"release","style":"solid"},{"kind":"particle","id":"p1","text":"Ca2+","color":"#f59e0b","fromId":"sr","toId":"troponin"}],"highlightIds":["sr","p1"]}]}
-- Use "cycle" (same shape, "type":"cycle","loop":true) when the mechanism loops back to its start (e.g. cardiac cycle, citric acid cycle, cross-bridge cycling).
-- Every element needs a unique "id" referenced consistently across steps (an element present in multiple steps should reuse the same id, not a new one each time) and a normalized position (x, y each 0-100).
-- Remember the SHAPE RULE above: "shapeType" is only ever "circle", "rect", or "ellipse" — represent a line/dendrite/axon/vessel as a thin "rect", never as "line" or any other value.
-- "particle" elements show something moving between two existing element ids across a step — this is how motion/animation is expressed; never describe motion only in the text.
-- "highlightIds" on a step lists which element ids are the focus of that step.
-- Keep each step focused on ONE event, not the whole mechanism at once. 1-20 steps.
+CALCULATOR (optional): include ONLY when the request is about a quantitative relationship the student should explore (e.g. "cardiac output", "Fick principle", "how preload affects stroke volume"). Variables are sliders; formula is an operation tree made ONLY of {"op":"add"|"subtract"|"multiply"|"divide","left":<node>,"right":<node>}, {"var":"NAME"} (must match a variable name), {"const":number}. Never a string expression. The scene itself must still be a meaningful diagram of the structures involved. Omit "calculator" otherwise.
 
-2. "flowchart" — branching cause-and-effect, not strictly linear:
-{"type":"flowchart","title":"...","description":"...","nodes":[{"id":"n1","label":"...","x":20,"y":10},{"id":"n2","label":"...","x":50,"y":40}],"edges":[{"fromId":"n1","toId":"n2","label":"..."}]}
-- 2-30 nodes, up to 60 edges, all x/y normalized 0-100.
+For graphs/timelines/comparisons: represent each time point / compared item as nodes (use "tag" for time or value, "group" for series/item) — do not invent another structure.
 
-3. "timeline" — events anchored to real time points:
-{"type":"timeline","title":"...","description":"...","events":[{"label":"...","time":"Day 1","description":"..."},{"label":"...","time":"Day 3","description":"..."}]}
-- 2-30 events.
-
-4. "equation" — a quantitative relationship between named variables (e.g. CO = HR x SV). The formula is a small operation tree, NEVER a string to evaluate:
-{"type":"equation","title":"...","description":"...","displayFormula":"CO = HR x SV","variables":[{"name":"HR","label":"Heart Rate","unit":"bpm","min":40,"max":180,"default":70,"step":1},{"name":"SV","label":"Stroke Volume","unit":"mL","min":30,"max":150,"default":70,"step":1}],"resultLabel":"Cardiac Output","resultUnit":"L/min","formula":{"op":"multiply","left":{"var":"HR"},"right":{"var":"SV"}}}
-- "formula" nodes are ONLY ever one of these three exact shapes, nested as needed: {"op":"add"|"subtract"|"multiply"|"divide","left":<node>,"right":<node>}, or {"var":"HR"} (must match a name in "variables"), or {"const":1000} (a literal number, e.g. for a unit-conversion divisor).
-- 1-6 variables, each with realistic physiological min/max/default.
-
-5. "comparison" — 2-4 named things compared attribute-by-attribute:
-{"type":"comparison","title":"...","description":"...","items":[{"name":"Type 1 DM","attributes":[{"label":"Onset","value":"Childhood/adolescence"},{"label":"Mechanism","value":"Autoimmune beta-cell destruction"}]},{"name":"Type 2 DM","attributes":[{"label":"Onset","value":"Adulthood"},{"label":"Mechanism","value":"Insulin resistance"}]}]}
-- Every item should list the same attribute labels, in the same order, so they line up side by side.
-
-6. "graph" — a quantitative relationship as a line/bar chart:
-{"type":"graph","title":"...","description":"...","chartType":"line","xLabel":"Preload (mmHg)","yLabel":"Stroke Volume (mL)","series":[{"name":"Normal","points":[{"x":0,"y":40},{"x":10,"y":90},{"x":20,"y":110}]}]}
-- 1-6 series, up to 100 points each; "x" may be a number or a short category string.
-
-7. "anatomy" — one labeled diagram, no step progression:
-{"type":"anatomy","title":"...","description":"...","elements":[{"kind":"shape","id":"a1","shapeType":"ellipse","x":50,"y":30,"width":20,"height":12,"color":"#ef4444","label":"Right Atrium"},{"kind":"label","id":"l1","text":"RA","x":50,"y":20}]}
-- Same element "kind"s as process/cycle above (shape/label/arrow/particle), 1-60 elements.
-- Remember the SHAPE RULE above: "shapeType" is only ever "circle", "rect", or "ellipse" — represent a line/vessel/duct/membrane as a thin "rect", never as "line" or any other value.
-
-Respond with ONLY the JSON object matching the shape for your chosen type. No markdown fences, no leading/trailing text, no fields beyond what's shown above.`;
+Respond with ONLY the JSON object.`;
 
 function buildPrompt(userPrompt: string): string {
   return `${SYSTEM_INSTRUCTIONS}\n\nStudent's request: "${userPrompt}"\n\nRespond with ONLY the JSON object described above.`;
@@ -189,176 +141,95 @@ function stripFences(raw: string): string {
 }
 
 export class InvalidVisualizationError extends Error {
-  // `raw` carries the offending text (truncated/invalid JSON) so callers
-  // can log it for admin diagnosis — see routes/ai-visualizer.ts, which
-  // writes this into aiVisualizerLogsTable.rawResponse. Optional because
-  // some call sites (e.g. "prompt was empty") have no AI response to attach.
+  // `raw` carries the offending text so callers can log it for admin diagnosis
+  // (routes/ai-visualizer.ts writes it into aiVisualizerLogsTable.rawResponse).
   constructor(public issues: string, public raw?: string) { super(`AI returned an invalid visualization: ${issues}`); this.name = "InvalidVisualizationError"; }
 }
 
 const MAX_PROMPT_LENGTH = 500;
-// Visualization JSON for a multi-step process (e.g. skeletal muscle
-// contraction's ~16 steps, each with several elements/particles) is much
-// bigger than the 400-token default used by explanations/flashcards/MCQs.
-// 4000 was too low in practice — a genuinely multi-step "cycle" prompt
-// like muscle contraction routinely got cut off mid-array, which broke
-// JSON parsing and surfaced as a 502 ("The AI produced an unusable
-// visualization"). NOTE: this app's API is reached through a Netlify
-// redirect proxy in front of the Railway backend (see netlify.toml) —
-// that proxy hop has its own timeout on long-running requests, well
-// under what an 8000-12000 token generation reliably takes. 4000 covers
-// the large majority of process/cycle prompts (most need well under the
-// schema's 20-step ceiling); the retry budget below only kicks in for
-// prompts that actually need more room, and generateVisualization()
-// skips that retry entirely if the first attempt already used up too
-// much of the time budget (see MAX_TOTAL_GENERATION_MS below).
-const VISUALIZATION_MAX_TOKENS = 4000;
-// If a first attempt still truncates, retry once with a higher budget and
-// an explicit instruction to economize on steps — but only when there's
-// realistically enough time left before the proxy would time out anyway
-// (see generateVisualization).
+// A 3D scene with ~20 nodes (each with description + facts) is smaller than
+// the old 20-step process JSON, so the previous budgets are plenty. The API
+// sits behind a reverse proxy with its own timeout, so the retry only runs
+// when there's realistically time left (see MAX_TOTAL_GENERATION_MS).
+const VISUALIZATION_MAX_TOKENS = 4500;
 const VISUALIZATION_RETRY_MAX_TOKENS = 6000;
-// Soft budget for the whole generateVisualization() call (both attempts
-// combined). Calibrated to stay under a typical reverse-proxy timeout
-// (commonly 30s) with headroom for network/DB overhead — if the first
-// attempt alone already ate most of this, a second sequential AI call is
-// almost guaranteed to get killed by the proxy with an opaque 504 instead
-// of ever reaching our error handling, so it's skipped in favor of
-// failing fast with a clear, actionable message instead.
 const MAX_TOTAL_GENERATION_MS = 22_000;
 
-
-/** A cut-off response never closes its outermost brace — a real "not JSON
- * at all" response (extra prose, wrong shape) usually still closes it.
- * This is a heuristic, not a guarantee, but it's enough to tell "raise the
- * budget and retry" apart from "the model produced garbage, retrying
- * won't help." */
 function looksTruncated(cleaned: string): boolean {
-  const trimmedEnd = cleaned.trimEnd();
-  return trimmedEnd.length > 0 && !trimmedEnd.endsWith("}");
+  const t = cleaned.trimEnd();
+  return t.length > 0 && !t.endsWith("}");
 }
 
 function tryParse(cleaned: string): unknown | undefined {
-  try {
-    return JSON.parse(cleaned);
-  } catch {
+  try { return JSON.parse(cleaned); } catch {
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) return undefined;
     try { return JSON.parse(match[0]); } catch { return undefined; }
   }
 }
 
-// Defense-in-depth for whatever the SHAPE RULE prompt instruction doesn't
-// catch. The AI is asked to use only "circle"|"rect"|"ellipse", but models
-// still occasionally reach for "line"/"polygon"/"triangle"/etc. for
-// concepts that don't map cleanly onto those three primitives (neuron
-// structure, nephron anatomy, muscle cross-bridge cycling — exactly the
-// prompts in the admin logs). Rather than reject an otherwise-good
-// visualization over one mislabeled field, remap known aliases to the
-// nearest of the three real primitives before validating, and fall back to
-// "rect" for anything unrecognized. This only normalizes a string enum
-// value — it does not add rendering capability, widen the schema, or touch
-// anything eval-adjacent, so it doesn't weaken the security posture
-// described at the top of this file.
-const SHAPE_TYPE_ALIASES: Record<string, "circle" | "rect" | "ellipse"> = {
-  square: "rect",
-  box: "rect",
-  oval: "ellipse",
-  diamond: "rect",
-  triangle: "rect",
-  line: "rect",
-  polygon: "rect",
-  path: "rect",
-  star: "rect",
-  pentagon: "rect",
-  hexagon: "rect",
+// ---------------------------------------------------------------------------
+// Normalisation — defence in depth for what the prompt doesn't guarantee.
+// Only normalises enum aliases, clamps numbers, de-duplicates ids and drops
+// dangling links. It never widens the schema or adds capability.
+// ---------------------------------------------------------------------------
+
+const SHAPE_ALIASES: Record<string, (typeof SHAPES)[number]> = {
+  circle: "sphere", ball: "sphere", cell: "sphere", orb: "sphere", oval: "ellipsoid", ellipse: "ellipsoid", egg: "ellipsoid",
+  rect: "box", square: "box", cube: "box", rectangle: "box", diamond: "box",
+  tube: "cylinder", pipe: "cylinder", vessel: "cylinder", line: "cylinder", rod: "capsule",
+  ring: "torus", donut: "torus", doughnut: "torus", triangle: "cone", pyramid: "cone", arrow: "cone",
+  polygon: "box", path: "cylinder", star: "cone", hexagon: "box", pentagon: "box",
 };
-const VALID_SHAPE_TYPES = new Set(["circle", "rect", "ellipse"]);
+const VALID_SHAPES = new Set<string>(SHAPES);
 
-function normalizeElement(el: unknown): unknown {
-  if (!el || typeof el !== "object") return el;
-  const rec = el as Record<string, unknown>;
-  if (rec.kind !== "shape" || typeof rec.shapeType !== "string") return el;
-  if (VALID_SHAPE_TYPES.has(rec.shapeType)) return el;
-  const normalized = SHAPE_TYPE_ALIASES[rec.shapeType.toLowerCase()] ?? "rect";
-  return { ...rec, shapeType: normalized };
-}
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const cut = (v: unknown, n: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : undefined);
 
-function normalizeElementsArray(elements: unknown): unknown {
-  if (!Array.isArray(elements)) return elements;
-  return elements.map(normalizeElement);
-}
-
-// Defense-in-depth for the LAYOUT RULE prompt instruction (round 3, item
-// 4a — the "completely overlapping labels and shapes stacked on top of
-// each other" bug). The prompt asks the model to space things out, but
-// models still sometimes default everything to the same coordinate (most
-// often 50,50, or all labels defaulting to their shape's exact center).
-// This is a purely mechanical nudge, not a redesign: any two positioned
-// elements (shape or label) within MIN_DISTANCE of each other get the
-// later one pushed outward along the line between them, repeated a few
-// passes so a cluster of 3+ colliding elements fans out instead of two
-// merely swapping places. Never invents new elements/ids, never changes
-// anything except x/y, and always stays inside the 0-100 canvas.
-const MIN_DISTANCE = 10;
-const LAYOUT_PASSES = 4;
-
-function hasXY(el: unknown): el is { x: number; y: number; kind: string } {
-  return !!el && typeof el === "object" && typeof (el as Record<string, unknown>).x === "number" && typeof (el as Record<string, unknown>).y === "number";
-}
-
-function declutterPositions(elements: unknown[]): unknown[] {
-  const positioned = elements.filter(hasXY) as Array<{ x: number; y: number; kind: string } & Record<string, unknown>>;
-  if (positioned.length < 2) return elements;
-  for (let pass = 0; pass < LAYOUT_PASSES; pass++) {
-    let movedAny = false;
-    for (let i = 0; i < positioned.length; i++) {
-      for (let j = i + 1; j < positioned.length; j++) {
-        const a = positioned[i], b = positioned[j];
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist >= MIN_DISTANCE) continue;
-        movedAny = true;
-        // Push the two apart symmetrically along their connecting line
-        // (or an arbitrary diagonal if they're exactly coincident, so
-        // dx/dy=0 doesn't produce a NaN direction).
-        const angle = dist > 0.01 ? Math.atan2(dy, dx) : (i * 47 + j * 13) % 360 * (Math.PI / 180);
-        const push = (MIN_DISTANCE - dist) / 2 + 1;
-        b.x = Math.min(100, Math.max(0, b.x + Math.cos(angle) * push));
-        b.y = Math.min(100, Math.max(0, b.y + Math.sin(angle) * push));
-        a.x = Math.min(100, Math.max(0, a.x - Math.cos(angle) * push));
-        a.y = Math.min(100, Math.max(0, a.y - Math.sin(angle) * push));
-      }
-    }
-    if (!movedAny) break;
-  }
-  return elements;
-}
-
-function declutterElementsArray(elements: unknown): unknown {
-  if (!Array.isArray(elements)) return elements;
-  return declutterPositions(elements);
-}
-
-/** Walks the parsed-but-not-yet-validated spec and normalizes every
- * shapeType AND declutters overlapping positions it can find, whichever of
- * the "elements" (anatomy/process's top level) or "steps[].elements"
- * (process/cycle) shapes it turns out to be — cheaper and safer than
- * trying to guess the type before validation. */
-function normalizeShapeTypes(parsed: unknown): unknown {
+function normalizeScene(parsed: unknown): unknown {
   if (!parsed || typeof parsed !== "object") return parsed;
   const rec = { ...(parsed as Record<string, unknown>) };
-  if (Array.isArray(rec.elements)) {
-    rec.elements = declutterElementsArray(normalizeElementsArray(rec.elements));
+  if (!Array.isArray(rec.nodes)) return rec;
+
+  const seen = new Set<string>();
+  const nodes: Record<string, unknown>[] = [];
+  for (const raw of rec.nodes) {
+    if (!raw || typeof raw !== "object") continue;
+    const n = { ...(raw as Record<string, unknown>) };
+    let id = cut(n.id, 40)?.replace(/\s+/g, "_");
+    if (!id) continue;
+    if (seen.has(id)) { let k = 2; while (seen.has(`${id.slice(0, 36)}_${k}`)) k++; id = `${id.slice(0, 36)}_${k}`; }
+    seen.add(id);
+    n.id = id;
+    n.label = cut(n.label, 32) ?? id;
+    const shape = typeof n.shape === "string" ? n.shape.toLowerCase() : "";
+    n.shape = VALID_SHAPES.has(shape) ? shape : SHAPE_ALIASES[shape] ?? "sphere";
+    n.description = cut(n.description, 420) ?? n.label;
+    if (n.group !== undefined) n.group = cut(n.group, 28);
+    if (n.tag !== undefined) n.tag = cut(n.tag, 18);
+    if (n.color !== undefined) n.color = cut(n.color, 30);
+    const size = num(n.size); n.size = size === undefined ? undefined : clamp(size, 0.5, 3);
+    for (const k of ["x", "y", "z"] as const) { const v = num(n[k]); n[k] = v === undefined ? undefined : clamp(v, 0, 100); }
+    if (Array.isArray(n.facts)) n.facts = n.facts.filter((f) => typeof f === "string" && f.trim()).slice(0, 5).map((f) => (f as string).slice(0, 140));
+    else delete n.facts;
+    nodes.push(n);
   }
-  if (Array.isArray(rec.steps)) {
-    rec.steps = rec.steps.map((step) => {
-      if (!step || typeof step !== "object") return step;
-      const stepRec = { ...(step as Record<string, unknown>) };
-      if (Array.isArray(stepRec.elements)) stepRec.elements = declutterElementsArray(normalizeElementsArray(stepRec.elements));
-      return stepRec;
-    });
-  }
+  rec.nodes = nodes.slice(0, 40);
+
+  const ids = new Set(nodes.map((n) => n.id as string));
+  rec.links = (Array.isArray(rec.links) ? rec.links : [])
+    .filter((l): l is Record<string, unknown> => !!l && typeof l === "object")
+    .map((l) => {
+      const out = { ...l };
+      if (typeof out.label === "string") out.label = out.label.slice(0, 36);
+      const order = num(out.order); out.order = order === undefined ? undefined : clamp(Math.round(order), 1, 60);
+      return out;
+    })
+    .filter((l) => typeof l.fromId === "string" && typeof l.toId === "string" && ids.has(l.fromId as string) && ids.has(l.toId as string) && l.fromId !== l.toId)
+    .slice(0, 80);
+
+  rec.type = "scene";
   return rec;
 }
 
@@ -366,18 +237,9 @@ async function attemptGeneration(prompt: string, maxTokens: number): Promise<{ r
   const raw = await runPrompt(prompt, maxTokens, "object");
   const cleaned = stripFences(raw);
   const parsedJson = tryParse(cleaned);
-
-  if (parsedJson === undefined) {
-    return { raw, truncated: looksTruncated(cleaned), issues: "Response was not valid JSON" };
-  }
-  const normalized = normalizeShapeTypes(parsedJson);
-  const result = VisualizationSpec.safeParse(normalized);
+  if (parsedJson === undefined) return { raw, truncated: looksTruncated(cleaned), issues: "Response was not valid JSON" };
+  const result = VisualizationSpec.safeParse(normalizeScene(parsedJson));
   if (!result.success) {
-    // A validation failure on an array field that's suspiciously at (or
-    // past) its max length, combined with a response that never closed
-    // its brace, is also consistent with truncation — e.g. a "steps"
-    // array whose last element is missing required fields because it got
-    // cut mid-object.
     return { raw, truncated: looksTruncated(cleaned), issues: result.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
   }
   return { raw, spec: result.data, truncated: false };
@@ -391,19 +253,7 @@ export async function generateVisualization(userPrompt: string): Promise<Visuali
   const first = await attemptGeneration(buildPrompt(trimmed), VISUALIZATION_MAX_TOKENS);
   if (first.spec) return first.spec;
 
-  // Retry once for either failure mode: truncation (bigger budget, fewer
-  // steps) or a schema validation failure that normalization didn't fully
-  // resolve (feed the exact issues back so the model can self-correct).
-  // Only give up and 502 if this second attempt also fails — a single
-  // schema mismatch on an otherwise-complete response shouldn't be a dead
-  // end when one corrective round-trip usually fixes it.
-  //
-  // But: if the first attempt already burned most of the total time
-  // budget, a second sequential AI call is very likely to get killed by
-  // the reverse-proxy timeout in front of this API before it ever
-  // finishes — which would surface to the student as a bare, unhelpful
-  // 504 instead of a real error message. Fail fast with a clear message
-  // instead of gambling on a retry that's unlikely to make it back in time.
+  // Fail fast if the first attempt already used most of the proxy-safe budget.
   const elapsed = Date.now() - startedAt;
   if (elapsed > MAX_TOTAL_GENERATION_MS * 0.5) {
     throw new InvalidVisualizationError(
@@ -413,23 +263,22 @@ export async function generateVisualization(userPrompt: string): Promise<Visuali
   }
 
   const retryPrompt = first.truncated
-    ? `${buildPrompt(trimmed)}\n\nIMPORTANT: Your previous response was too long and got cut off before it was valid JSON. This time, keep it to at most 10 steps (or fewer elements per step) and be more concise in every "description" field, while still producing complete, valid JSON that fully closes every object and array.`
-    : `${buildPrompt(trimmed)}\n\nIMPORTANT: Your previous response had these validation errors: ${first.issues}. Fix them and return complete, valid JSON matching the schema exactly — pay close attention to the SHAPE RULE ("shapeType" must be exactly "circle", "rect", or "ellipse", nothing else).`;
-  const retryTokens = first.truncated ? VISUALIZATION_RETRY_MAX_TOKENS : VISUALIZATION_MAX_TOKENS;
-  const second = await attemptGeneration(retryPrompt, retryTokens);
+    ? `${buildPrompt(trimmed)}\n\nIMPORTANT: Your previous response was cut off before it was valid JSON. Use at most 14 nodes, keep every description under 250 characters, at most 2 facts per node, and close every object and array.`
+    : `${buildPrompt(trimmed)}\n\nIMPORTANT: Your previous response had these validation errors: ${first.issues}. Fix them and return complete, valid JSON matching the schema exactly (shape must be one of sphere, box, cylinder, torus, cone, capsule, ellipsoid; label at most 32 characters).`;
+  const second = await attemptGeneration(retryPrompt, first.truncated ? VISUALIZATION_RETRY_MAX_TOKENS : VISUALIZATION_MAX_TOKENS);
   if (second.spec) return second.spec;
   throw new InvalidVisualizationError(second.issues ?? "Response was not valid JSON", second.raw);
 }
 
-// Used by the optional "Explain this step" button — a short, ungated,
-// ephemeral text explanation (same pattern as generateExplanation), not a
-// new visualization. Not schema-validated: it returns plain text, rendered
-// as plain text, same trust level as the existing ask-ai endpoints.
+// Optional "Explain deeper" button on a selected part — a short, ephemeral
+// text explanation (same pattern as generateExplanation), not a new scene.
+// Kept under its original name/signature so the route + client contract
+// (/ai/visualizer/explain-step) did not change.
 export async function explainStep(stepTitle: string, stepDescription: string, overallTitle: string): Promise<string> {
   const prompt = [
-    `You are helping a medical student understand one step of a visualization titled "${overallTitle}".`,
-    `The step is: "${stepTitle}" — ${stepDescription}`,
-    "Explain this specific step in more depth, in under 120 words, at MBBS/BDS level. Use correct medical terminology. Do not use markdown headers.",
+    `You are helping a medical student understand one part of an interactive 3D visualization titled "${overallTitle}".`,
+    `The part is: "${stepTitle}" — ${stepDescription}`,
+    "Explain this specific part in more depth, in under 120 words, at MBBS/BDS level. Use correct medical terminology. Do not use markdown headers.",
   ].join("\n");
   return runPrompt(prompt, 400);
 }

@@ -1,0 +1,31 @@
+/* AI Visualizer 3D — label chips drawn over the WebGL canvas.
+   Positioned every frame by Scene3D's collision pass (transform only). */
+.viz3d-label-layer { contain: strict; }
+.viz3d-label {
+  position: absolute; left: 0; top: 0; display: inline-flex; align-items: center; gap: 5px;
+  max-width: 190px; padding: 3px 8px 3px 7px; border-radius: 999px; white-space: nowrap;
+  font-size: 11px; line-height: 1.25; font-weight: 700; letter-spacing: .005em;
+  color: hsl(var(--foreground)); background: hsl(var(--card) / .86);
+  border: 1px solid hsl(var(--border)); box-shadow: 0 2px 8px hsl(var(--foreground) / .10);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  transition: opacity .18s ease, background-color .18s ease, border-color .18s ease;
+  will-change: transform, opacity; visibility: hidden; user-select: none;
+}
+.viz3d-label::before { content: ''; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--viz-dot, hsl(var(--primary))); }
+.viz3d-label--link::before { display: none; }
+.viz3d-label__name { overflow: hidden; text-overflow: ellipsis; }
+.viz3d-label__tag { flex: none; padding: 0 5px; border-radius: 999px; font-size: 9.5px; font-weight: 800; color: hsl(var(--muted-foreground)); background: hsl(var(--muted)); }
+.viz3d-label--link { font-size: 10px; font-weight: 700; padding: 2px 7px 2px 3px; color: hsl(var(--muted-foreground)); background: hsl(var(--card) / .78); }
+.viz3d-label__order { display: inline-grid; place-items: center; flex: none; min-width: 15px; height: 15px; border-radius: 999px; font-size: 9.5px; font-weight: 800; color: hsl(var(--primary-foreground)); background: hsl(var(--primary)); }
+.viz3d-label.is-hover { border-color: hsl(var(--primary) / .6); }
+.viz3d-label.is-selected { border-color: hsl(var(--primary)); background: hsl(var(--card)); box-shadow: 0 4px 14px hsl(var(--primary) / .28); max-width: 240px; font-size: 12px; }
+.viz3d-label.is-dim { filter: saturate(.5); }
+.viz3d-stage-bg {
+  background:
+    radial-gradient(120% 90% at 50% 0%, hsl(var(--primary) / .10), transparent 60%),
+    radial-gradient(90% 70% at 100% 100%, hsl(var(--accent) / .10), transparent 65%),
+    hsl(var(--muted) / .35);
+}
+.viz3d-hint { animation: viz3dHint 7s ease forwards; }
+@keyframes viz3dHint { 0%, 70% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .viz3d-label { transition: none; } .viz3d-hint { animation: none; } }

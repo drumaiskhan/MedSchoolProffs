@@ -14,6 +14,7 @@ import {
   auditLogsTable,
   paymentsTable,
   membershipPlansTable,
+  membershipsTable,
 } from "@workspace/db";
 import {
   hashPassword,
@@ -167,7 +168,10 @@ const RegisterSchema = z.object({
   // Required — an account can no longer be created without evidence of
   // payment. This is what /uploads/payment-proof-signup returns; the
   // registration form uploads the file first and only then submits.
-  proofPath: z.string().min(1, "Please upload your payment proof before submitting").max(500),
+  // Still mandatory for any plan with a price above zero — that's enforced in
+  // the handler below once the plan is loaded (the schema can't know the
+  // plan's price). Free/trial plans (price 0) legitimately have no proof.
+  proofPath: z.string().max(500).optional(),
 });
 
 const YEAR_ORDINAL: Record<number, string> = { 1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th" };
@@ -221,11 +225,19 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     return;
   }
 
+  // A plan priced at zero (e.g. the Trial plan) needs no payment, so it needs
+  // no proof either — and no admin review. Every paid plan still requires proof.
+  const isFreePlan = Number(plan.price) <= 0;
+  if (!isFreePlan && !data.proofPath?.trim()) {
+    res.status(400).json({ error: "Please upload your payment proof before submitting" });
+    return;
+  }
+
   // Optional coupon (plans only — see lib/coupons.ts). Validated before any
   // row is created so a bad code fails the whole signup cleanly, same as
-  // an invalid plan/institution above.
+  // an invalid plan/institution above. Pointless on a free plan, so ignored.
   let couponApplied: CouponApplication | null = null;
-  if (data.couponCode) {
+  if (data.couponCode && !isFreePlan) {
     const result = await validateCoupon(data.couponCode, Number(plan.price));
     if ("error" in result) { res.status(400).json({ error: result.error }); return; }
     couponApplied = result;
@@ -239,7 +251,9 @@ router.post("/auth/register", async (req, res): Promise<void> => {
       email,
       passwordHash,
       role: "student",
-      status: "PAYMENT_PENDING_REVIEW",
+      // Free plans skip the payment queue: access is granted right away, and
+      // login is still gated on verifying the emailed code (emailVerified).
+      status: isFreePlan ? "ACTIVE" : "PAYMENT_PENDING_REVIEW",
       emailVerified: false,
       institutionId: institution.id,
       programId: program.id,
@@ -251,7 +265,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     })
     .returning();
 
-  await db.insert(paymentsTable).values({
+  const [signupPayment] = await db.insert(paymentsTable).values({
     userId: created.id,
     planId: plan.id,
     planName: plan.name,
@@ -259,14 +273,26 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     currency: plan.currency,
     duration: plan.duration,
     durationUnit: plan.durationUnit,
-    method: data.method || "Not specified",
+    method: isFreePlan ? "Free plan" : data.method || "Not specified",
     reference: data.reference || `SIGNUP-${created.id}-${Date.now().toString(36).toUpperCase()}`,
     paymentDate: data.paymentDate || new Date().toISOString().slice(0, 10),
-    proofPath: data.proofPath ?? null,
-    status: "PAYMENT_PENDING_REVIEW",
+    proofPath: isFreePlan ? null : data.proofPath ?? null,
+    // Nothing to review for a free plan, so the row is born approved.
+    status: isFreePlan ? "APPROVED" : "PAYMENT_PENDING_REVIEW",
     couponCode: couponApplied?.coupon.code ?? null,
     discountAmount: couponApplied ? String(couponApplied.discountAmount) : null,
-  });
+  }).returning();
+
+  if (isFreePlan) {
+    // Same expiry maths as POST /payments/:id/approve. Tagged isTrial so the
+    // existing trial rules apply (daily MCQ cap, auto-suspend on expiry).
+    const startsAt = new Date();
+    const expiresAt = new Date(startsAt);
+    if (plan.durationUnit === "years") expiresAt.setFullYear(expiresAt.getFullYear() + plan.duration);
+    else if (plan.durationUnit === "months") expiresAt.setMonth(expiresAt.getMonth() + plan.duration);
+    else expiresAt.setDate(expiresAt.getDate() + plan.duration);
+    await db.insert(membershipsTable).values({ userId: created.id, paymentId: signupPayment.id, planId: plan.id, status: "ACTIVE", startsAt, expiresAt, isTrial: true });
+  }
   if (couponApplied) await markCouponUsed(couponApplied.coupon.id);
 
   const { code, hash } = generateOtp();
@@ -292,9 +318,13 @@ router.post("/auth/register", async (req, res): Promise<void> => {
 
   res.status(201).json({
     user: await userPublicView(created),
-    message: emailSent
-      ? "Account created and payment submitted. Enter the verification code we emailed you — an admin will review your payment shortly and activate your access."
-      : "Account created and payment submitted, but the verification email couldn't be sent. Use \"Resend code\" once you're ready, or contact an admin.",
+    message: isFreePlan
+      ? emailSent
+        ? "Account created. Enter the verification code we emailed you and you can log in right away."
+        : "Account created, but the verification email couldn't be sent. Use \"Resend code\" once you're ready, or contact an admin."
+      : emailSent
+        ? "Account created and payment submitted. Enter the verification code we emailed you — an admin will review your payment shortly and activate your access."
+        : "Account created and payment submitted, but the verification email couldn't be sent. Use \"Resend code\" once you're ready, or contact an admin.",
   });
 });
 

@@ -33,9 +33,6 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { authApi, couponsApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
-import { VisualizationRenderer, isStepBased } from '@/components/visualizer/VisualizationRenderer';
-import { StepControls } from '@/components/visualizer/StepControls';
-import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 
 // Round 3, item 10 (performance) — this was `new QueryClient()` with no
 // options, meaning every query defaulted to `staleTime: 0` and refetched
@@ -81,6 +78,7 @@ function Register() {
   const [errorTick, setErrorTick] = useState(0);
   const [done, setDone] = useState(false);
   const [registeredEmail, setRegisteredEmail] = useState('');
+  const [registeredFree, setRegisteredFree] = useState(false);
 
   const fail = (message: string) => { setError(message); setErrorTick((n) => n + 1); };
 
@@ -129,12 +127,14 @@ function Register() {
     <div className="au-success">
       <div className="au-success__badge"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></div>
       <h1 className="au-title">Almost there</h1>
-      <p className="au-sub">We emailed a 6-digit code to <span className="font-bold text-foreground">{registeredEmail}</span>. Enter it to confirm your email — once our team verifies your payment, your account is activated automatically.</p>
+      <p className="au-sub">We emailed a 6-digit code to <span className="font-bold text-foreground">{registeredEmail}</span>. Enter it to confirm your email — {registeredFree ? 'your account is ready to use right after that.' : 'once our team verifies your payment, your account is activated automatically.'}</p>
       <Link href={`/verify-email?email=${encodeURIComponent(registeredEmail)}`} className="au-btn mt-7" data-testid="link-enter-code">Enter verification code <ArrowRight size={16} className="au-btn__go" /></Link>
     </div>
   </AuthLayout>;
 
   const selectedPlan = (plans.data || []).find((p) => p.id === planId) || null;
+  // A zero-priced plan (e.g. Trial) needs no payment, so no proof and no coupon.
+  const isFreePlan = !!selectedPlan && Number(selectedPlan.price) <= 0;
   const bestValueId = (plans.data || []).length > 1 ? [...(plans.data || [])].sort((a, b) => (a.price / a.duration) - (b.price / b.duration))[0].id : null;
 
   const applyCoupon = async () => {
@@ -182,14 +182,15 @@ function Register() {
       if (step === 1) { goNext(); return; }
       setError(null);
       if (!planId) { fail('Please choose a membership plan.'); return; }
-      if (!proof) { fail('Please upload your payment proof before submitting.'); return; }
+      if (!isFreePlan && !proof) { fail('Please upload your payment proof before submitting.'); return; }
       const f = new FormData(e.currentTarget);
       const email = String(f.get('email')).trim();
       setRegisteredEmail(email);
+      setRegisteredFree(isFreePlan);
       register.mutate({
         name: String(f.get('name')).trim(), email, password: String(f.get('password')),
-        phone: String(f.get('phone')).trim(), institutionId: Number(institutionId), programKind, yearNumber: Number(yearNumber), planId, proofPath: proof.storagePath,
-        couponCode: couponResult?.code,
+        phone: String(f.get('phone')).trim(), institutionId: Number(institutionId), programKind, yearNumber: Number(yearNumber), planId, proofPath: isFreePlan ? undefined : proof?.storagePath,
+        couponCode: isFreePlan ? undefined : couponResult?.code,
       });
     }}>
 
@@ -258,7 +259,7 @@ function Register() {
       {/* ───────── Step 2 — Plan & payment ───────── */}
       <div hidden={step !== 2} className={step === 2 ? 'au-step-in' : undefined}>
         <h1 className="au-title">Choose your plan</h1>
-        <p className="au-sub">Pick a plan, send the payment, and upload your receipt. Our team reviews it and activates your account.</p>
+        <p className="au-sub">Pick a plan. Paid plans need a payment receipt, which our team reviews before activating your account; free plans don't need one.</p>
 
         {recap && <div className="au-recap mt-5">
           <div className="au-recap__avatar" aria-hidden="true">{initials(recap.name)}</div>
@@ -273,24 +274,24 @@ function Register() {
               {plan.id === bestValueId ? <span className="au-plan__badge">Best value</span> : plan.discountLabel ? <span className="au-plan__badge">{plan.discountLabel}</span> : null}
               <span className="au-plan__radio" aria-hidden="true"><Check size={13} strokeWidth={3} /></span>
               <span className="min-w-0"><span className="au-plan__name block">{plan.name}</span><span className="au-plan__meta block">{plan.duration} {plan.durationUnit} access</span></span>
-              <span className="au-plan__price">{plan.originalPrice != null && plan.originalPrice > plan.price && <span className="au-plan__was">{money(plan.originalPrice, plan.currency)}</span>}{money(plan.price, plan.currency)}</span>
+              <span className="au-plan__price">{plan.originalPrice != null && plan.originalPrice > plan.price && <span className="au-plan__was">{money(plan.originalPrice, plan.currency)}</span>}{Number(plan.price) <= 0 ? 'Free' : money(plan.price, plan.currency)}</span>
             </button>)}
             {!plans.data?.length && <p className="au-hint">{plans.isLoading ? 'Loading plans…' : 'No membership plans are available yet — ask an admin to add one.'}</p>}
           </div>
         </div>
 
-        {selectedPlan && <div className="au-coupon mt-4">
+        {selectedPlan && !isFreePlan && <div className="au-coupon mt-4">
           <input value={couponInput} onChange={(e) => { setCouponInput(e.target.value); setCouponResult(null); setCouponError(null); }} placeholder="Coupon code (optional)" aria-label="Coupon code" autoCapitalize="characters" autoCorrect="off" spellCheck={false} className="au-input au-input--plain" data-testid="input-register-coupon" />
           <button type="button" onClick={applyCoupon} disabled={!couponInput.trim() || couponChecking} className="au-btn au-btn--ghost au-btn--sm" data-testid="button-apply-coupon">{couponChecking ? 'Checking…' : 'Apply'}</button>
         </div>}
-        {couponError && <p className="au-hint mt-2 !text-destructive" data-testid="text-coupon-error">{couponError}</p>}
-        {couponResult && <p className="au-hint mt-2 !text-primary" data-testid="text-coupon-applied">Coupon applied — new price {selectedPlan ? money(couponResult.discountedAmount, selectedPlan.currency) : couponResult.discountedAmount}</p>}
+        {!isFreePlan && couponError && <p className="au-hint mt-2 !text-destructive" data-testid="text-coupon-error">{couponError}</p>}
+        {!isFreePlan && couponResult && <p className="au-hint mt-2 !text-primary" data-testid="text-coupon-applied">Coupon applied — new price {selectedPlan ? money(couponResult.discountedAmount, selectedPlan.currency) : couponResult.discountedAmount}</p>}
 
         {programKind && yearNumber && <p className="mt-4 text-[11px] leading-5 text-muted-foreground">You'll see content for <span className="font-bold text-primary">{programKind} · {yearNumber}{ordinal(Number(yearNumber))} Year</span> — set by your college admin.</p>}
 
-        {pd && <div className="mt-5"><PaymentDestinationCard pd={pd} /></div>}
+        {pd && !isFreePlan && <div className="mt-5"><PaymentDestinationCard pd={pd} /></div>}
 
-        <div className="mt-5">
+        {!isFreePlan && <div className="mt-5">
           <div className="au-fieldset-label">Payment proof<small>Required</small></div>
           <label onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }} className={cn('au-drop', dragOver && 'is-over', proof && 'is-done')} data-testid="dropzone-payment-proof">
             <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={(e) => handleFile(e.target.files?.[0])} className="hidden" data-testid="input-payment-proof" />
@@ -300,9 +301,11 @@ function Register() {
                 ? <>{proof.previewUrl ? <img src={proof.previewUrl} alt="Payment proof preview" className="max-h-28 rounded-lg border border-border object-contain" /> : <FileText size={22} className="text-primary" />}<p className="au-drop__title text-primary">{proof.fileName}</p><span className="au-drop__sub">Tap to replace</span></>
                 : <><UploadCloud size={24} className="text-muted-foreground" /><p className="au-drop__title">Drop your payment screenshot here, or tap to browse</p><span className="au-drop__sub">PNG, JPEG, WEBP or PDF</span></>}
           </label>
-        </div>
+        </div>}
 
-        {selectedPlan && <div className="au-ok mt-5"><CheckCircle2 size={15} className="shrink-0" /><span>Paying {money(couponResult ? couponResult.discountedAmount : selectedPlan.price, selectedPlan.currency)} for {selectedPlan.name} — your order goes to the admin for approval.</span></div>}
+        {selectedPlan && isFreePlan && <div className="au-ok mt-5" data-testid="text-free-plan-note"><CheckCircle2 size={15} className="shrink-0" /><span>{selectedPlan.name} is free — no payment needed. Create your account and verify your email to start right away.</span></div>}
+
+        {selectedPlan && !isFreePlan && <div className="au-ok mt-5"><CheckCircle2 size={15} className="shrink-0" /><span>Paying {money(couponResult ? couponResult.discountedAmount : selectedPlan.price, selectedPlan.currency)} for {selectedPlan.name} — your order goes to the admin for approval.</span></div>}
 
         {step === 2 && errorBlock}
         <div className="au-row mt-5">

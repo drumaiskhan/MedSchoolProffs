@@ -153,8 +153,9 @@ export function TopicBadge({ label }: { label: string }) {
 }
 
 export const AI_VISUALIZER_EXAMPLES = [
-  'Create an interactive step-by-step visualization of skeletal muscle contraction, from action potential through calcium release, cross-bridge cycling, and relaxation.',
-  'Show me how preload affects stroke volume via the Frank-Starling mechanism.',
-  'Explain cardiac output with an interactive HR and SV control.',
-  'Compare Type 1 and Type 2 diabetes mellitus.',
+  'Skeletal muscle contraction: action potential, calcium release from the sarcoplasmic reticulum, cross-bridge cycling and relaxation.',
+  'The cardiac cycle: atria, ventricles, valves and great vessels with the direction of blood flow.',
+  'Cardiac output = heart rate x stroke volume, with the structures involved.',
+  'Compare Type 1 and Type 2 diabetes mellitus: onset, mechanism, key features and treatment.',
+  'Nephron: filtration, reabsorption and secretion along each segment.',
 ];
