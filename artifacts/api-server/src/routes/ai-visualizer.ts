@@ -16,7 +16,7 @@ const router: IRouter = Router();
 
 // `mode`: "auto" picks a solid anatomy model for structures ("tibia", "draw the heart")
 // and the node/flow scene for processes and comparisons; the student can force either.
-const VisualizerBody = z.object({ prompt: z.string().min(3).max(500), mode: z.enum(["auto", "model", "scene"]).optional() });
+const VisualizerBody = z.object({ prompt: z.string().min(3).max(500), mode: z.enum(["auto", "model", "scene", "widget"]).optional() });
 
 router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer"), async (req, res): Promise<void> => {
   // Defense in depth: the student sidebar already hides this page when

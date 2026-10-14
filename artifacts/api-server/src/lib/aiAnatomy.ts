@@ -19,6 +19,7 @@
 
 import { z } from "zod";
 import { runPrompt } from "./aiExplain";
+import { generateWidget, type WidgetSpecT } from "./aiWidget";
 import { generateVisualization, InvalidVisualizationError, type VisualizationSpecT } from "./aiVisualizer";
 import { findCuratedModel, TIBIA_MODEL } from "./anatomyLibrary";
 
@@ -66,7 +67,7 @@ export const ModelSpec = z.object({
   parts: z.array(ModelPart).min(1).max(30),
 });
 export type ModelSpecT = z.infer<typeof ModelSpec>;
-export type AnyVisualizationT = VisualizationSpecT | ModelSpecT;
+export type AnyVisualizationT = VisualizationSpecT | ModelSpecT | WidgetSpecT;
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -253,15 +254,18 @@ export async function generateModel(userPrompt: string): Promise<ModelSpecT> {
 // Routing
 // ---------------------------------------------------------------------------
 
-export type VisualizerMode = "auto" | "model" | "scene";
+export type VisualizerMode = "auto" | "model" | "scene" | "widget";
 
 const PROCESS_RE = /\b(cycle|mechanism|pathway|process|pathophysiolog\w*|sequence|steps?|compare|comparison|versus|vs\.?|differences?|regulation|cascade|formula|equation|calculat\w*|cardiac output|action potential|contraction|filtration|reabsorption|secretion|synthesis|metabolism|feedback|reflex|conduction|transmission|clotting|coagulation|inflammation|flow of|how does|how do)\b/i;
 const ANATOMY_RE = /\b(anatom\w*|bones?|tibia|fibula|femur|humerus|radius|ulna|skull|cranium|mandible|vertebra\w*|spine|scapula|clavicle|pelvi\w*|ribs?|ribcage|sternum|patella|talus|calcaneus|carpal|tarsal|heart|lungs?|liver|kidneys?|brain|cerebell\w*|stomach|intestine|colon|bladder|uterus|ovary|spleen|pancreas|thyroid|eyeball|eye|ear|larynx|trachea|bronch\w*|tooth|teeth|molar|muscle|joint|knee|shoulder|hip|ankle|elbow|wrist|hand|foot|aorta|artery|arteries|vein|veins|nerve|labell?ed|parts of|structure of|model of|draw|diagram of)\b/i;
 const FORCE_MODEL_RE = /\b(labell?ed|label the|draw|model of|parts of|anatomy of|real|realistic|3d model)\b/i;
 
-export function pickMode(prompt: string, mode: VisualizerMode = "auto"): "model" | "scene" {
+export function pickMode(prompt: string, mode: VisualizerMode = "auto"): "model" | "scene" | "widget" {
+  // v69: flat interactive 2D widgets are the default for everything. The 3D
+  // model / scene generators remain reachable only by explicitly forcing them.
   if (mode === "model") return "model";
   if (mode === "scene") return "scene";
+  if (mode === "widget" || mode === "auto") return "widget";
   const process = PROCESS_RE.test(prompt);
   const anatomy = ANATOMY_RE.test(prompt);
   if (anatomy && (!process || FORCE_MODEL_RE.test(prompt))) return "model";
@@ -270,6 +274,7 @@ export function pickMode(prompt: string, mode: VisualizerMode = "auto"): "model"
 
 export async function generateAny(userPrompt: string, mode: VisualizerMode = "auto"): Promise<AnyVisualizationT> {
   const chosen = pickMode(userPrompt, mode);
+  if (chosen === "widget") return generateWidget(userPrompt);
   if (chosen === "model") {
     const curated = findCuratedModel(userPrompt);
     if (curated) return ModelSpec.parse(curated);

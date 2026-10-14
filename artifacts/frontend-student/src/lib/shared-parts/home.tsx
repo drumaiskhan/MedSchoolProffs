@@ -153,11 +153,11 @@ export function TopicBadge({ label }: { label: string }) {
 }
 
 export const AI_VISUALIZER_EXAMPLES = [
-  'Tibia with all its parts labelled: condyles, tuberosity, borders, malleolus and articular surfaces.',
-  'Draw the heart as a solid model: four chambers, valves and the great vessels, all labelled.',
-  'Skeletal muscle contraction: action potential, calcium release from the sarcoplasmic reticulum, cross-bridge cycling and relaxation.',
-  'The cardiac cycle: atria, ventricles, valves and great vessels with the direction of blood flow.',
-  'Cardiac output = heart rate x stroke volume, with the structures involved.',
+  'Body fluid compartments: change body weight and sex to see ICF, ECF, interstitial fluid and plasma volumes.',
+  'Cardiac output = heart rate x stroke volume, with a heart diagram showing blood flow.',
+  'Oxygen-haemoglobin dissociation curve: shift it with pH, temperature, CO2 and 2,3-BPG.',
+  'Starling forces in a capillary: change hydrostatic and oncotic pressure to see filtration vs reabsorption.',
+  'Nephron: how GFR changes with afferent and efferent arteriolar resistance.',
+  'Action potential in a neuron: change Na+ and K+ conductance and watch the voltage trace.',
   'Compare Type 1 and Type 2 diabetes mellitus: onset, mechanism, key features and treatment.',
-  'Nephron: filtration, reabsorption and secretion along each segment.',
 ];

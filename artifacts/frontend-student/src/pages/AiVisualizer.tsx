@@ -12,17 +12,18 @@ import { AI_VISUALIZER_EXAMPLES, BrandSpinner, EmptyState, SectionHeader, Skelet
 
 const VisualizerStage = lazy(() => import('@/components/visualizer/VisualizerStage'));
 const ModelStage = lazy(() => import('@/components/visualizer/ModelStage'));
+const WidgetStage = lazy(() => import('@/components/visualizer/WidgetStage'));
 
 const MODES: Array<{ id: VisualizerMode; label: string; hint: string }> = [
-  { id: 'auto', label: 'Auto', hint: 'Picks the best format for your request' },
-  { id: 'model', label: 'Anatomy model', hint: 'A solid, labelled 3D model of a structure' },
-  { id: 'scene', label: 'Process diagram', hint: 'A flow / comparison as linked 3D nodes' },
+  { id: 'widget', label: 'Interactive (2D)', hint: 'A flat interactive diagram with sliders and live values' },
+  { id: 'model', label: '3D anatomy model', hint: 'A solid, labelled 3D model of a structure' },
+  { id: 'scene', label: '3D process graph', hint: 'A flow / comparison as linked 3D nodes' },
 ];
 
 function AiVisualizer() {
   const [prompt, setPrompt] = useState('');
   const [spec, setSpec] = useState<AnyVisualization | null>(null);
-  const [mode, setMode] = useState<VisualizerMode>('auto');
+  const [mode, setMode] = useState<VisualizerMode>('widget');
   const [version, setVersion] = useState(0);
 
   // Same AI_VISUALIZER_ENABLED check SideNav uses — this covers someone
@@ -51,12 +52,12 @@ function AiVisualizer() {
   // ---- before the first result: prompt screen ----
   if (!spec) {
     return <div className="mx-auto max-w-3xl">
-      <SectionHeader eyebrow="Study tools" title="AI Visualizer" description="Ask for a structure (a bone, an organ, a vessel tree) to get a solid, labelled 3D model you can rotate — or describe a process, pathway or comparison to explore it as an interactive 3D scene." />
+      <SectionHeader eyebrow="Study tools" title="AI Visualizer" description="Describe any concept to get an interactive 2D diagram with sliders and live values. Try a process, a physiological relationship or a calculation — e.g. cardiac output, body fluid compartments, the oxygen–haemoglobin curve." />
       <div className="rounded-2xl border border-border bg-card p-5">
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. Tibia with all its parts labelled — or: Skeletal muscle contraction from action potential to relaxation…"
+          placeholder="e.g. Cardiac output = heart rate × stroke volume — or: Body fluid compartments by body weight…"
           className="min-h-32 w-full resize-none rounded-xl border border-border bg-background p-3 text-xs leading-6 outline-none focus:ring-2 focus:ring-primary/20"
           data-testid="textarea-visualizer-prompt"
         />
@@ -79,7 +80,7 @@ function AiVisualizer() {
           data-testid="button-generate-visualization"
         >
           {generate.isPending ? <BrandSpinner size={14} /> : <Wand2 size={14} />}
-          {generate.isPending ? (mode === 'model' ? 'Building your 3D model…' : 'Building your 3D visualization…') : 'Generate 3D Visualization'}
+          {generate.isPending ? (mode === 'model' ? 'Building your 3D model…' : 'Building your interactive visualization…') : 'Generate Visualization'}
         </button>
         {generate.isPending && <div className="mt-5"><SkeletonPage /></div>}
         {errorBlock}
@@ -112,7 +113,7 @@ function AiVisualizer() {
     {errorBlock}
     <div className={generate.isPending ? 'pointer-events-none opacity-60 transition-opacity' : 'transition-opacity'}>
       <Suspense fallback={<div className="grid h-[420px] place-items-center rounded-2xl border border-border bg-card"><BrandSpinner size={22} /></div>}>
-        {spec.type === 'model' ? <ModelStage key={version} spec={spec} /> : <VisualizerStage key={version} spec={spec} />}
+        {spec.type === 'widget' ? <WidgetStage key={version} spec={spec} /> : spec.type === 'model' ? <ModelStage key={version} spec={spec} /> : <VisualizerStage key={version} spec={spec} />}
       </Suspense>
     </div>
   </div>;

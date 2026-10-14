@@ -1246,6 +1246,25 @@ export async function generateFlashcardSet(request: FlashcardGenerationRequest):
   return parseFlashcardJson(raw);
 }
 
+/** Uniformly shuffles a generated MCQ's options (Fisher-Yates), keeping
+ * optionExplanations index-aligned. LLMs overwhelmingly put the correct answer
+ * first, so without this nearly every generated question's answer is "A".
+ * Deliberately a true uniform shuffle (unlike shuffleMcqOptions, which forces a
+ * non-identity order) so the correct answer is equally likely in every slot.
+ * correctAnswer is stored as option text, so it needs no change. */
+function randomizeGeneratedMcqOptions(m: GeneratedMcq): void {
+  const n = m.options.length;
+  if (n < 2) return;
+  const order = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const hasExpl = m.optionExplanations.length === n;
+  m.options = order.map((i) => m.options[i]);
+  if (hasExpl) m.optionExplanations = order.map((i) => m.optionExplanations[i]);
+}
+
 /** Generates draft MCQs strictly scoped to the given topic — see
  * buildMcqGenerationPrompt for the anti-drift prompt design. Callers should
  * treat these as editable drafts for admin review, not auto-publish. */
@@ -1255,7 +1274,9 @@ export async function generateMcqSet(request: McqGenerationRequest): Promise<Gen
   // Cheap post-hoc relevance guard: if the model still ignored the topic
   // instruction, at least surface fewer, better results rather than a full
   // batch of noise — cap to what actually parsed cleanly.
-  return parsed.slice(0, request.count);
+  const result = parsed.slice(0, request.count);
+  result.forEach(randomizeGeneratedMcqOptions);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -1305,5 +1326,7 @@ export async function generateStudentMcqs(request: StudentMcqRequest): Promise<G
     if (m.optionExplanations.length === m.options.length) return;
     m.optionExplanations = await generateOptionExplanations({ question: m.question, options: m.options, correctAnswer: m.correctAnswer });
   }));
+  // Shuffle last, after explanations are aligned, so the answer isn't always "A".
+  parsed.forEach(randomizeGeneratedMcqOptions);
   return parsed;
 }

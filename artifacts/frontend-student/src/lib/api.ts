@@ -773,8 +773,10 @@ export type ModelPart = {
   bump?: number; opacity?: number; anchor?: ModelV3; hideLabel?: boolean;
 };
 export type ModelSpec = { type: 'model'; title: string; description: string; parts: ModelPart[] };
-export type AnyVisualization = VisualizationSpec | ModelSpec;
-export type VisualizerMode = 'auto' | 'model' | 'scene';
+// v69: flat interactive 2D widget (sandboxed HTML/SVG/JS written by the AI) — the default.
+export type WidgetSpec = { type: 'widget'; title: string; description: string; html: string };
+export type AnyVisualization = VisualizationSpec | ModelSpec | WidgetSpec;
+export type VisualizerMode = 'auto' | 'model' | 'scene' | 'widget';
 
 // ---------------------------------------------------------------------------
 // Challenge a friend — search for another student and race them on the
