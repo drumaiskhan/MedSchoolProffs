@@ -1,3 +1,13 @@
+## v60 — AI Visualizer rebuilt as one interactive 3D screen + free-plan signup merged
+- **AI Visualizer is now a single-screen 3D scene (three.js).** No steps, no pages: every structure is a 3D object visible at once. Orbit / pan / pinch-zoom; hover or click any part to highlight it and everything connected; double-click to fly to it; drag a part to move it; click a group in the legend to isolate it; toolbar for layout (Auto / Ring / Layers / Sequence), auto-rotate, flow particles, labels, reset view, save PNG, full screen. Side panel (bottom sheet on phones) has Parts / Details / Calculate tabs. "Explain deeper" (AI) on any selected part.
+- **Labels no longer intermix.** Labels are HTML chips positioned every frame by a collision pass (tries 10 slots around each node, never covers another node or label, hides low-priority labels when crowded; selected/hovered always shown). Layout engine (`layout3d.ts`) guarantees no overlapping nodes. Label text is capped at 32 chars server-side; detail lives in the panel.
+- Sequences are shown as numbered link badges (link `order`) + a "Sequence" list instead of steps. Equation/graph/timeline/comparison requests are expressed as nodes+groups, with an optional slider **calculator** in the same screen.
+- Backend: `lib/aiVisualizer.ts` now emits one `scene` spec (nodes, links, optional calculator) with a normaliser (shape aliases, dedupe ids, drop dangling links, clamp). Route + log table unchanged (`visualizationType` is now `scene`).
+- Frontend: new `components/visualizer/{Scene3D,VisualizerStage,Calculator,layout3d,visualizer3d.css}`; old step renderers/controls removed (and their unused imports stripped from 22 pages). `three` is lazy-loaded in its own chunk. Falls back to a plain list if WebGL is unavailable.
+- **New deps:** `three`, `@types/three` in `frontend-student`. Run `pnpm install` once and commit the updated `pnpm-lock.yaml` (workflows that use `--frozen-lockfile`: android-apk.yml, mobile-ota.yml).
+- **Free plan signup merged** (from free-plan-signup): zero-priced plans skip payment proof/coupon/admin review, create an ACTIVE trial membership immediately (email verification still required). Files: `api-server/src/routes/auth.ts`, `frontend-student/src/pages/Register.tsx`.
+- NOTE: written without node_modules/network — run `pnpm install && pnpm run typecheck && pnpm run build:student` first.
+
 ## v58 — OSPE/OSCE stations & learning material can sit under a Block (no Module needed)
 - New nullable `block_id` on `med_ospe_stations` and `med_ospe_learning_materials` (added by `ensureSchema.ts` on boot; also in `schema/medschool.ts`). API accepts/saves `blockId` on create + update.
 - Admin station and learning-material forms: a **Block** dropdown plus an optional **Module** dropdown (`BlockModulePicker`). Picking a module fills its block; changing the block clears a module from a different block. Rows show "Block › Module".
@@ -1050,3 +1060,9 @@ No backend / schema / route changes.
 - Not included: practice-session accuracy per student (no admin endpoint exposes it).
 - Student: `components/study/ReviewTabs.tsx` links Flagged · Notes · Saved · Mistakes with live counts, shown on all three pages. Flagged MCQs gets All/Open/Resolved filter, search, and "Practice flagged" (`/practice?set=flagged&count=20`, built in lib/study.ts from existing GET /mcqs?mcqId=). `/study?tab=mistakes` opens the Mistakes tab.
 - Not run: typecheck / build / browser (esbuild syntax check only).
+
+## v61 - Payment proof upload fix + plan duration unit
+- Student `uploadFile()` now shrinks phone screenshots/photos (max 1600px JPEG) before upload, retries once on a network-level failure, has a 90s timeout, and shows a real "could not reach server" message instead of the misleading "try a smaller image" text.
+- API: Cloudinary upload stream has a 60s timeout so a stalled upload fails fast with a JSON error.
+- Admin membership plans: duration now has a Days / Months / Years selector (previously hard-coded to months, which also reset a plan's unit on every edit). Expiry maths on the API already supported days.
+- Uploads: payment proof / profile picture size limit raised from 10MB to 30MB (resources/books stay at 50MB). Images are still shrunk in the browser before sending.

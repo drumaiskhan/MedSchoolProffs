@@ -540,14 +540,67 @@ export const auditApi = {
   list: (limit = 100) => request<AuditLogEntry[]>(`/admin/audit-logs?limit=${limit}`),
 };
 
+// Phone screenshots/photos are routinely 3-8 MB. Some hosting proxies drop
+// or time out big multipart bodies *without* CORS headers, which the browser
+// reports as a bare network error ("Failed to fetch") rather than a real
+// HTTP response. So images are shrunk in the browser first (payment
+// screenshots stay perfectly readable at 1600px) and the request is retried
+// once on a network-level failure.
+const COMPRESSIBLE_KINDS = new Set(['payment-proof', 'payment-proof-signup', 'profile-picture']);
+
+async function shrinkImage(file: File, maxEdge = 1600, quality = 0.82): Promise<File> {
+  if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    // Already small enough in both pixels and bytes - leave it untouched.
+    if (scale === 1 && file.size <= 700 * 1024) { bitmap.close?.(); return file; }
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { bitmap.close?.(); return file; }
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch {
+    return file; // unsupported format / decode failure - upload the original
+  }
+}
+
 export async function uploadFile(file: File, kind: 'payment-proof' | 'payment-proof-signup' | 'profile-picture' | 'resource' | 'favicon'): Promise<{ storagePath: string; url: string | null }> {
-  const form = new FormData();
-  form.append('file', file);
+  const toSend = COMPRESSIBLE_KINDS.has(kind) ? await shrinkImage(file) : file;
   const { credentials, authHeaders } = await authInit();
-  const res = await fetch(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials, headers: authHeaders, body: form });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Upload failed', data);
-  return data;
+
+  let lastNetworkError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const form = new FormData();
+    form.append('file', toSend);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
+    let res: Response;
+    try {
+      res = await fetch(`${API_ORIGIN}/api/uploads/${kind}`, { method: 'POST', credentials, headers: authHeaders, body: form, signal: controller.signal });
+    } catch (err) {
+      lastNetworkError = err;
+      continue; // network drop / proxy timeout - retry once
+    } finally {
+      clearTimeout(timer);
+    }
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (data && data.error)
+        || (res.status === 413 ? 'That file is too large for the server.' : res.status >= 502 ? 'The server is busy right now. Please try again in a moment.' : 'Upload failed');
+      throw new ApiRequestError(res.status, msg, data);
+    }
+    return data;
+  }
+  console.error('Upload network failure:', lastNetworkError);
+  throw new ApiRequestError(0, 'Could not reach the server. Check your connection and try again.', null);
 }
 
 export const publicApi = {

@@ -8,7 +8,7 @@ const router: IRouter = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB — payment proofs/profile pictures
+  limits: { fileSize: 30 * 1024 * 1024 }, // 30MB — payment proofs/profile pictures
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
     if (!allowed.includes(file.mimetype)) {
@@ -20,7 +20,7 @@ const upload = multer({
 });
 
 // Books and resources now route to Cloudinary (see lib/storage.ts), which
-// comfortably handles larger files than the 10MB cap above — raised here so
+// comfortably handles larger files than the 30MB cap above — raised here so
 // a genuinely large textbook PDF isn't rejected at the multer layer before
 // it even reaches uploadFile()'s own size-based routing check.
 const uploadLarge = multer({

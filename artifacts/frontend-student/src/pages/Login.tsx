@@ -219,13 +219,7 @@ import {
   LeaderboardRow,
 } from '@/lib/api';
 
-import {
-  VisualizationRenderer,
-  isStepBased,
-} from '@/components/visualizer/VisualizationRenderer';
 
-import { StepControls } from '@/components/visualizer/StepControls';
-import { ExplanationPanel } from '@/components/visualizer/ExplanationPanel';
 
 import { AuthLayout, AuthField, AuthPassword, BrandSpinner } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
