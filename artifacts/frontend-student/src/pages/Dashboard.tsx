@@ -8,9 +8,12 @@
 //                                    exact topic to carry on with)
 //   * membership                  -> /student/dashboard + the site-content trial
 //   * chart                       -> /student/progress `daily` (7 local days)
+//   * focus areas                 -> /student/progress-overview `needsWork` + this
+//                                    device's open-mistake ledger (lib/study.ts)
+// Each data section fails on its own (inline retry) instead of showing zeros.
 // The 3D look is layered shadows/gradients/2D motion only — see index.css v39
 // and the v34 note about real 3D transforms.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'wouter';
 import { ArrowRight, Sparkles, ShieldCheck, Crown } from 'lucide-react';
@@ -20,9 +23,10 @@ import { SegTabs, useCurrentHour } from '@/lib/fx3d';
 import { ErrorState, OPEN_SEARCH_EVENT, OPEN_SEARCH_HREF, PROGRESS_ANCHOR_HREF, QUICK_LINK_TILES, SectionHeader, SkeletonPage, useNavLocks } from '@/lib/shared';
 import { DashHero } from '@/components/dashboard/DashHero';
 import {
-  ActivityFeed, MembershipCard, ProgressCard, QuickTiles, RANGE_OPTIONS, RangeTiles, ResumeCard, UpNext, WeekPulse,
+  ActivityFeed, FocusAreas, MembershipCard, ProgressCard, QuickTiles, RANGE_OPTIONS, RangeTiles, ResumeCard, SectionError, UpNext, WeekPulse,
   membershipView, resumeAction, type QuickTile,
 } from '@/components/dashboard/DashCards';
+import { openMistakes } from '@/lib/study';
 import { HERO_RANGE, heroMessage, localDayKey, weekDays, type AnalyticsRange } from '@/components/dashboard/dash-utils';
 
 const SITE_CONTENT_STALE_MS = 5 * 60 * 1000;
@@ -47,6 +51,10 @@ function Dashboard() {
   const trend = useQuery({ queryKey: ['progress-trend'], queryFn: analyticsApi.progress });
   const streak = useQuery({ queryKey: ['streak-card'], queryFn: () => analyticsApi.streak(), retry: false });
   const cont = useQuery({ queryKey: ['continue-learning'], queryFn: analyticsApi.continueLearning });
+  // Same ['progress-overview'] query the Progress / Study pages use — shared cache, no extra request when warm.
+  const focus = useQuery({ queryKey: ['progress-overview'], queryFn: analyticsApi.overview, staleTime: 30_000 });
+  // Mistake ledger lives in localStorage on this device; read once per mount.
+  const mistakeCount = useMemo(() => openMistakes().length, []);
   const isLocked = useNavLocks(d?.user);
 
   if (q.isLoading) return <SkeletonPage />;
@@ -111,7 +119,7 @@ function Dashboard() {
 
     <section className="dash-section">
       <SectionHeader eyebrow="Pick up where you left off" title="Continue learning" action={<Link href="/blocks" className="dash-link" data-testid="link-all-modules">View all <ArrowRight size={13} /></Link>} />
-      <ResumeCard resume={resume} starter={starter} loading={cont.isLoading} />
+      {cont.isError && !cont.data ? <SectionError onRetry={() => cont.refetch()} label="We couldn't load your next step." /> : <ResumeCard resume={resume} starter={starter} loading={cont.isLoading} />}
     </section>
 
     <section className="dash-section">
@@ -122,12 +130,16 @@ function Dashboard() {
     <div className="dash-row-2">
       <section className="dash-section">
         <SectionHeader eyebrow="Where you stand" title="Progress profile" action={<Link href="/progress" className="dash-link" data-testid="link-full-progress">Full progress <ArrowRight size={13} /></Link>} />
-        <WeekPulse trend={trend.data} loading={trend.isLoading} openPracticeHref={action.href} />
+        {trend.isError && !trend.data ? <SectionError onRetry={() => trend.refetch()} /> : <WeekPulse trend={trend.data} loading={trend.isLoading} openPracticeHref={action.href} />}
       </section>
       <div className="dash-stack">
+        <section className="dash-section" data-testid="section-focus-areas">
+          <SectionHeader eyebrow="Make it count" title="Focus areas" action={<Link href="/study" className="dash-link" data-testid="link-study-plan">Study plan <ArrowRight size={13} /></Link>} />
+          <FocusAreas topics={focus.data?.improvement.needsWork ?? []} mistakeCount={mistakeCount} loading={focus.isLoading} failed={focus.isError && !focus.data} onRetry={() => focus.refetch()} />
+        </section>
         <section className="dash-section">
           <SectionHeader eyebrow="Fresh territory" title="Recommended for you" />
-          <UpNext modules={resume ? upNext : upNext.slice(1)} loading={cont.isLoading} />
+          {cont.isError && !cont.data ? <SectionError onRetry={() => cont.refetch()} /> : <UpNext modules={resume ? upNext : upNext.slice(1)} loading={cont.isLoading} />}
         </section>
         <MembershipCard view={membership} />
       </div>
@@ -135,8 +147,8 @@ function Dashboard() {
 
     <div className="dash-row-2">
       <section className="dash-section">
-        <SectionHeader eyebrow="Track your pace" title="Analytics dashboard" action={<SegTabs<AnalyticsRange> options={RANGE_OPTIONS} value={range} onChange={setRange} ariaLabel="Analytics range" className="dash-range-tabs" />} />
-        <RangeTiles analytics={rangeStats.data} loading={rangeStats.isLoading} />
+        <SectionHeader eyebrow="Track your pace" title="Study analytics" action={<SegTabs<AnalyticsRange> options={RANGE_OPTIONS} value={range} onChange={setRange} ariaLabel="Analytics range" className="dash-range-tabs" />} />
+        {rangeStats.isError && !rangeStats.data ? <SectionError onRetry={() => rangeStats.refetch()} /> : <RangeTiles analytics={rangeStats.data} loading={rangeStats.isLoading} />}
       </section>
       <section className="dash-section">
         <SectionHeader eyebrow="In the loop" title="Recent activity" action={<Link href="/notifications" className="dash-link" data-testid="link-all-notifications">See all</Link>} />

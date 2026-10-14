@@ -443,6 +443,14 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
+  // Bug fix: a soft-deleted student (DELETE /students/:id sets status
+  // DELETED) could still sign in — nothing here checked for it. Same generic
+  // message as a wrong password so a deleted account's existence isn't leaked.
+  if (user.status === "DELETED") {
+    res.status(401).json({ error: "Invalid email or password" });
+    return;
+  }
+
   if (user.status === "SUSPENDED") {
     res.status(403).json({ error: "This account has been suspended. Contact support for help." });
     return;

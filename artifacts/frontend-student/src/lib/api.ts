@@ -200,6 +200,8 @@ export interface SiteContent {
   SOCIAL_FACEBOOK: string; SOCIAL_YOUTUBE: string; SOCIAL_LINKEDIN: string; SOCIAL_INSTAGRAM: string;
   CONTACT_EMAIL: string; CONTACT_LOCATION: string; SUPPORT_HOURS: string; COPYRIGHT_NOTICE: string; SUPPORT_WHATSAPP: string;
   AI_VISUALIZER_ENABLED: string;
+  /** "false" = AI MCQ Maker hidden/blocked; anything else = on. */
+  AI_MCQ_MAKER_ENABLED?: string;
   // Controls the "Ask AI to explain differently" button on Practice.tsx
   // (MCQs, incl. past papers, which practice through the same screen) and
   // Flashcards.tsx. "false" = hidden; anything else = shown. Same
@@ -713,14 +715,14 @@ export interface ProgressTopic { id: number; name: string; subject: string | nul
 
 export const analyticsApi = {
   overview: () => request<ProgressOverview>('/student/progress-overview'),
-  get: (range: string) => request<Analytics>(`/student/analytics?range=${range}`),
+  get: (range: string) => request<Analytics>(`/student/analytics?range=${range}&tz=${new Date().getTimezoneOffset()}`),
   // `tz` = the browser's own UTC offset so the server can bucket sessions into the student's LOCAL days.
   progress: () => request<ProgressTrend>(`/student/progress?tz=${new Date().getTimezoneOffset()}`),
   continueLearning: () => request<ContinueLearning>('/student/continue-learning'),
   leaderboard: (range = '30d') => request<LeaderboardRow[]>(`/leaderboard?range=${range}`),
-  streak: () => request<StreakCard>('/leaderboard/streak'),
+  streak: () => request<StreakCard>(`/leaderboard/streak?tz=${new Date().getTimezoneOffset()}`),
   submitSession: (body: { moduleId?: number; subjectId?: number; topicId?: number; mode?: 'timed' | 'untimed'; durationSeconds?: number; answers: { mcqId: number; selectedAnswer: string | null }[] }) =>
-    request<{ id: number; scorePercent: number; correctCount: number; totalQuestions: number }>('/practice-sessions', { method: 'POST', body: JSON.stringify(body) }),
+    request<{ id: number; scorePercent: number; correctCount: number; totalQuestions: number }>('/practice-sessions', { method: 'POST', body: JSON.stringify({ ...body, tz: new Date().getTimezoneOffset() }) }),
   practiceOverview: () => request<{ totalTopics: number; totalQuestions: number; avgQuestions: number; avgDurationMinutes: number; moduleCount: number }>('/student/practice-overview'),
   // Trial-only students are capped at TRIAL_DAILY_MCQ_LIMIT MCQs/day (admin
   // setting, Settings → Access & trial). `limited: false` for a paying
@@ -754,6 +756,26 @@ export type VisualizationSpec = {
   nodes: SceneNode[]; links: SceneLink[]; calculator?: SceneCalculator;
 };
 
+// AI Visualizer anatomy mode (v61): a SOLID, static 3D model assembled from
+// parametric parts (bones, organs, vessels...). Mirrors ModelSpec in
+// api-server/src/lib/aiAnatomy.ts. +Y = superior, +Z = anterior (toward the
+// viewer), +X = the model's left. Units are arbitrary; ~100 across the longest axis.
+export type ModelV3 = [number, number, number];
+export type ModelForm = 'lathe' | 'tube' | 'ellipsoid' | 'sphere' | 'box' | 'cylinder' | 'cone' | 'torus' | 'capsule';
+export type ModelFinish = 'bone' | 'soft' | 'glossy' | 'matte';
+export type ModelPart = {
+  id: string; label: string; form: ModelForm; group?: string; color?: string; finish?: ModelFinish;
+  description: string; facts?: string[];
+  position?: ModelV3; rotation?: ModelV3; scale?: ModelV3; size?: ModelV3;
+  profile?: Array<[number, number]>; caps?: 'round' | 'flat';
+  path?: ModelV3[]; radii?: number[];
+  lobes?: number; lobeAmount?: number; lobePhase?: number; twist?: number;
+  bump?: number; opacity?: number; anchor?: ModelV3; hideLabel?: boolean;
+};
+export type ModelSpec = { type: 'model'; title: string; description: string; parts: ModelPart[] };
+export type AnyVisualization = VisualizationSpec | ModelSpec;
+export type VisualizerMode = 'auto' | 'model' | 'scene';
+
 // ---------------------------------------------------------------------------
 // Challenge a friend — search for another student and race them on the
 // same set of MCQs.
@@ -785,9 +807,20 @@ export const challengesApi = {
 };
 
 export const aiVisualizerApi = {
-  generate: (prompt: string) => request<{ visualization: VisualizationSpec }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt }) }),
+  generate: (prompt: string, mode: VisualizerMode = 'auto') => request<{ visualization: AnyVisualization }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) }),
   explainStep: (overallTitle: string, stepTitle: string, stepDescription: string) =>
     request<{ explanation: string }>('/ai/visualizer/explain-step', { method: 'POST', body: JSON.stringify({ overallTitle, stepTitle, stepDescription }) }),
+};
+
+export type AiMcqDifficulty = 'easy' | 'moderate' | 'hard' | 'mixed';
+export interface AiMcq { question: string; options: string[]; correctAnswer: string; explanation: string; optionExplanations: string[]; difficulty: string }
+/** Student AI MCQ Maker — the page requests small batches (<= 5) and stitches up to 25 together. */
+export const aiMcqMakerApi = {
+  generate: (body: { prompt: string; difficulty: AiMcqDifficulty; count: number; avoid?: string[] }) =>
+    request<{ questions: AiMcq[] }>('/ai/mcq-maker', { method: 'POST', body: JSON.stringify(body) }),
+  /** Saves a finished set as a practice session so it counts toward stats, streak and leaderboard. */
+  saveSession: (body: { answered: number; correct: number; durationSeconds?: number }) =>
+    request<{ id: number; scorePercent: number; correctCount: number; totalQuestions: number }>('/ai/mcq-maker/session', { method: 'POST', body: JSON.stringify({ ...body, tz: new Date().getTimezoneOffset() }) }),
 };
 
 /** Header search palette. */

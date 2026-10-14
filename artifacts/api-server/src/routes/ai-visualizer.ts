@@ -4,7 +4,8 @@ import { z } from "zod";
 import { db, aiVisualizerLogsTable, usersTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor, requireAdmin } from "../middlewares/auth";
 import { checkRateLimit } from "../lib/rateLimit";
-import { generateVisualization, explainStep, AiNotConfiguredError, InvalidVisualizationError } from "../lib/aiVisualizer";
+import { explainStep, AiNotConfiguredError, InvalidVisualizationError } from "../lib/aiVisualizer";
+import { generateAny } from "../lib/aiAnatomy";
 import { getAllSettings } from "../lib/settings";
 
 const router: IRouter = Router();
@@ -13,7 +14,9 @@ const router: IRouter = Router();
 // Student: generate a visualization
 // ---------------------------------------------------------------------------
 
-const VisualizerBody = z.object({ prompt: z.string().min(3).max(500) });
+// `mode`: "auto" picks a solid anatomy model for structures ("tibia", "draw the heart")
+// and the node/flow scene for processes and comparisons; the student can force either.
+const VisualizerBody = z.object({ prompt: z.string().min(3).max(500), mode: z.enum(["auto", "model", "scene"]).optional() });
 
 router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer"), async (req, res): Promise<void> => {
   // Defense in depth: the student sidebar already hides this page when
@@ -29,7 +32,7 @@ router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer")
   if (!limit.allowed) { res.status(429).json({ error: "You're generating visualizations too quickly. Try again in a minute." }); return; }
 
   try {
-    const visualization = await generateVisualization(parsed.data.prompt);
+    const visualization = await generateAny(parsed.data.prompt, parsed.data.mode ?? "auto");
     await db.insert(aiVisualizerLogsTable).values({ userId: req.user!.id, prompt: parsed.data.prompt, status: "success", visualizationType: visualization.type });
     res.json({ visualization });
   } catch (err) {

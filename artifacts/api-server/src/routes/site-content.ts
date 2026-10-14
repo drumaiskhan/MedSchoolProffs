@@ -34,6 +34,8 @@ const SITE_CONTENT_KEYS = [
   // Visualizer" link — public/authenticated-student-visible by design,
   // same as everything else in this list.
   "AI_VISUALIZER_ENABLED",
+  // Read by the student SideNav and the AI MCQ Maker page itself.
+  "AI_MCQ_MAKER_ENABLED",
   // Public so Practice.tsx / Flashcards.tsx (and anything else reusing
   // those screens, e.g. past-paper practice) can decide whether to render
   // the "Ask AI to explain differently" button. Same reasoning and same

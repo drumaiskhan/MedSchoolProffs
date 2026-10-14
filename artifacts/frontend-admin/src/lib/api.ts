@@ -112,7 +112,7 @@ export interface AuthUser {
 export interface PlatformSettings {
   [key: string]: string;
   ADMIN_SIGNUP_CODE: string; SUPPORT_WHATSAPP: string; PLATFORM_NAME: string; PLATFORM_TAGLINE: string;
-  DEFAULT_CURRENCY: string; PAYMENT_INSTRUCTIONS: string; ANNOUNCEMENT_BANNER: string; REGISTRATION_ENABLED: string; AI_VISUALIZER_ENABLED: string; AI_EXPLAIN_ENABLED: string; GLOBAL_TRIAL_MODE: string; GLOBAL_TRIAL_PROGRAM: string; GLOBAL_TRIAL_YEAR: string; GLOBAL_TRIAL_YEARS: string; GLOBAL_TRIAL_FEATURES: string; GLOBAL_TRIAL_ENDS_AT: string;
+  DEFAULT_CURRENCY: string; PAYMENT_INSTRUCTIONS: string; ANNOUNCEMENT_BANNER: string; REGISTRATION_ENABLED: string; AI_VISUALIZER_ENABLED: string; AI_MCQ_MAKER_ENABLED?: string; AI_EXPLAIN_ENABLED: string; GLOBAL_TRIAL_MODE: string; GLOBAL_TRIAL_PROGRAM: string; GLOBAL_TRIAL_YEAR: string; GLOBAL_TRIAL_YEARS: string; GLOBAL_TRIAL_FEATURES: string; GLOBAL_TRIAL_ENDS_AT: string;
   // Read-only extras the server adds to GET/PATCH /admin/settings — JSON
   // (TrialFeatureOption[]) and a number, both as strings like everything else here.
   TRIAL_FEATURE_OPTIONS: string; BREVO_MAX_SLOTS: string;
@@ -146,7 +146,7 @@ export interface StudentDetail {
   id: number; name: string; email: string; phone: string | null; rollNumber: string | null; status: string; statusMessage: string | null; emailVerified: boolean;
   institution: string | null; program: string | null; academicYear: string | null; batch: string | null;
   institutionId?: number | null; programKind?: 'MBBS' | 'BDS' | null; yearNumber?: number | null;
-  currentStreak: number; longestStreak: number; lastLoginAt: string | null; joinedAt: string;
+  progress?: number; currentStreak: number; longestStreak: number; lastPracticeDate?: string | null; lastLoginAt: string | null; joinedAt: string;
   payments: PaymentRow[]; activeMembership: { expiresAt: string; isTrial: boolean } | null;
 }
 export interface StudentChallengeRow {
@@ -463,6 +463,7 @@ export const studentsAdminApi = {
   update: (id: number, body: Partial<{ name: string; email: string; phone: string; rollNumber: string; institutionId: number; programKind: 'MBBS' | 'BDS'; yearNumber: number }>) => request<{ ok: true }>(`/students/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   updateStatus: (id: number, status: string, emailVerified?: boolean, message?: string) => request<{ ok: true; status: string; emailVerified: boolean; statusMessage: string | null }>(`/students/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, ...(emailVerified !== undefined ? { emailVerified } : {}), ...(message !== undefined ? { message } : {}) }) }),
   verifyEmail: (id: number) => request<{ ok: true; status: string; emailVerified: boolean }>(`/students/${id}/verify-email`, { method: 'POST' }),
+  restoreStreak: (id: number, body: { mode: 'rebuild' } | { mode: 'set'; currentStreak: number; longestStreak?: number }) => request<{ ok: true; currentStreak: number; longestStreak: number; lastPracticeDate: string | null }>(`/students/${id}/streak/restore`, { method: 'POST', body: JSON.stringify(body) }),
   startTrial: (id: number, durationDays: number) => request<{ ok: true; expiresAt: string }>(`/students/${id}/trial`, { method: 'POST', body: JSON.stringify({ durationDays }) }),
   endTrial: (id: number) => request<{ ok: true }>(`/students/${id}/trial`, { method: 'DELETE' }),
   devices: (id: number) => request<StudentDevices>(`/students/${id}/devices`),

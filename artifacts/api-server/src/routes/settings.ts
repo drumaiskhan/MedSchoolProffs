@@ -34,6 +34,9 @@ const EDITABLE_KEYS = [
   // Visualizer" link from the student sidebar (frontend-student's SideNav)
   // and the route itself refuses direct access; on brings both back.
   "AI_VISUALIZER_ENABLED",
+  // Same on/off pattern for the student AI MCQ Maker page (POST /ai/mcq-maker).
+  // Missing = on, "false" = off (nav link hidden and the route refuses).
+  "AI_MCQ_MAKER_ENABLED",
   // Same on/off pattern as AI_VISUALIZER_ENABLED above, but for the "Ask AI
   // to explain differently" button itself — the one that shows up on MCQs
   // (Practice.tsx), flashcards (Flashcards.tsx), and anywhere else those

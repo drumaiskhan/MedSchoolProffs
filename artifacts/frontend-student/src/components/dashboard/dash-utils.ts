@@ -3,7 +3,7 @@
 import type { ProgressDay, ProgressTrend } from '@/lib/api';
 
 /** How many rows/cards each dashboard list shows. */
-export const DASH_LIMITS = { notifications: 5, upNext: 3, streakDays: 7 } as const;
+export const DASH_LIMITS = { notifications: 5, upNext: 3, streakDays: 7, focus: 3 } as const;
 
 /** Analytics ranges offered on the dashboard (must match RANGE_DAYS in api-server routes/analytics.ts). */
 export const ANALYTICS_RANGES = ['7d', '30d', '3m', '1y'] as const;

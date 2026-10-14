@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, ne, sql } from "drizzle-orm";
 import { db, membershipsTable, practiceAttemptsTable, usersTable } from "@workspace/db";
 import { getSetting } from "./settings";
 import { getStudentTargeting } from "./contentVisibility";
@@ -37,6 +37,7 @@ export const TRIAL_FEATURE_OPTIONS = [
   { key: "resources", label: "Resources", description: "Study resources and files.", defaultOn: true },
   { key: "ai_explain", label: "Ask AI to explain", description: "The on-demand \"Ask AI to explain differently\" button on MCQs and flashcards.", defaultOn: true },
   { key: "ai_visualizer", label: "AI Visualizer", description: "AI-generated diagrams and step-by-step visual explanations.", defaultOn: true },
+  { key: "ai_mcq_maker", label: "AI MCQ Maker", description: "Students generate their own practice MCQs on any topic with AI.", defaultOn: true },
   { key: "challenges", label: "Challenge a friend", description: "Head-to-head quiz challenges.", defaultOn: true },
   // Off by default: books are sold one by one (see routes/books.ts) and were
   // never part of the old all-or-nothing trial. Turning this on opens EVERY
@@ -227,7 +228,8 @@ export async function getTrialDailyMcqStatus(userId: number): Promise<TrialMcqSt
   const [row] = await db
     .select({ used: sql<number>`coalesce(sum(${practiceAttemptsTable.totalQuestions}), 0)` })
     .from(practiceAttemptsTable)
-    .where(and(eq(practiceAttemptsTable.userId, userId), gte(practiceAttemptsTable.createdAt, startOfDay)));
+    // AI MCQ Maker sets (mode "ai") are gated and rate-limited separately and don't use up the question-bank cap.
+    .where(and(eq(practiceAttemptsTable.userId, userId), ne(practiceAttemptsTable.mode, "ai"), gte(practiceAttemptsTable.createdAt, startOfDay)));
   const used = Number(row?.used ?? 0);
   return { limited: true, limit, used, remaining: Math.max(0, limit - used) };
 }

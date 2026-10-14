@@ -39,7 +39,7 @@ const ordinal = (n: number) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 
 // adds later still renders — it just gets the generic icon.
 const FEATURE_ICON: Record<string, typeof Target> = {
   mcqs: Target, past_papers: FileStack, exams: ClipboardCheck, flashcards: Zap, resources: FolderOpen,
-  ai_explain: Sparkles, ai_visualizer: Wand2, challenges: Swords, books: Library,
+  ai_explain: Sparkles, ai_visualizer: Wand2, ai_mcq_maker: Sparkles, challenges: Swords, books: Library,
 };
 
 const PRACTICE_ESSENTIALS = ['mcqs', 'past_papers', 'exams'];
@@ -262,6 +262,7 @@ function AdminSettings() {
           <Panel icon={ToggleRight} title="Student features" description="Site-wide switches. Turning one off hides it for every student and blocks direct access too.">
             <div className="space-y-3">
               <ToggleRow title="AI Visualizer" description='Off removes the "AI Visualizer" link from every sidebar and blocks the page directly.' checked={values.AI_VISUALIZER_ENABLED !== 'false'} onChange={(on) => set('AI_VISUALIZER_ENABLED', on ? 'true' : 'false')} testId="checkbox-ai-visualizer-enabled" />
+              <ToggleRow title="AI MCQ Maker" description='Off removes the "AI MCQ Maker" link from every sidebar and blocks the page and its API directly. Students can generate up to 25 practice MCQs per set; nothing is saved to the question bank.' checked={values.AI_MCQ_MAKER_ENABLED !== 'false'} onChange={(on) => set('AI_MCQ_MAKER_ENABLED', on ? 'true' : 'false')} testId="checkbox-ai-mcq-maker-enabled" />
               <ToggleRow title={'"Ask AI to explain differently"'} description="The button on MCQs, flashcards and past papers. Doesn't touch admin-side AI generation or auto-explain-on-import (AI tab)." checked={values.AI_EXPLAIN_ENABLED !== 'false'} onChange={(on) => set('AI_EXPLAIN_ENABLED', on ? 'true' : 'false')} testId="checkbox-ai-explain-enabled" />
             </div>
           </Panel>

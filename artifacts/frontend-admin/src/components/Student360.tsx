@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AreaChart, Area, XAxis, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Activity, ArrowDownRight, ArrowUpRight, Award, CreditCard, Flag, GraduationCap, MessageSquare, ShieldCheck, ArrowUpDown } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowUpRight, Award, CreditCard, Flag, GraduationCap, MessageSquare, ShieldCheck, ArrowUpDown, TrendingUp } from 'lucide-react';
 import { examsAdminApi, feedbackApi, flaggedMcqsApi, studentsAdminApi, type ExamAttemptRow, type StudentDetail } from '@/lib/api';
 import { cn } from '@/lib/shared';
 import { computeAchievements, AchievementGallery } from './AchievementCatalog';
@@ -132,6 +132,7 @@ export function Student360Panel({ s }: { s: StudentDetail }) {
           <Tile icon={ShieldCheck} label="Membership" value={m ? (m.isTrial ? 'Trial' : 'Active') : 'None'} sub={m ? `${left !== null && left >= 0 ? `${left}d left` : 'expired'} · ${fmtDate(m.expiresAt)}` : s.status.replace(/_/g, ' ').toLowerCase()} tone={m ? 'text-primary' : undefined} />
           <Tile icon={Activity} label="Last seen" value={seen === null ? '—' : seen === 0 ? 'Today' : `${seen}d ago`} sub={`Joined ${joined === null ? '—' : `${joined}d ago`}`} />
           <Tile icon={GraduationCap} label="Streak" value={`${s.currentStreak}d`} sub={`Best ${s.longestStreak}d`} />
+          <Tile icon={TrendingUp} label="Question progress" value={`${s.progress ?? 0}%`} sub="of visible MCQs answered" />
           <Tile icon={GraduationCap} label="Exams taken" value={attempts.isLoading ? '…' : String(mine.length)} sub={avg !== null ? `${avg}% average` : 'no submissions'} trend={trendDirection} />
           <Tile icon={CreditCard} label="Total paid" value={paid.length ? `${paid[0].currency} ${totalPaid.toLocaleString()}` : '—'} sub={`${paid.length} approved`} />
           <Tile icon={Flag} label="Reports raised" value={String(myFlags.length)} sub={`${myFeedback.length} feedback`} />

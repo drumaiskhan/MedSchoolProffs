@@ -4,10 +4,10 @@
 // prefers-reduced-motion in index.css.
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { Link } from 'wouter';
-import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Clock3, Crown, Flame, Lock, Play, ShieldCheck, Sparkles, Target, Trophy } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CheckCircle2, ChevronRight, Clock3, Crown, Flame, Lock, Play, RotateCcw, ShieldCheck, Sparkles, Target, Trophy } from 'lucide-react';
 import { Count, prefersReducedMotion } from '@/lib/fx3d';
 import { SubjectIcon, tileStyle } from '@/lib/subject-icons';
-import type { Analytics, ContinueModule, ContinueResume, ProgressTrend, TrialStatus } from '@/lib/api';
+import type { Analytics, ContinueModule, ContinueResume, ProgressTopic, ProgressTrend, TrialStatus } from '@/lib/api';
 import { EmptyState, ProgressBadge, progressVerdict, trialFeatureSummary, trialScopeLabel } from '@/lib/shared';
 import { ANALYTICS_RANGES, DASH_LIMITS, dayLabel, daysUntil, localDayKey, timeAgo, weekDays, type AnalyticsRange } from './dash-utils';
 
@@ -293,3 +293,36 @@ export function RangeTiles({ analytics, loading }: { analytics: Analytics | unde
 }
 
 export const RANGE_OPTIONS = ANALYTICS_RANGES.map((r: AnalyticsRange) => ({ value: r, label: r.toUpperCase(), testId: `button-analytics-range-${r}` }));
+
+/* -------------------------------------------------------------- focus areas */
+
+/** Inline, per-section failure message so one broken request doesn't masquerade as "0" everywhere. */
+export function SectionError({ onRetry, label = "We couldn't load this." }: { onRetry?: () => void; label?: string }) {
+  return <div className="dash-card dash-error" role="alert" data-testid="dash-section-error">
+    <AlertTriangle size={16} aria-hidden="true" />
+    <span>{label}</span>
+    {onRetry && <button type="button" onClick={onRetry} className="dash-link" data-testid="button-dash-retry">Try again</button>}
+  </div>;
+}
+
+/** Where to spend the next session: the weakest topics (from the progress overview) plus this device's open mistakes. */
+export function FocusAreas({ topics, mistakeCount, loading, failed, onRetry }: {
+  topics: ProgressTopic[]; mistakeCount: number; loading: boolean; failed: boolean; onRetry: () => void;
+}) {
+  if (loading) return <div className="dash-list">{Array.from({ length: 3 }, (_, i) => <div key={i} className="skeleton dash-row-skel" />)}</div>;
+  if (failed) return <SectionError onRetry={onRetry} />;
+  const list = topics.slice(0, DASH_LIMITS.focus);
+  return <div className="dash-list" data-testid="list-focus-areas">
+    {mistakeCount > 0 && <Link href={`/practice?set=mistakes&count=${mistakeCount > 10 ? 20 : 10}`} className="dash-row card-lift" style={{ ['--i' as string]: 0 }} data-testid="link-focus-mistakes">
+      <span className="dash-stat__icon" style={tileStyle(HUE.amber)}><RotateCcw size={16} /></span>
+      <span className="dash-row__text"><strong>Clear {Math.min(mistakeCount, 10)} recent mistake{Math.min(mistakeCount, 10) === 1 ? '' : 's'}</strong><small>{mistakeCount} open on this device</small></span>
+      <ChevronRight size={15} className="dash-row__chev" />
+    </Link>}
+    {list.map((t, i) => <Link href={`/practice?topic=${t.id}`} key={t.id} className="dash-row card-lift" style={{ ['--i' as string]: i + 1 }} data-testid={`link-focus-topic-${t.id}`}>
+      <span className="dash-stat__icon" style={tileStyle(HUE.teal)}><Target size={16} /></span>
+      <span className="dash-row__text"><strong>{t.name}</strong><small>{t.accuracy != null ? `${Math.round(t.accuracy)}% accuracy` : 'Not enough data'}{t.subject ? ` · ${t.subject}` : ''}</small></span>
+      <ChevronRight size={15} className="dash-row__chev" />
+    </Link>)}
+    {!list.length && mistakeCount === 0 && <p className="dash-empty">Nothing flagged yet — answer a few more questions and your weakest topics will show up here.</p>}
+  </div>;
+}

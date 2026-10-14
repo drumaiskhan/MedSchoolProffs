@@ -57,7 +57,7 @@ export function trialScopeLabel(program?: string, years?: number[]): string | nu
 // back to the key itself so a newly added feature still reads sensibly.
 const TRIAL_FEATURE_LABEL: Record<string, string> = {
   mcqs: 'MCQ bank', past_papers: 'Past papers', exams: 'Pre-Proffs exams', flashcards: 'Flashcards', resources: 'Resources',
-  ai_explain: 'Ask AI', ai_visualizer: 'AI Visualizer', challenges: 'Challenges', books: 'Books',
+  ai_explain: 'Ask AI', ai_visualizer: 'AI Visualizer', ai_mcq_maker: 'AI MCQ Maker', challenges: 'Challenges', books: 'Books',
 };
 export function trialFeatureSummary(features: string[]): string {
   const names = features.map((k) => TRIAL_FEATURE_LABEL[k] ?? k);
@@ -72,5 +72,5 @@ export function trialEndsLabel(endsAt: string | null | undefined): string {
 // Sidebar routes that belong to one trial-gated feature. Books aren't listed:
 // they're sold one by one, so the Books page shows lock state per book.
 export const NAV_FEATURE: Record<string, string> = {
-  '/blocks': 'mcqs', '/exams': 'exams', '/past-papers': 'past_papers', '/flashcards': 'flashcards', '/ai-visualizer': 'ai_visualizer', '/challenge': 'challenges',
+  '/blocks': 'mcqs', '/exams': 'exams', '/past-papers': 'past_papers', '/flashcards': 'flashcards', '/ai-visualizer': 'ai_visualizer', '/ai-mcq-maker': 'ai_mcq_maker', '/challenge': 'challenges',
 };

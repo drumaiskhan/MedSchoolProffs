@@ -132,6 +132,13 @@ export function StudentDrawer({ id, onClose }: { id: number; onClose: () => void
     onSuccess: invalidate,
     onError: (err: unknown) => toast({ title: 'Could not verify email', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — check your connection and try again.', variant: 'destructive' }),
   });
+  // Restore a streak from the profile: rebuild from saved practice sessions, or give back a specific number of days.
+  const [streakDays, setStreakDays] = useState('');
+  const restoreStreak = useMutation({
+    mutationFn: (body: Parameters<typeof studentsAdminApi.restoreStreak>[1]) => studentsAdminApi.restoreStreak(id, body),
+    onSuccess: (r) => { invalidate(); setStreakDays(''); toast({ title: 'Streak restored', description: `Now ${r.currentStreak} day${r.currentStreak === 1 ? '' : 's'} (best ${r.longestStreak}).` }); },
+    onError: (err: unknown) => toast({ title: 'Could not restore streak', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — check your connection and try again.', variant: 'destructive' }),
+  });
   const [trialDays, setTrialDays] = useState(7);
   const startTrial = useMutation({
     mutationFn: (durationDays: number) => studentsAdminApi.startTrial(id, durationDays),
@@ -149,6 +156,13 @@ export function StudentDrawer({ id, onClose }: { id: number; onClose: () => void
     {!s ? <div className="mt-8"><InlineLoading /></div> : <div className="mt-6 space-y-6">
       <div className="flex items-center gap-3"><div className="grid size-12 place-items-center rounded-full bg-primary/15 text-sm font-extrabold text-primary">{initials(s.name)}</div><div><div className="font-bold">{s.name}</div><div className="text-xs text-muted-foreground">{s.email}</div></div></div>
       <div className="grid grid-cols-2 gap-3 text-xs"><div><div className="text-muted-foreground">Phone</div><div className="mt-0.5 font-bold">{s.phone || '—'}</div></div><div><div className="text-muted-foreground">Roll number</div><div className="mt-0.5 font-bold">{s.rollNumber || '—'}</div></div><div><div className="text-muted-foreground">Institution</div><div className="mt-0.5 font-bold">{s.institution || '—'}</div></div><div><div className="text-muted-foreground">Programme</div><div className="mt-0.5 font-bold">{s.program || '—'}</div></div><div><div className="text-muted-foreground">Year / batch</div><div className="mt-0.5 font-bold">{s.academicYear || '—'} · {s.batch || '—'}</div></div><div><div className="text-muted-foreground">Streak</div><div className="mt-0.5 font-bold">{s.currentStreak}d (best {s.longestStreak}d)</div></div><div><div className="text-muted-foreground">Joined</div><div className="mt-0.5 font-bold">{new Date(s.joinedAt).toLocaleDateString()}</div></div><div><div className="text-muted-foreground">Email verified</div>{s.emailVerified ? <div className="mt-0.5 font-bold text-primary">Yes</div> : <button onClick={() => verifyEmail.mutate()} disabled={verifyEmail.isPending} className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-extrabold text-destructive underline disabled:opacity-50" data-testid="button-verify-email">{verifyEmail.isPending ? 'Verifying…' : 'No · verify now'}</button>}</div></div>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 p-2.5 text-xs" data-testid="panel-restore-streak">
+        <span className="font-extrabold">Restore streak</span>
+        <button onClick={() => restoreStreak.mutate({ mode: 'rebuild' })} disabled={restoreStreak.isPending} className="rounded-lg bg-primary px-2.5 py-1 text-[11px] font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-streak-rebuild">{restoreStreak.isPending ? 'Restoring…' : 'Rebuild from practice history'}</button>
+        <span className="text-muted-foreground">or give back</span>
+        <input type="number" min={0} max={3650} value={streakDays} onChange={(e) => setStreakDays(e.target.value)} placeholder="days" className="w-16 rounded-lg border border-border bg-background px-2 py-1 text-[11px]" data-testid="input-streak-days" />
+        <button onClick={() => restoreStreak.mutate({ mode: 'set', currentStreak: Math.max(0, Math.floor(Number(streakDays))) })} disabled={restoreStreak.isPending || streakDays.trim() === '' || !Number.isFinite(Number(streakDays))} className="rounded-lg border border-border bg-background px-2.5 py-1 text-[11px] font-extrabold disabled:opacity-50" data-testid="button-streak-set">Set</button>
+      </div>
       <EditStudentDetails s={s} onSaved={invalidate} />
       <Suspense fallback={<InlineLoading label="Loading student overview…" />}><Student360Panel s={s} /></Suspense>
       {s.activeMembership && !s.activeMembership.isTrial && <div className="rounded-xl bg-primary/10 p-3 text-xs font-semibold text-primary">Active membership until {new Date(s.activeMembership.expiresAt).toLocaleDateString()}</div>}

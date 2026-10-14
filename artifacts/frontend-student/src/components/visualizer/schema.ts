@@ -3,4 +3,5 @@
 // api-server/src/lib/aiVisualizer.ts); re-exported here for the components.
 export type {
   SceneShape, SceneLayout, SceneNode, SceneLink, SceneCalculator, FormulaNode, VisualizationSpec,
+  ModelSpec, ModelPart, ModelForm, ModelFinish, ModelV3, AnyVisualization, VisualizerMode,
 } from '@/lib/api';

@@ -153,6 +153,8 @@ export function TopicBadge({ label }: { label: string }) {
 }
 
 export const AI_VISUALIZER_EXAMPLES = [
+  'Tibia with all its parts labelled: condyles, tuberosity, borders, malleolus and articular surfaces.',
+  'Draw the heart as a solid model: four chambers, valves and the great vessels, all labelled.',
   'Skeletal muscle contraction: action potential, calcium release from the sarcoplasmic reticulum, cross-bridge cycling and relaxation.',
   'The cardiac cycle: atria, ventricles, valves and great vessels with the direction of blood flow.',
   'Cardiac output = heart rate x stroke volume, with the structures involved.',

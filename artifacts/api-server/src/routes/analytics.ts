@@ -3,28 +3,39 @@ import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, practiceAttemptsTable, practiceAnswersTable, mcqsTable, usersTable, topicsTable, subjectsTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor } from "../middlewares/auth";
-import { liveStreak, utcDay } from "../lib/streak";
+import { liveStreak, utcDay, parseTzOffset, streakFromDays, type RebuiltStreak } from "../lib/streak";
 import { trialDailyMcqCapError, getTrialDailyMcqStatus } from "../lib/trial";
 
 const router: IRouter = Router();
 
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
+/** Every UTC day on which the student finished at least one practice session
+ *  (timed, untimed, past-paper and AI MCQ maker sessions all land in
+ *  practice_attempts), rebuilt into streak numbers. */
+export async function streakFromHistory(userId: number, tzOffsetMin = 0): Promise<RebuiltStreak> {
+  const rows = await db
+    .select({ day: sql<string>`to_char((coalesce(${practiceAttemptsTable.completedAt}, ${practiceAttemptsTable.createdAt}) at time zone 'UTC') - (${tzOffsetMin} * interval '1 minute'), 'YYYY-MM-DD')` })
+    .from(practiceAttemptsTable)
+    .where(eq(practiceAttemptsTable.userId, userId))
+    .groupBy(sql`1`);
+  return streakFromDays(rows.map((r) => r.day));
 }
 
-function yesterdayUtc(): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
-async function bumpStreak(userId: number): Promise<void> {
+export async function bumpStreak(userId: number, tzOffsetMin = 0): Promise<void> {
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
   if (!user) return;
-  const today = todayUtc();
-  if (user.lastPracticeDate === today) return; // already counted today
-  const continuing = user.lastPracticeDate === yesterdayUtc();
-  const currentStreak = continuing ? user.currentStreak + 1 : 1;
+  const today = utcDay(0, tzOffsetMin);
+  if (user.lastPracticeDate != null && user.lastPracticeDate >= today) return; // already counted today
+  const continuing = user.lastPracticeDate === utcDay(-1, tzOffsetMin);
+  let currentStreak = continuing ? user.currentStreak + 1 : 1;
+  // Self-heal: the stored counter only moves when this function runs, so any
+  // session that was saved without it (an earlier bug, a failed write, a data
+  // import) left the streak short for good. The saved sessions are the truth —
+  // never let the counter sit below the run they prove. `max` keeps an
+  // admin-restored streak (see POST /students/:id/streak/restore) intact too.
+  try {
+    const history = await streakFromHistory(userId, tzOffsetMin);
+    if (history.lastPracticeDate === today) currentStreak = Math.max(currentStreak, history.currentStreak);
+  } catch { /* the plain increment above is still correct */ }
   const longestStreak = Math.max(user.longestStreak, currentStreak);
   await db.update(usersTable).set({ currentStreak, longestStreak, lastPracticeDate: today }).where(eq(usersTable.id, userId));
 }
@@ -41,6 +52,7 @@ const SubmitSessionBody = z.object({
   mode: z.enum(["timed", "untimed"]).optional(),
   answers: z.array(z.object({ mcqId: z.number().int().positive(), selectedAnswer: z.string().nullable() })).min(1),
   durationSeconds: z.number().int().min(0).optional(),
+  tz: z.number().int().min(-840).max(840).optional(),
 });
 
 router.post("/practice-sessions", requireAuth, requireMembershipFor(["mcqs", "past_papers"]), async (req, res): Promise<void> => {
@@ -104,7 +116,7 @@ router.post("/practice-sessions", requireAuth, requireMembershipFor(["mcqs", "pa
     data.answers.map((a) => ({ attemptId: attempt.id, mcqId: a.mcqId, selectedAnswer: a.selectedAnswer, correct: mcqMap.get(a.mcqId)?.correctAnswer === a.selectedAnswer })),
   );
 
-  await bumpStreak(req.user!.id);
+  await bumpStreak(req.user!.id, data.tz ?? 0);
 
   res.status(201).json({ ...attempt, scorePercent: Number(attempt.scorePercent) });
 });
@@ -151,8 +163,8 @@ router.get("/student/analytics", requireAuth, async (req, res): Promise<void> =>
     timeSpentMinutes: Math.round(timeSpentSeconds / 60),
     // liveStreak(): the stored number goes stale the moment a student stops
     // practising, so a lapsed run reads 0 instead of its old value.
-    currentStreak: liveStreak(user).current,
-    longestStreak: liveStreak(user).longest,
+    currentStreak: liveStreak(user, parseTzOffset(req.query.tz)).current,
+    longestStreak: liveStreak(user, parseTzOffset(req.query.tz)).longest,
   });
 });
 
@@ -241,8 +253,8 @@ router.get("/student/progress", requireAuth, async (req, res): Promise<void> => 
     recentSessions: recentAttempts.length,
     history,
     daily,
-    currentStreak: liveStreak(user).current,
-    longestStreak: liveStreak(user).longest,
+    currentStreak: liveStreak(user, tzOffsetMin).current,
+    longestStreak: liveStreak(user, tzOffsetMin).longest,
   });
 });
 
@@ -341,12 +353,17 @@ router.get("/leaderboard", requireAuth, async (req, res): Promise<void> => {
 
 router.get("/leaderboard/streak", requireAuth, async (req, res): Promise<void> => {
   const WINDOW_DAYS = 14;
-  const since = new Date();
-  since.setUTCDate(since.getUTCDate() - (WINDOW_DAYS - 1));
-  since.setUTCHours(0, 0, 0, 0);
+  // The student's own UTC offset (Date.getTimezoneOffset(), UTC+5 => -300): the
+  // day dots and the streak roll over at THEIR midnight, not UTC midnight.
+  const tz = parseTzOffset(req.query.tz);
+  const dayOf = (t: Date) => new Date(t.getTime() - tz * 60_000).toISOString().slice(0, 10);
+  const firstDay = utcDay(-(WINDOW_DAYS - 1), tz);
+  // Start a day early so the UTC<->local shift can't clip the first bucket.
+  const since = new Date(`${firstDay}T00:00:00Z`);
+  since.setTime(since.getTime() + tz * 60_000 - 86_400_000);
 
   const [attempts, [user]] = await Promise.all([
-    db.select({ createdAt: practiceAttemptsTable.createdAt, totalQuestions: practiceAttemptsTable.totalQuestions })
+    db.select({ createdAt: practiceAttemptsTable.createdAt, completedAt: practiceAttemptsTable.completedAt, totalQuestions: practiceAttemptsTable.totalQuestions })
       .from(practiceAttemptsTable)
       .where(and(eq(practiceAttemptsTable.userId, req.user!.id), gte(practiceAttemptsTable.createdAt, since))),
     db.select().from(usersTable).where(eq(usersTable.id, req.user!.id)),
@@ -354,7 +371,7 @@ router.get("/leaderboard/streak", requireAuth, async (req, res): Promise<void> =
 
   const perDay = new Map<string, { sessions: number; questions: number }>();
   for (const a of attempts) {
-    const key = a.createdAt.toISOString().slice(0, 10);
+    const key = dayOf(a.completedAt ?? a.createdAt);
     const cur = perDay.get(key) ?? { sessions: 0, questions: 0 };
     cur.sessions += 1;
     cur.questions += a.totalQuestions;
@@ -362,12 +379,12 @@ router.get("/leaderboard/streak", requireAuth, async (req, res): Promise<void> =
   }
   // Oldest -> newest, always WINDOW_DAYS entries (empty days included).
   const days = Array.from({ length: WINDOW_DAYS }, (_, i) => {
-    const date = utcDay(i - (WINDOW_DAYS - 1));
+    const date = utcDay(i - (WINDOW_DAYS - 1), tz);
     const v = perDay.get(date);
     return { date, sessions: v?.sessions ?? 0, questions: v?.questions ?? 0 };
   });
 
-  const s = liveStreak(user);
+  const s = liveStreak(user, tz);
   res.json({ currentStreak: s.current, longestStreak: s.longest, practicedToday: s.practicedToday, atRisk: s.atRisk, days });
 });
 

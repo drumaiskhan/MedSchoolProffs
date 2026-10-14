@@ -1,18 +1,28 @@
-// AI Visualizer page (v60): describe a concept, get ONE interactive 3D scene on
-// a single screen — rotate it, click/drag any structure, filter by group, trace
-// the flow. No steps to click through. The 3D engine (three.js) is lazy-loaded
-// so it never weighs on the rest of the student app.
+// AI Visualizer page. Two result types, both on a single screen:
+//  - "scene" (v60): a process / pathway / comparison as an interactive 3D node graph.
+//  - "model" (v61): a structure (bone, organ, vessel tree...) as a SOLID, static 3D
+//    model with atlas-style labels that the student rotates by hand.
+// The 3D engine (three.js) is lazy-loaded so it never weighs on the rest of the app.
 import { Suspense, lazy, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { RotateCcw, Sparkles, Wand2 } from 'lucide-react';
-import { aiVisualizerApi, ApiRequestError, siteContentApi, type VisualizationSpec } from '@/lib/api';
+import { aiVisualizerApi, ApiRequestError, siteContentApi, type AnyVisualization, type VisualizerMode } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { AI_VISUALIZER_EXAMPLES, BrandSpinner, EmptyState, SectionHeader, SkeletonPage } from '@/lib/shared';
 
 const VisualizerStage = lazy(() => import('@/components/visualizer/VisualizerStage'));
+const ModelStage = lazy(() => import('@/components/visualizer/ModelStage'));
+
+const MODES: Array<{ id: VisualizerMode; label: string; hint: string }> = [
+  { id: 'auto', label: 'Auto', hint: 'Picks the best format for your request' },
+  { id: 'model', label: 'Anatomy model', hint: 'A solid, labelled 3D model of a structure' },
+  { id: 'scene', label: 'Process diagram', hint: 'A flow / comparison as linked 3D nodes' },
+];
 
 function AiVisualizer() {
   const [prompt, setPrompt] = useState('');
-  const [spec, setSpec] = useState<VisualizationSpec | null>(null);
+  const [spec, setSpec] = useState<AnyVisualization | null>(null);
+  const [mode, setMode] = useState<VisualizerMode>('auto');
   const [version, setVersion] = useState(0);
 
   // Same AI_VISUALIZER_ENABLED check SideNav uses — this covers someone
@@ -22,7 +32,7 @@ function AiVisualizer() {
   const aiVisualizerEnabled = siteContentQ.data?.AI_VISUALIZER_ENABLED !== 'false';
 
   const generate = useMutation({
-    mutationFn: (p: string) => aiVisualizerApi.generate(p),
+    mutationFn: (p: string) => aiVisualizerApi.generate(p, mode),
     onSuccess: (data) => { setSpec(data.visualization); setVersion((v) => v + 1); },
   });
 
@@ -41,15 +51,22 @@ function AiVisualizer() {
   // ---- before the first result: prompt screen ----
   if (!spec) {
     return <div className="mx-auto max-w-3xl">
-      <SectionHeader eyebrow="Study tools" title="AI Visualizer" description="Describe a process, cycle, pathway, or comparison and explore it as one interactive 3D scene." />
+      <SectionHeader eyebrow="Study tools" title="AI Visualizer" description="Ask for a structure (a bone, an organ, a vessel tree) to get a solid, labelled 3D model you can rotate — or describe a process, pathway or comparison to explore it as an interactive 3D scene." />
       <div className="rounded-2xl border border-border bg-card p-5">
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="e.g. Skeletal muscle contraction — from action potential to calcium release, cross-bridge cycling and relaxation…"
+          placeholder="e.g. Tibia with all its parts labelled — or: Skeletal muscle contraction from action potential to relaxation…"
           className="min-h-32 w-full resize-none rounded-xl border border-border bg-background p-3 text-xs leading-6 outline-none focus:ring-2 focus:ring-primary/20"
           data-testid="textarea-visualizer-prompt"
         />
+        <div className="mt-3 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Visualization type">
+          {MODES.map((m) => (
+            <button key={m.id} type="button" role="radio" aria-checked={mode === m.id} title={m.hint} onClick={() => setMode(m.id)}
+              className={cn('rounded-full border px-3 py-1.5 text-[11px] font-extrabold transition-colors', mode === m.id ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground')}
+              data-testid={`button-visualizer-mode-${m.id}`}>{m.label}</button>
+          ))}
+        </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {AI_VISUALIZER_EXAMPLES.map((ex, i) => (
             <button key={i} onClick={() => setPrompt(ex)} className="rounded-full border border-border px-3 py-1.5 text-[11px] font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" data-testid={`button-visualizer-example-${i}`}>{ex.length > 60 ? `${ex.slice(0, 57)}…` : ex}</button>
@@ -62,7 +79,7 @@ function AiVisualizer() {
           data-testid="button-generate-visualization"
         >
           {generate.isPending ? <BrandSpinner size={14} /> : <Wand2 size={14} />}
-          {generate.isPending ? 'Building your 3D scene…' : 'Generate 3D Visualization'}
+          {generate.isPending ? (mode === 'model' ? 'Building your 3D model…' : 'Building your 3D visualization…') : 'Generate 3D Visualization'}
         </button>
         {generate.isPending && <div className="mt-5"><SkeletonPage /></div>}
         {errorBlock}
@@ -95,7 +112,7 @@ function AiVisualizer() {
     {errorBlock}
     <div className={generate.isPending ? 'pointer-events-none opacity-60 transition-opacity' : 'transition-opacity'}>
       <Suspense fallback={<div className="grid h-[420px] place-items-center rounded-2xl border border-border bg-card"><BrandSpinner size={22} /></div>}>
-        <VisualizerStage key={version} spec={spec} />
+        {spec.type === 'model' ? <ModelStage key={version} spec={spec} /> : <VisualizerStage key={version} spec={spec} />}
       </Suspense>
     </div>
   </div>;

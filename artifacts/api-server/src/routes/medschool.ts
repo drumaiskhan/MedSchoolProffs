@@ -75,13 +75,14 @@ import {
 } from "@workspace/db";
 import { requireAuth, requireAdmin, requireMembershipFor, isAdminRole } from "../middlewares/auth";
 import { getDefaultDeviceLimit, getEffectiveDeviceLimit, listActiveSessions, revokeAllForUser, revokeOneForUser, MAX_DEVICES_CEILING } from "../lib/deviceSessions";
-import { getStudentTargeting, getVisibleModuleIds, getVisibleBlockIds, describeModuleTargeting } from "../lib/contentVisibility";
+import { getStudentTargeting, getVisibleModuleIds, getVisibleBlockIds, describeModuleTargeting, isTargetVisible } from "../lib/contentVisibility";
 import { resolveFileUrl, THUMBNAIL_TRANSFORM } from "../lib/storage";
 import { dbErrorMessage } from "../lib/dbErrors";
 import { shuffleMcqOptions } from "../lib/mcqShuffle";
 import { sendEmail, membershipActivatedEmailHtml, trialActivatedEmailHtml, paymentSubmittedEmailHtml, paymentRejectedEmailHtml, accountRejectedEmailHtml } from "../lib/email";
 import { validateCoupon, markCouponUsed, type CouponApplication } from "../lib/coupons";
-import { liveStreak } from "../lib/streak";
+import { liveStreak, utcDay } from "../lib/streak";
+import { streakFromHistory } from "./analytics";
 
 const router: IRouter = Router();
 
@@ -1336,6 +1337,48 @@ router.delete("/resources/:id", requireAdmin, async (req, res): Promise<void> =>
   res.json({ ok: true });
 });
 
+// Admin-side student progress: distinct published MCQs a student has answered
+// divided by published MCQs in the active modules visible to them (program
+// kind + year targeting) — the same rule as GET /student/dashboard. Fixed
+// number of grouped queries no matter how many students are passed in.
+async function computeStudentProgress(students: { id: number; programKind: string | null; yearNumber: number | null }[]): Promise<Map<number, number>> {
+  const progressByStudent = new Map<number, number>();
+  const studentIds = students.map((s) => s.id);
+  if (!studentIds.length) return progressByStudent;
+  const [activeModules, mcqTotals, answeredRows] = await Promise.all([
+    db.select({ id: modulesTable.id, programTargetKind: modulesTable.programTargetKind, yearTargetNumber: modulesTable.yearTargetNumber })
+      .from(modulesTable).where(eq(modulesTable.active, true)),
+    db.select({ moduleId: mcqsTable.moduleId, total: sql<number>`count(*)` })
+      .from(mcqsTable).where(and(sql`${mcqsTable.moduleId} IS NOT NULL`, eq(mcqsTable.status, "published"))).groupBy(mcqsTable.moduleId),
+    db.select({ userId: practiceAttemptsTable.userId, moduleId: mcqsTable.moduleId, done: sql<number>`count(distinct ${practiceAnswersTable.mcqId})` })
+      .from(practiceAnswersTable)
+      .innerJoin(practiceAttemptsTable, eq(practiceAttemptsTable.id, practiceAnswersTable.attemptId))
+      .innerJoin(mcqsTable, eq(mcqsTable.id, practiceAnswersTable.mcqId))
+      .where(and(inArray(practiceAttemptsTable.userId, studentIds), sql`${mcqsTable.moduleId} IS NOT NULL`, eq(mcqsTable.status, "published")))
+      .groupBy(practiceAttemptsTable.userId, mcqsTable.moduleId),
+  ]);
+  const totalByModule = new Map(mcqTotals.map((r) => [r.moduleId as number, Number(r.total ?? 0)]));
+  const doneByUser = new Map<number, Map<number, number>>();
+  for (const r of answeredRows) {
+    if (r.moduleId == null) continue;
+    if (!doneByUser.has(r.userId)) doneByUser.set(r.userId, new Map());
+    doneByUser.get(r.userId)!.set(r.moduleId, Number(r.done ?? 0));
+  }
+  for (const st of students) {
+    let total = 0;
+    let done = 0;
+    const userDone = doneByUser.get(st.id);
+    for (const m of activeModules) {
+      if (!isTargetVisible(m.programTargetKind, m.yearTargetNumber, { programKind: st.programKind, yearNumber: st.yearNumber })) continue;
+      const moduleTotal = totalByModule.get(m.id) ?? 0;
+      total += moduleTotal;
+      done += Math.min(userDone?.get(m.id) ?? 0, moduleTotal);
+    }
+    progressByStudent.set(st.id, total ? Math.round((done / total) * 100) : 0);
+  }
+  return progressByStudent;
+}
+
 router.get("/students", requireAdmin, async (req, res): Promise<void> => {
   const params = ListStudentsQueryParams.safeParse(req.query);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
@@ -1367,6 +1410,18 @@ router.get("/students", requireAdmin, async (req, res): Promise<void> => {
   const programById = new Map(programRows.map((p) => [p.id, p]));
   const yearById = new Map(yearRows.map((y) => [y.id, y]));
 
+  // Bug fix: `progress` used to be hardcoded to 0 here, so every student
+  // showed 0% in the admin Students list, sort-by-progress and "Avg progress"
+  // tile. Same rule as GET /student/dashboard — distinct published MCQs the
+  // student has answered / published MCQs in the active modules visible to
+  // them (program kind + year targeting) — computed for every listed student
+  // in a fixed number of grouped queries (not one set of queries per student).
+  const progressByStudent = await computeStudentProgress(rows.map((row) => ({
+    id: row.id,
+    programKind: (row.programId ? programById.get(row.programId)?.kind : null)?.trim().toUpperCase() ?? null,
+    yearNumber: row.academicYearId ? (yearById.get(row.academicYearId)?.yearNumber ?? null) : null,
+  })));
+
   res.json(ListStudentsResponse.parse(rows.map((row) => {
     const program = row.programId ? programById.get(row.programId) : undefined;
     const academicYear = row.academicYearId ? yearById.get(row.academicYearId) : undefined;
@@ -1377,7 +1432,7 @@ router.get("/students", requireAdmin, async (req, res): Promise<void> => {
       programKind: program?.kind || null,
       yearNumber: academicYear?.yearNumber ?? null,
       academicYearLabel: academicYear?.label ?? null,
-      status: row.status, joinedAt: row.createdAt.toISOString(), progress: 0,
+      status: row.status, joinedAt: row.createdAt.toISOString(), progress: progressByStudent.get(row.id) ?? 0,
     };
   })));
 });
@@ -1391,12 +1446,14 @@ router.get("/students/:id", requireAdmin, async (req, res): Promise<void> => {
   const [programRow] = student.programId ? await db.select().from(programsTable).where(eq(programsTable.id, student.programId)) : [];
   const payments = await db.select().from(paymentsTable).where(eq(paymentsTable.userId, id)).orderBy(desc(paymentsTable.createdAt));
   const memberships = await db.select().from(membershipsTable).where(eq(membershipsTable.userId, id)).orderBy(desc(membershipsTable.expiresAt));
+  const progress = (await computeStudentProgress([{ id, programKind: programRow?.kind?.trim().toUpperCase() ?? null, yearNumber: academicYear?.yearNumber ?? null }])).get(id) ?? 0;
   res.json({
     id: student.id, name: student.name, email: student.email, phone: student.phone, rollNumber: student.rollNumber,
     status: student.status, statusMessage: student.statusMessage, emailVerified: student.emailVerified,
     institution: student.institution, program: student.program, academicYear: academicYear?.label ?? null, batch: batch?.label ?? null,
     institutionId: student.institutionId ?? null, programKind: programRow?.kind ?? null, yearNumber: academicYear?.yearNumber ?? null,
-    currentStreak: student.currentStreak, longestStreak: student.longestStreak,
+    progress,
+    currentStreak: liveStreak(student).current, longestStreak: liveStreak(student).longest, lastPracticeDate: student.lastPracticeDate ?? null,
     lastLoginAt: student.lastLoginAt?.toISOString() ?? null, joinedAt: student.createdAt.toISOString(),
     payments: await Promise.all(payments.map(paymentView)),
     activeMembership: memberships.find((m) => m.status === "ACTIVE" && m.expiresAt.getTime() > Date.now()) ? {
@@ -1683,6 +1740,51 @@ router.post("/students/:id/verify-email", requireAdmin, async (req, res): Promis
   res.json({ ok: true, status: row.status, emailVerified: row.emailVerified });
 });
 
+// Restore a student's streak from their profile. Two modes:
+//   rebuild — recompute from the practice sessions on record (every saved
+//             session counts: timed, untimed, past-paper, AI MCQ maker). The
+//             best streak never goes down.
+//   set     — admin states the streak to give back (e.g. sessions that were
+//             lost). The run is left alive-but-at-risk (last practice =
+//             yesterday) so the student keeps it by practising today.
+const RestoreStreakBody = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("rebuild") }),
+  z.object({ mode: z.literal("set"), currentStreak: z.number().int().min(0).max(3650), longestStreak: z.number().int().min(0).max(3650).optional() }),
+]);
+router.post("/students/:id/streak/restore", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid student id" }); return; }
+  const parsed = RestoreStreakBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }); return; }
+  const [student] = await db.select().from(usersTable).where(and(eq(usersTable.id, id), eq(usersTable.role, "student")));
+  if (!student) { res.status(404).json({ error: "Student not found" }); return; }
+
+  const history = await streakFromHistory(id);
+  const today = utcDay(0);
+  let next: { currentStreak: number; longestStreak: number; lastPracticeDate: string | null };
+  if (parsed.data.mode === "rebuild") {
+    next = {
+      currentStreak: history.currentStreak,
+      longestStreak: Math.max(student.longestStreak, history.longestStreak, history.currentStreak),
+      lastPracticeDate: history.lastPracticeDate,
+    };
+  } else {
+    const current = parsed.data.currentStreak;
+    next = {
+      currentStreak: current,
+      longestStreak: Math.max(student.longestStreak, parsed.data.longestStreak ?? 0, current),
+      lastPracticeDate: current === 0 ? student.lastPracticeDate : history.lastPracticeDate === today ? today : utcDay(-1),
+    };
+  }
+  await db.update(usersTable).set(next).where(eq(usersTable.id, id));
+  await db.insert(auditLogsTable).values({
+    actorId: req.user!.id, action: "STUDENT_STREAK_RESTORED_BY_ADMIN", entity: "user", entityId: id,
+    metadata: JSON.stringify({ mode: parsed.data.mode, before: { currentStreak: student.currentStreak, longestStreak: student.longestStreak, lastPracticeDate: student.lastPracticeDate }, after: next }),
+  });
+  const live = liveStreak(next);
+  res.json({ ok: true, currentStreak: live.current, longestStreak: live.longest, lastPracticeDate: next.lastPracticeDate });
+});
+
 // Soft-delete only: a student record cascades to payments, exam attempts, and
 // notebook entries, so a hard DELETE would either orphan or cascade-wipe that
 // history. We mark the account DELETED (excluded from active listings/stats)
@@ -1693,6 +1795,7 @@ router.delete("/students/:id", requireAdmin, async (req, res): Promise<void> => 
   if (Number.isNaN(id)) { res.status(400).json({ error: "Invalid student id" }); return; }
   const [row] = await db.update(usersTable).set({ status: "DELETED" }).where(and(eq(usersTable.id, id), eq(usersTable.role, "student"))).returning();
   if (!row) { res.status(404).json({ error: "Student not found" }); return; }
+  await revokeAllForUser(row.id).catch(() => undefined); // end any signed-in sessions so a deleted student is logged out immediately
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "STUDENT_DELETED", entity: "user", entityId: row.id });
   res.json({ ok: true });
 });

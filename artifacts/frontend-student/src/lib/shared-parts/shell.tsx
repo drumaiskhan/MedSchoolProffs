@@ -81,7 +81,7 @@ type NavItem = [string, string, typeof LayoutDashboard];
 
 export const navGroups: Array<{ label: string; items: NavItem[] }> = [
   { label: 'Study desk', items: [
-    ['/dashboard', 'Overview', LayoutDashboard], ['/blocks', 'Blocks', BookOpen], ['/flashcards', 'Flashcards', Zap], ['/past-papers', 'Past papers', FileStack], ['/exams', 'Pre-Proffs Exams', ClipboardCheck], ['/ospe-osce', 'OSPE/OSCE', Stethoscope], ['/books', 'Books', Library], ['/progress', 'My progress', TrendingUp], ['/study', 'Study plan', CalendarCheck], ['/ai-visualizer', 'AI Visualizer', Wand2],
+    ['/dashboard', 'Dashboard', LayoutDashboard], ['/blocks', 'Blocks', BookOpen], ['/flashcards', 'Flashcards', Zap], ['/past-papers', 'Past papers', FileStack], ['/exams', 'Pre-Proffs Exams', ClipboardCheck], ['/ospe-osce', 'OSPE/OSCE', Stethoscope], ['/books', 'Books', Library], ['/progress', 'My progress', TrendingUp], ['/study', 'Study plan', CalendarCheck], ['/ai-visualizer', 'AI Visualizer', Wand2], ['/ai-mcq-maker', 'AI MCQ Maker', Sparkles],
   ] },
   { label: 'Your tools', items: [
     ['/notebook', 'My notebook', NotebookPen], ['/saved-sessions', 'Saved sessions', Bookmark], ['/flagged-mcqs', 'Flagged MCQs', Flag], ['/leaderboard', 'Leaderboard', Trophy], ['/challenge', 'Challenge a friend', Swords],
@@ -98,7 +98,8 @@ export function SideNav({ user, onClose }: { user: User; onClose: () => void }) 
   // and on the backend (POST /ai/visualizer refuses directly too).
   const siteContentQ = useQuery({ queryKey: ['site-content'], queryFn: siteContentApi.get });
   const aiVisualizerEnabled = siteContentQ.data?.AI_VISUALIZER_ENABLED !== 'false';
-  const groups = aiVisualizerEnabled ? navGroups : navGroups.map((g) => ({ ...g, items: g.items.filter(([href]) => href !== '/ai-visualizer') }));
+  const aiMcqMakerEnabled = siteContentQ.data?.AI_MCQ_MAKER_ENABLED !== 'false';
+  const groups = navGroups.map((g) => ({ ...g, items: g.items.filter(([href]) => (href !== '/ai-visualizer' || aiVisualizerEnabled) && (href !== '/ai-mcq-maker' || aiMcqMakerEnabled)) }));
   // While a feature-limited trial is live, a student without a paid
   // membership sees which sections the trial doesn't include (lock icon,
   // linking to Membership) instead of tapping in and hitting a 403. Purely
@@ -193,7 +194,7 @@ export function MobileTabBar({ user, onMore }: { user: User; onMore: () => void 
 
 // Hues for the glossy page tiles in the search palette (one per nav destination).
 const NAV_HUE: Record<string, number> = {
-  '/dashboard': 214, '/progress': 228, '/blocks': 205, '/exams': 4, '/past-papers': 22, '/flashcards': 268, '/ai-visualizer': 290, '/books': 38,
+  '/dashboard': 214, '/progress': 228, '/blocks': 205, '/exams': 4, '/past-papers': 22, '/flashcards': 268, '/ai-visualizer': 290, '/ai-mcq-maker': 172, '/books': 38,
   '/notebook': 172, '/saved-sessions': 190, '/flagged-mcqs': 350, '/leaderboard': 45, '/challenge': 12,
   '/payments': 152, '/notifications': 200, '/feedback': 160, '/profile': 240,
 };
@@ -206,7 +207,7 @@ export function QuickJump({ open, value, onChange, onClose }: { open: boolean; v
   const isLocked = useNavLocks(userQ.data as Pick<User, 'role'> | undefined);
   const aiVisualizerEnabled = siteContentQ.data?.AI_VISUALIZER_ENABLED !== 'false';
   const pages: PalettePage[] = navGroups.flatMap((group) => group.items)
-    .filter(([href]) => aiVisualizerEnabled || href !== '/ai-visualizer')
+    .filter(([href]) => (aiVisualizerEnabled || href !== '/ai-visualizer') && (siteContentQ.data?.AI_MCQ_MAKER_ENABLED !== 'false' || href !== '/ai-mcq-maker'))
     .map(([href, label, Icon]) => ({ href, label, icon: Icon, hue: NAV_HUE[href] ?? NAV_HUE_FALLBACK, locked: isLocked(href) }));
   return <CommandPalette open={open} value={value} onChange={onChange} onClose={onClose} pages={pages} />;
 }
