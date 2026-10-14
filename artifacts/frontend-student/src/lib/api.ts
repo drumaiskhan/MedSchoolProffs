@@ -573,7 +573,18 @@ async function shrinkImage(file: File, maxEdge = 1600, quality = 0.82): Promise<
 }
 
 export async function uploadFile(file: File, kind: 'payment-proof' | 'payment-proof-signup' | 'profile-picture' | 'resource' | 'favicon'): Promise<{ storagePath: string; url: string | null }> {
-  const toSend = COMPRESSIBLE_KINDS.has(kind) ? await shrinkImage(file) : file;
+  const picked = COMPRESSIBLE_KINDS.has(kind) ? await shrinkImage(file) : file;
+  // Android WebView (the Capacitor app) hands <input type=file> a File that is
+  // only a lazy handle to a content:// URI. Posting it directly commonly fails
+  // with net::ERR_UPLOAD_FILE_CHANGED, which fetch() reports as a bare
+  // "Failed to fetch" even though the same upload works in a desktop/mobile
+  // browser. Reading the bytes into memory first makes it a plain Blob.
+  let toSend: File = picked;
+  try {
+    toSend = new File([await picked.arrayBuffer()], picked.name, { type: picked.type || file.type });
+  } catch {
+    toSend = picked;
+  }
   const { credentials, authHeaders } = await authInit();
 
   let lastNetworkError: unknown = null;
@@ -600,7 +611,29 @@ export async function uploadFile(file: File, kind: 'payment-proof' | 'payment-pr
     return data;
   }
   console.error('Upload network failure:', lastNetworkError);
-  throw new ApiRequestError(0, 'Could not reach the server. Check your connection and try again.', null);
+
+  // Multipart never got through. In the native app, retry once with the file
+  // as base64 JSON (plain JSON requests are known to work there).
+  if (isNativeApp() && COMPRESSIBLE_KINDS.has(kind)) {
+    try {
+      const bytes = new Uint8Array(await toSend.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const jsonRes = await fetch(`${API_ORIGIN}/api/uploads/json/${kind}`, {
+        method: 'POST', credentials, body: JSON.stringify({ fileName: toSend.name, mimeType: toSend.type, data: btoa(bin) }),
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+      });
+      const jsonData = await jsonRes.json().catch(() => null);
+      if (!jsonRes.ok) throw new ApiRequestError(jsonRes.status, (jsonData && jsonData.error) || 'Upload failed', jsonData);
+      return jsonData;
+    } catch (fallbackErr) {
+      if (fallbackErr instanceof ApiRequestError) throw fallbackErr;
+      lastNetworkError = fallbackErr;
+      console.error('Upload JSON fallback failed:', fallbackErr);
+    }
+  }
+  const reason = lastNetworkError instanceof Error ? `${lastNetworkError.name}: ${lastNetworkError.message}` : String(lastNetworkError);
+  throw new ApiRequestError(0, isNativeApp() ? `Could not reach the server. Check your connection and try again. (${reason})` : 'Could not reach the server. Check your connection and try again.', null);
 }
 
 export const publicApi = {

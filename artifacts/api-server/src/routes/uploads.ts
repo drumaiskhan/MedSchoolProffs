@@ -78,6 +78,46 @@ router.post("/uploads/payment-proof-signup", upload.single("file"), async (req, 
   res.status(201).json({ storagePath, url: resolveFileUrl(storagePath), mimeType: req.file.mimetype });
 });
 
+// Base64/JSON fallback for the mobile app. Some Android WebViews fail to send
+// multipart/form-data file bodies ("Failed to fetch") even though plain JSON
+// requests work, so the client retries here with the file as base64 text.
+// Same validation as the multipart routes; the signup variant stays
+// unauthenticated + IP rate-limited, the others require a session.
+const JSON_UPLOAD_KINDS: Record<string, { folder: string; auth: boolean }> = {
+  "payment-proof-signup": { folder: "payment-proofs", auth: false },
+  "payment-proof": { folder: "payment-proofs", auth: true },
+  "profile-picture": { folder: "profile-pictures", auth: true },
+};
+const JSON_UPLOAD_MIME = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+const JSON_UPLOAD_MAX_BYTES = 18 * 1024 * 1024; // base64 inflates ~33%; stays under the 25mb JSON body limit
+
+router.post("/uploads/json/:kind", async (req, res, next): Promise<void> => {
+  const cfg = JSON_UPLOAD_KINDS[String(req.params.kind)];
+  if (!cfg) { res.status(404).json({ error: "Unknown upload type" }); return; }
+  const run = async (): Promise<void> => {
+    if (!cfg.auth) {
+      const limit = checkRateLimit(`${req.params.kind}:${req.ip || "unknown"}`, 10, 15 * 60 * 1000);
+      if (!limit.allowed) { res.status(429).json({ error: "Too many uploads from this connection. Please try again in a few minutes." }); return; }
+    }
+    const { fileName, mimeType, data } = (req.body ?? {}) as { fileName?: unknown; mimeType?: unknown; data?: unknown };
+    if (typeof data !== "string" || !data) { res.status(400).json({ error: "No file uploaded" }); return; }
+    if (typeof mimeType !== "string" || !JSON_UPLOAD_MIME.includes(mimeType)) { res.status(400).json({ error: "Only PNG, JPEG, WEBP, or PDF files are allowed" }); return; }
+    const buffer = Buffer.from(data.replace(/^data:[^,]*,/, ""), "base64");
+    if (buffer.length === 0) { res.status(400).json({ error: "No file uploaded" }); return; }
+    if (buffer.length > JSON_UPLOAD_MAX_BYTES) { res.status(400).json({ error: "File is too large." }); return; }
+    const name = typeof fileName === "string" && fileName ? fileName.slice(0, 120) : "upload";
+    const storagePath = await uploadFile(buffer, name, mimeType, cfg.folder);
+    res.status(201).json({ storagePath, url: resolveFileUrl(storagePath), mimeType });
+  };
+  try {
+    if (cfg.auth) {
+      requireAuth(req, res, () => { run().catch(next); });
+    } else {
+      await run();
+    }
+  } catch (err) { next(err); }
+});
+
 router.post("/uploads/profile-picture", requireAuth, upload.single("file"), async (req, res): Promise<void> => {
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded" });

@@ -1066,3 +1066,5 @@ No backend / schema / route changes.
 - API: Cloudinary upload stream has a 60s timeout so a stalled upload fails fast with a JSON error.
 - Admin membership plans: duration now has a Days / Months / Years selector (previously hard-coded to months, which also reset a plan's unit on every edit). Expiry maths on the API already supported days.
 - Uploads: payment proof / profile picture size limit raised from 10MB to 30MB (resources/books stay at 50MB). Images are still shrunk in the browser before sending.
+- Mobile app (Capacitor/Android WebView): uploads now read the picked file into memory before POSTing, avoiding ERR_UPLOAD_FILE_CHANGED / "Failed to fetch" on content:// files. In the native app the "could not reach server" message also shows the underlying reason for diagnosis.
+- Mobile app: if the multipart upload cannot be sent, the app retries once by sending the file as base64 JSON to new `POST /api/uploads/json/:kind` (payment-proof-signup, payment-proof, profile-picture; same type checks, rate limit/auth as the multipart routes, 18MB decoded cap).
