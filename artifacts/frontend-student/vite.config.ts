@@ -56,7 +56,6 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2020',        // modern phones: less transpiled/polyfilled code
     cssCodeSplit: true,     // each lazy page ships only its own CSS
-    chunkSizeWarningLimit: 800, // the lazy 'three' chunk (AI Visualizer 3D) is ~700 kB
     rollupOptions: {
       output: {
         // Splits the big, slow-changing dependencies into their own chunk,
@@ -77,7 +76,6 @@ export default defineConfig({
           // they must live in vendor, not in a chunk only some pages need.
           if (/[\\/]node_modules[\\/](react|react-dom|scheduler|wouter|clsx|tailwind-merge|class-variance-authority|@tanstack[\\/]react-query|@tanstack[\\/]query-core)[\\/]/.test(id)) return 'vendor';
           if (/[\\/]node_modules[\\/](recharts|recharts-scale|react-smooth|d3-[^\\/]+|victory-vendor|decimal\.js-light|internmap|lodash|fast-equals|eventemitter3|tiny-invariant)[\\/]/.test(id)) return 'charts';
-          if (/[\\/]node_modules[\\/]three[\\/]/.test(id)) return 'three';
           if (/[\\/]node_modules[\\/](framer-motion|motion-dom|motion-utils)[\\/]/.test(id)) return 'motion';
           if (id.includes('@radix-ui') || id.includes('@floating-ui')) return 'radix';
           if (id.includes('lucide-react')) return 'icons';

@@ -775,7 +775,7 @@ export type ModelPart = {
 export type ModelSpec = { type: 'model'; title: string; description: string; parts: ModelPart[] };
 // v69: flat interactive 2D widget (sandboxed HTML/SVG/JS written by the AI) — the default.
 export type WidgetSpec = { type: 'widget'; title: string; description: string; html: string };
-export type AnyVisualization = VisualizationSpec | ModelSpec | WidgetSpec;
+export type AnyVisualization = WidgetSpec;
 export type VisualizerMode = 'auto' | 'model' | 'scene' | 'widget';
 
 // ---------------------------------------------------------------------------
@@ -811,7 +811,7 @@ export const challengesApi = {
 export const aiVisualizerApi = {
   // Generation runs as a background job (it can outlast the host proxy's request
   // limit): start it, then poll until it's done.
-  generate: async (prompt: string, mode: VisualizerMode = 'auto'): Promise<{ visualization: AnyVisualization }> => {
+  generate: async (prompt: string, mode: VisualizerMode = 'widget'): Promise<{ visualization: AnyVisualization }> => {
     const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) });
     const deadline = Date.now() + 4 * 60 * 1000;
     let failures = 0;

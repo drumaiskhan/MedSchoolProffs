@@ -33,7 +33,7 @@ const WIDGET_MAX_TOKENS = 7000;
 const WIDGET_RETRY_MAX_TOKENS = 9000;
 // Runs as a background job (see routes/ai-visualizer.ts), so the old ~26s proxy
 // ceiling no longer applies; keep a sane overall cap so a retry can still fit.
-const MAX_TOTAL_GENERATION_MS = 150_000;
+const MAX_TOTAL_GENERATION_MS = 170_000;
 
 const WIDGET_INSTRUCTIONS = `You are an interactive medical-education widget designer for MedschoolProffs, an MBBS/BDS exam-prep platform. A student describes a physiological, anatomical, pharmacological, pathological or biochemical concept. You respond with ONE self-contained, FLAT 2D interactive widget (HTML + inline CSS + inline SVG + vanilla JavaScript) that makes the concept click by letting the student change something and see the result immediately. NOT 3D, no WebGL, no canvas 3D.
 
@@ -115,8 +115,15 @@ function looksTruncated(html: string): boolean {
   return !/<\/script>\s*$/i.test(html.trim()) && !/<\/(div|section|main)>\s*$/i.test(html.trim());
 }
 
-async function attempt(prompt: string, maxTokens: number) {
-  const raw = await runPrompt(prompt, maxTokens, false);
+// One provider call may now take up to this long (it used to be cut at 25s, which
+// a 7k-token widget can never finish in -> every provider "timed out" and the
+// page just kept loading).
+const WIDGET_CALL_TIMEOUT_MS = 100_000;
+
+async function attempt(prompt: string, maxTokens: number, deadlineAt: number) {
+  const remaining = deadlineAt - Date.now();
+  if (remaining < 10_000) throw new InvalidVisualizationError("Response was too long to complete in time — try a simpler or more specific prompt.");
+  const raw = await runPrompt(prompt, maxTokens, false, undefined, { timeoutMs: Math.min(WIDGET_CALL_TIMEOUT_MS, remaining), deadlineAt });
   const cleaned = stripFences(raw);
   const problem = validate(cleaned);
   return { raw, cleaned, problem, truncated: !!problem && looksTruncated(cleaned) };
@@ -128,7 +135,8 @@ export async function generateWidget(userPrompt: string): Promise<WidgetSpecT> {
   const startedAt = Date.now();
   const base = buildWidgetPrompt(trimmed);
 
-  const first = await attempt(base, WIDGET_MAX_TOKENS);
+  const deadlineAt = startedAt + MAX_TOTAL_GENERATION_MS;
+  const first = await attempt(base, WIDGET_MAX_TOKENS, deadlineAt);
   if (!first.problem) return { type: "widget", ...extractMeta(first.cleaned, trimmed.slice(0, 80)) };
 
   if (Date.now() - startedAt > MAX_TOTAL_GENERATION_MS * 0.6) {
@@ -137,7 +145,7 @@ export async function generateWidget(userPrompt: string): Promise<WidgetSpecT> {
   const retryPrompt = first.truncated
     ? `${base}\n\nIMPORTANT: Your previous response was cut off. Make the widget simpler: one diagram, at most 2 controls, under 200 lines, and finish with </script>.`
     : `${base}\n\nIMPORTANT: Your previous response was rejected: ${first.problem}. Fix it and return the complete HTML fragment following every constraint.`;
-  const second = await attempt(retryPrompt, first.truncated ? WIDGET_RETRY_MAX_TOKENS : WIDGET_MAX_TOKENS);
+  const second = await attempt(retryPrompt, first.truncated ? WIDGET_RETRY_MAX_TOKENS : WIDGET_MAX_TOKENS, deadlineAt);
   if (!second.problem) return { type: "widget", ...extractMeta(second.cleaned, trimmed.slice(0, 80)) };
   throw new InvalidVisualizationError(second.problem, second.raw);
 }

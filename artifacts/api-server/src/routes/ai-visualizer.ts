@@ -6,7 +6,7 @@ import { db, aiVisualizerLogsTable, usersTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor, requireAdmin } from "../middlewares/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import { explainStep, AiNotConfiguredError, InvalidVisualizationError } from "../lib/aiVisualizer";
-import { generateAny } from "../lib/aiAnatomy";
+import { generateWidget } from "../lib/aiWidget";
 import { getAllSettings } from "../lib/settings";
 
 const router: IRouter = Router();
@@ -59,7 +59,15 @@ router.get("/ai/visualizer/job/:id", requireAuth, requireMembershipFor("ai_visua
 async function runJob(jobId: string, userId: number, prompt: string, mode: "auto" | "model" | "scene" | "widget"): Promise<void> {
   const job = jobs.get(jobId)!;
   try {
-    const visualization = await generateAny(prompt, mode);
+    // 2D interactive widgets only (3D model/scene modes were removed). `mode` is
+    // still accepted so a stale open tab doesn't get a 400, but is ignored.
+    void mode;
+    // Hard guard: whatever happens inside, the job ALWAYS ends (done or error) so
+    // the page can never spin forever.
+    const visualization = await Promise.race([
+      generateWidget(prompt),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new InvalidVisualizationError("The visualization was too long to complete in time — try a simpler or more specific prompt.")), 185_000).unref?.()),
+    ]);
     await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: visualization.type });
     Object.assign(job, { status: "done", visualization });
   } catch (err) {

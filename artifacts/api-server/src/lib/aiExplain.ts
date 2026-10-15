@@ -15,6 +15,7 @@
  * lib/email.ts).
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getSetting } from "./settings";
 import { getPublicAppUrl } from "./publicAppUrl";
 
@@ -32,14 +33,24 @@ import { getPublicAppUrl } from "./publicAppUrl";
 // ceilings (commonly 30-100s) rather than compounding past them.
 const AI_FETCH_TIMEOUT_MS = 25_000;
 
+// Long-running BACKGROUND jobs (the AI Visualizer's 2D widgets write ~7k tokens,
+// which takes 40-120s) are not bound by the proxy's request ceiling, so they
+// can ask for a longer per-call timeout and an overall deadline. Everything
+// else keeps the 25s default. Carried with AsyncLocalStorage so it reaches the
+// provider fetches without threading a parameter through every function.
+export interface AiRunOptions { timeoutMs?: number; deadlineAt?: number }
+const aiRunOptions = new AsyncLocalStorage<AiRunOptions>();
+
 async function fetchWithTimeout(url: string, init: RequestInit, providerLabel: string): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS);
+  const opts = aiRunOptions.getStore();
+  const AI_FETCH_TIMEOUT_MS_EFFECTIVE = opts?.timeoutMs ?? AI_FETCH_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), AI_FETCH_TIMEOUT_MS_EFFECTIVE);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`${providerLabel} took too long to respond (over ${AI_FETCH_TIMEOUT_MS / 1000}s) — try again, or try a shorter/simpler prompt.`);
+      throw new Error(`${providerLabel} took too long to respond (over ${Math.round(AI_FETCH_TIMEOUT_MS_EFFECTIVE / 1000)}s) — try again, or try a shorter/simpler prompt.`);
     }
     throw err;
   } finally {
@@ -753,14 +764,17 @@ async function runOnProvider(resolved: ResolvedProvider, prompt: string, maxToke
  * failed, with a message that lists what each one said so an admin can tell
  * "everything is actually down" apart from "nothing is configured."
  */
-export async function runPrompt(prompt: string, maxTokens = 400, jsonMode: JsonMode = false, modelOverride?: string): Promise<string> {
+export async function runPrompt(prompt: string, maxTokens = 400, jsonMode: JsonMode = false, modelOverride?: string, options?: AiRunOptions): Promise<string> {
   const candidates = await resolveProviders(modelOverride);
   if (!candidates.length) throw new AiNotConfiguredError();
 
   const failures: string[] = [];
   for (const candidate of candidates) {
+    // Out of overall time budget: stop failing over (each extra provider could
+    // otherwise add another full timeout and leave the student waiting minutes).
+    if (options?.deadlineAt && Date.now() > options.deadlineAt - 5_000 && failures.length) break;
     try {
-      return await runOnProvider(candidate, prompt, maxTokens, jsonMode);
+      return await aiRunOptions.run(options ?? {}, () => runOnProvider(candidate, prompt, maxTokens, jsonMode));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failures.push(`${candidate.label} (${candidate.provider}): ${message}`);

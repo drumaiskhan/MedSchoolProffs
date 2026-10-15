@@ -1,3 +1,11 @@
+## v74 — AI Visualizer: fix endless loading, 2D only
+- ROOT CAUSE: every AI provider call was hard-capped at 25s (`AI_FETCH_TIMEOUT_MS`, a leftover from Netlify's 26s proxy limit). A 2D widget is ~7k tokens and takes 40-120s, so every provider timed out, the job failed over through ALL configured providers (25s each, x2 attempts) and the page spun until the client gave up.
+- `aiExplain.ts`: `runPrompt` takes optional `{ timeoutMs, deadlineAt }` (AsyncLocalStorage -> `fetchWithTimeout`); provider failover stops once the deadline is near. Default 25s for everything else is unchanged.
+- `aiWidget.ts`: 100s per provider call, 170s overall budget.
+- `routes/ai-visualizer.ts`: 2D widgets only; hard 185s guard so a job always ends (done or error).
+- Removed all 3D (three.js): Scene3D, Model3D, ModelStage, VisualizerStage, modelMesh, layout3d, Calculator, schema, visualizer3d.css; page is now 2D-only; `three` + `@types/three` dropped from package.json and the vite chunk rule. This also makes pnpm-lock.yaml match package.json again (it never had `three`).
+- NOTE: not built/typechecked here. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`.
+
 ## v73 — fix "Session not saved" after finishing a practice session
 - `POST /practice-sessions` loaded the whole MCQ bank on every submit; it now fetches only the graded rows (id + correctAnswer) with `inArray`. On Hostinger the slow request was cut off by the proxy (504, no CORS headers), which the browser reports as a generic network error — the toast then showed the "Couldn't record this session" text.
 - `bumpStreak` failure after the session is saved no longer fails the request.
