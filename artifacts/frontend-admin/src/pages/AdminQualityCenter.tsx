@@ -70,7 +70,7 @@ export default function AdminQualityCenter() {
   const [cmp, setCmp] = useState<DupPair | null>(null);
   const [del, setDel] = useState<number | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(dismissedSet);
-  const mcqs = useQuery({ queryKey: ['admin-mcqs-all'], queryFn: mcqAdminApi.list });
+  const mcqs = useQuery({ queryKey: ['admin-mcqs-all'], queryFn: () => mcqAdminApi.list() });
   const flags = useQuery({ queryKey: ['admin-flags'], queryFn: flaggedMcqsApi.list });
   const refresh = () => { qc.invalidateQueries({ queryKey: ['admin-mcqs-all'] }); qc.invalidateQueries({ queryKey: ['admin-flags'] }); };
   const fail = (e: unknown) => toast({ title: 'Action failed', description: e instanceof Error ? e.message : 'Try again.', variant: 'destructive' });

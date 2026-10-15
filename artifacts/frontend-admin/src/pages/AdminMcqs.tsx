@@ -47,7 +47,7 @@ function AdminMcqs() {
   // comment), so the explanation badges and the new status filter below
   // couldn't actually work against it. This is the same admin-only /admin/mcqs
   // data the tree view already uses, so switching views doesn't refetch.
-  const mcqsTreeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list });
+  const mcqsTreeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.treeQueryFn });
   const allMcqs = mcqsTreeQ.data ?? [];
   // Search + explanation-status filter (the latter driven by clicking a
   // tile in ExplanationCoverage below) — applied by McqBankTree itself now

@@ -1,3 +1,4 @@
+import { queryClient } from '@/lib/query-client';
 // Hand-written fetch helpers for endpoints added on top of the generated
 // api-client-react hooks (register/login flows, academic structure CRUD,
 // platform settings, uploads, audit logs). Kept separate from the generated
@@ -504,9 +505,38 @@ export interface AdminMcqRow {
 export interface McqPath { program: string | null; year: number | null; blockId: number | null; block: string | null; module: string | null; subject: string | null; topic: string | null }
 /** Source tag the student AI MCQ Maker gives the questions it files into the Qbank. */
 export const STUDENT_AI_SOURCE = 'student_ai';
+export const MCQ_BATCH_SIZE = 150;
+async function loadMcqBankInBatches(onBatch?: (soFar: AdminMcqRow[], done: boolean) => void): Promise<AdminMcqRow[]> {
+  const all: AdminMcqRow[] = [];
+  const seen = new Set<number>();
+  for (let offset = 0; ; offset += MCQ_BATCH_SIZE) {
+    let page: AdminMcqRow[];
+    try { page = await mcqAdminApi.listPage(offset, MCQ_BATCH_SIZE); }
+    catch {
+      // One retry for a transient gateway hiccup; keep what we already have if it fails again.
+      try { page = await mcqAdminApi.listPage(offset, MCQ_BATCH_SIZE); }
+      catch (err2) { if (all.length) { onBatch?.(all, true); return all; } throw err2; }
+    }
+    for (const row of page) if (!seen.has(row.id)) { seen.add(row.id); all.push(row); }
+    if (page.length < MCQ_BATCH_SIZE) break;
+    onBatch?.([...all], false);
+  }
+  onBatch?.(all, true);
+  return all;
+}
+
 export const mcqAdminApi = {
   remove: (id: number) => request<{ ok: true }>(`/mcqs/${id}`, { method: 'DELETE' }),
-  list: () => request<AdminMcqRow[]>('/admin/mcqs'),
+  // One page of the bank (see GET /admin/mcqs ?limit=&offset=).
+  listPage: (offset: number, limit: number) => request<AdminMcqRow[]>(`/admin/mcqs?limit=${limit}&offset=${offset}`),
+  // Whole bank, fetched batch by batch (MCQ_BATCH_SIZE at a time) instead of
+  // one giant request that times out / returns nothing on a big bank.
+  // `onBatch` receives everything loaded so far after each batch so the UI
+  // can show questions while the rest is still arriving.
+  list: (onBatch?: (soFar: AdminMcqRow[], done: boolean) => void): Promise<AdminMcqRow[]> => loadMcqBankInBatches(typeof onBatch === 'function' ? onBatch : undefined),
+  // Use as `queryFn` for ['admin-mcqs-tree']: same as list() but writes each
+  // batch into the query cache as it lands, so the tree fills in progressively.
+  treeQueryFn: () => loadMcqBankInBatches((soFar, done) => { if (!done) queryClient.setQueryData(['admin-mcqs-tree'], soFar); }),
   publish: (id: number) => request<AdminMcqRow>(`/mcqs/${id}/publish`, { method: 'POST' }),
   update: (id: number, body: Partial<{ question: string; options: string[]; correctAnswer: string | null; explanation: string | null; optionExplanations: (string | null)[] | null; reference: string | null; difficulty: string; status: string; moduleId: number; subjectId: number; topicId: number }>) =>
     request<AdminMcqRow>(`/mcqs/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

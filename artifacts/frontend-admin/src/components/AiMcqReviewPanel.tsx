@@ -81,7 +81,7 @@ function TreeNode({ node, depth, defaultOpen }: { node: Node; depth: number; def
 }
 
 export function AiMcqReviewPanel() {
-  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list });
+  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.treeQueryFn });
   const [state, setState] = useState<'all' | 'draft' | 'published'>('all');
   const [open, setOpen] = useState(false);
   const aiRows = (treeQ.data ?? []).filter((r) => r.source === STUDENT_AI_SOURCE && r.examId === null && r.pastPaperId === null);

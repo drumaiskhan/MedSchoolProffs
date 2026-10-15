@@ -652,7 +652,7 @@ export function BackupScopePicker({ blocks, allModules, onChange }: { blocks: Ad
 
 
 export function McqBankTree({ modules, blocks, search, statusFilter, difficultyFilter, publishFilter, sourceFilter, selectedIds, onToggleSelect }: { modules: AdminModule[]; blocks: AdminBlock[]; search?: string; statusFilter?: ExplanationStatus | null; difficultyFilter?: string | null; publishFilter?: 'published' | 'draft' | null; sourceFilter?: string | null; selectedIds: Set<number>; onToggleSelect: (id: number) => void }) {
-  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list });
+  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.treeQueryFn });
   const allRows = treeQ.data ?? [];
   // Search box + explanation-status filter (the latter driven by clicking a
   // tile in ExplanationCoverage) — this used to only apply to the flat list;
@@ -692,6 +692,7 @@ export function McqBankTree({ modules, blocks, search, statusFilter, difficultyF
   const programYearGroups = groupByProgramYear([...blockLeaves, ...standaloneLeaves]);
   const showBlockLabel = blocks.length > 0 || standaloneLeaves.length > 0;
   return <div className="space-y-4">
+    {treeQ.isFetching && <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-[11px] font-bold text-muted-foreground" data-testid="text-mcq-bank-loading-more"><Loader2 size={13} className="animate-spin text-primary" /> Loading questions… {allRows.length} so far</div>}
     {programYearGroups.map(({ programLabel, yearLabel, groups }) => <McqTreeYearGroup key={`${programLabel}-${yearLabel}`} programLabel={programLabel} yearLabel={yearLabel} groups={groups} showBlockLabel={showBlockLabel} rows={rows} countByModule={countByModule} mcqsByTopic={mcqsByTopic} selectedIds={selectedIds} onToggleSelect={onToggleSelect} />)}
     {!!trulyUnassigned.length && <div className="rounded-2xl border border-dashed border-border bg-card p-4"><p className="mb-3 text-xs font-bold text-muted-foreground">{trulyUnassigned.length} question{trulyUnassigned.length === 1 ? '' : 's'} with no module/subject/topic, exam, or past paper</p><div className="space-y-2">{trulyUnassigned.map((m) => <McqTreeRow key={m.id} mcq={m} selectedIds={selectedIds} onToggleSelect={onToggleSelect} showPath />)}</div></div>}
   </div>;
@@ -803,7 +804,7 @@ export function PastPaperEditForm({ paper, onSave, onCancel, saving, collegeOpti
 // question there.
 
 export function PastPaperQuestionsList({ pastPaperId }: { pastPaperId: number }) {
-  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list });
+  const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.treeQueryFn });
   const rows = (treeQ.data ?? []).filter((m) => m.pastPaperId === pastPaperId);
   if (treeQ.isLoading) return <InlineLoading />;
   if (!rows.length) return <p className="text-[11px] text-muted-foreground">No questions yet — upload some below.</p>;
@@ -1157,7 +1158,7 @@ export function PaperMakerPanel({ exam }: { exam: AdminExam }) {
 
   const blocksQ = useQuery({ queryKey: ['admin-blocks'], queryFn: blockAdminApi.listAll, enabled: open });
   const modulesQ = useQuery({ queryKey: ['admin-modules'], queryFn: moduleAdminApi.listAll, enabled: open });
-  const mcqsTreeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list, enabled: open });
+  const mcqsTreeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.treeQueryFn, enabled: open });
   const existingQuestionsQ = useQuery({ queryKey: ['exam-questions', exam.id], queryFn: () => examsAdminApi.getQuestions(exam.id) });
 
   const blocks = blocksQ.data ?? [];

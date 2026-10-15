@@ -951,6 +951,10 @@ router.get("/admin/mcqs", requireAdmin, async (req, res): Promise<void> => {
   // wasn't working. Excluded by default now; ?includeArchived=true opts back
   // in for admins who want to audit/restore something they deleted.
   const includeArchived = req.query.includeArchived === "true";
+  const rawLimit = Number(req.query.limit);
+  const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : null;
+  const rawOffset = Number(req.query.offset);
+  const pageOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
   const rows = await db.select().from(mcqsTable).where(and(
     params.data.search ? ilike(mcqsTable.question, `%${params.data.search}%`) : undefined,
     params.data.moduleId ? eq(mcqsTable.moduleId, params.data.moduleId) : undefined,
@@ -958,7 +962,12 @@ router.get("/admin/mcqs", requireAdmin, async (req, res): Promise<void> => {
     params.data.topicId ? eq(mcqsTable.topicId, params.data.topicId) : undefined,
     params.data.difficulty ? eq(mcqsTable.difficulty, params.data.difficulty) : undefined,
     includeArchived ? undefined : ne(mcqsTable.status, "archived"),
-  )).orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, desc(mcqsTable.createdAt));
+  )).orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, desc(mcqsTable.createdAt), asc(mcqsTable.id))
+    // Batch loading: the admin UI asks for the bank a page at a time
+    // (?limit=&offset=) so a big bank never has to arrive as one huge
+    // response that times out on a phone / hosting gateway. No limit =
+    // the old "everything" behaviour for any caller that still wants it.
+    .limit(pageLimit ?? 1_000_000).offset(pageOffset);
   // Each row also carries its curriculum path (program/year > block > module > subject > topic, names
   // + ids), so the admin UI can show WHERE a question is filed - above all for questions the AI MCQ
   // Maker saved in the background - instead of only the flat question text.
