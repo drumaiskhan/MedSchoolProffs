@@ -505,21 +505,37 @@ export interface AdminMcqRow {
 export interface McqPath { program: string | null; year: number | null; blockId: number | null; block: string | null; module: string | null; subject: string | null; topic: string | null }
 /** Source tag the student AI MCQ Maker gives the questions it files into the Qbank. */
 export const STUDENT_AI_SOURCE = 'student_ai';
-export const MCQ_BATCH_SIZE = 20000;
+// A 20,000-row request returned 503 on the host (the response is too big / slow for the
+// serverless gateway), so the bank is pulled in moderate pages, a few pages at a time in
+// parallel. If a page still fails, the page size is halved automatically and it retries.
+export const MCQ_BATCH_SIZE = 1500;
+const MCQ_MIN_BATCH = 250;
+const MCQ_PARALLEL_PAGES = 3;
 async function loadMcqBankInBatches(onBatch?: (soFar: AdminMcqRow[], done: boolean) => void): Promise<AdminMcqRow[]> {
   const all: AdminMcqRow[] = [];
   const seen = new Set<number>();
-  for (let offset = 0; ; offset += MCQ_BATCH_SIZE) {
-    let page: AdminMcqRow[];
-    try { page = await mcqAdminApi.listPage(offset, MCQ_BATCH_SIZE); }
-    catch {
-      // One retry for a transient gateway hiccup; keep what we already have if it fails again.
-      try { page = await mcqAdminApi.listPage(offset, MCQ_BATCH_SIZE); }
-      catch (err2) { if (all.length) { onBatch?.(all, true); return all; } throw err2; }
+  let size = MCQ_BATCH_SIZE;
+  let failsAtMin = 0;
+  let finished = false;
+  while (!finished) {
+    const start = all.length; // rows are in a stable order, so "rows so far" is the next offset
+    const settled = await Promise.allSettled(
+      Array.from({ length: MCQ_PARALLEL_PAGES }, (_, i) => mcqAdminApi.listPage(start + i * size, size)),
+    );
+    let failed = false;
+    for (const r of settled) {
+      if (r.status === 'rejected') { failed = true; break; }
+      for (const row of r.value) if (!seen.has(row.id)) { seen.add(row.id); all.push(row); }
+      if (r.value.length < size) { finished = true; break; }
     }
-    for (const row of page) if (!seen.has(row.id)) { seen.add(row.id); all.push(row); }
-    if (page.length < MCQ_BATCH_SIZE) break;
-    onBatch?.([...all], false);
+    if (failed && !finished) {
+      if (size > MCQ_MIN_BATCH) { size = Math.max(MCQ_MIN_BATCH, Math.floor(size / 2)); }
+      else if (++failsAtMin >= 3) {
+        if (all.length) { onBatch?.(all, true); return all; }
+        throw new Error('Could not load the MCQ bank');
+      }
+    }
+    if (!finished) onBatch?.([...all], false);
   }
   onBatch?.(all, true);
   return all;
