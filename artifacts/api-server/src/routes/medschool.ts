@@ -952,7 +952,7 @@ router.get("/admin/mcqs", requireAdmin, async (req, res): Promise<void> => {
   // in for admins who want to audit/restore something they deleted.
   const includeArchived = req.query.includeArchived === "true";
   const rawLimit = Number(req.query.limit);
-  const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : null;
+  const pageLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 20000) : null;
   const rawOffset = Number(req.query.offset);
   const pageOffset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
   const rows = await db.select().from(mcqsTable).where(and(

@@ -505,7 +505,7 @@ export interface AdminMcqRow {
 export interface McqPath { program: string | null; year: number | null; blockId: number | null; block: string | null; module: string | null; subject: string | null; topic: string | null }
 /** Source tag the student AI MCQ Maker gives the questions it files into the Qbank. */
 export const STUDENT_AI_SOURCE = 'student_ai';
-export const MCQ_BATCH_SIZE = 150;
+export const MCQ_BATCH_SIZE = 20000;
 async function loadMcqBankInBatches(onBatch?: (soFar: AdminMcqRow[], done: boolean) => void): Promise<AdminMcqRow[]> {
   const all: AdminMcqRow[] = [];
   const seen = new Set<number>();
