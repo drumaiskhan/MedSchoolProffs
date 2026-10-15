@@ -1,12 +1,13 @@
 import { Router, type IRouter } from "express";
-import { desc } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { randomUUID } from "crypto";
-import { db, aiVisualizerLogsTable, usersTable } from "@workspace/db";
+import { db, aiVisualizerLogsTable, aiVisualizerLibraryTable, usersTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor, requireAdmin } from "../middlewares/auth";
 import { checkRateLimit } from "../lib/rateLimit";
 import { explainStep, AiNotConfiguredError, InvalidVisualizationError } from "../lib/aiVisualizer";
 import { generateWidget } from "../lib/aiWidget";
+import { findSavedWidget, saveWidget } from "../lib/widgetLibrary";
 import { getAllSettings } from "../lib/settings";
 
 const router: IRouter = Router();
@@ -21,7 +22,7 @@ setInterval(() => { const cutoff = Date.now() - 15 * 60 * 1000; for (const [id, 
 
 // `mode`: "auto" picks a solid anatomy model for structures ("tibia", "draw the heart")
 // and the node/flow scene for processes and comparisons; the student can force either.
-const VisualizerBody = z.object({ prompt: z.string().min(3).max(500), mode: z.enum(["auto", "model", "scene", "widget"]).optional() });
+const VisualizerBody = z.object({ prompt: z.string().min(3).max(500), mode: z.enum(["auto", "model", "scene", "widget"]).optional(), fresh: z.boolean().optional() });
 
 router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer"), async (req, res): Promise<void> => {
   // Defense in depth: the student sidebar already hides this page when
@@ -41,10 +42,10 @@ router.post("/ai/visualizer", requireAuth, requireMembershipFor("ai_visualizer")
   // away and the client polls GET /ai/visualizer/job/:id. In-memory (same
   // single-process assumption as rateLimit.ts).
   const userId = req.user!.id;
-  const { prompt, mode } = parsed.data;
+  const { prompt, mode, fresh } = parsed.data;
   const jobId = randomUUID();
   jobs.set(jobId, { userId, status: "pending", createdAt: Date.now() });
-  void runJob(jobId, userId, prompt, mode ?? "auto");
+  void runJob(jobId, userId, prompt, mode ?? "auto", fresh === true);
   res.status(202).json({ jobId });
 });
 
@@ -56,7 +57,7 @@ router.get("/ai/visualizer/job/:id", requireAuth, requireMembershipFor("ai_visua
   res.json({ status: "done", visualization: job.visualization });
 });
 
-async function runJob(jobId: string, userId: number, prompt: string, mode: "auto" | "model" | "scene" | "widget"): Promise<void> {
+async function runJob(jobId: string, userId: number, prompt: string, mode: "auto" | "model" | "scene" | "widget", fresh = false): Promise<void> {
   const job = jobs.get(jobId)!;
   try {
     // 2D interactive widgets only (3D model/scene modes were removed). `mode` is
@@ -64,11 +65,25 @@ async function runJob(jobId: string, userId: number, prompt: string, mode: "auto
     void mode;
     // Hard guard: whatever happens inside, the job ALWAYS ends (done or error) so
     // the page can never spin forever.
+    // Saved library first: a repeat/near-identical topic is served with no AI call at all
+    // (zero tokens, instant). `fresh` (the student's "Regenerate") skips it and replaces the saved copy.
+    if (!fresh) {
+      try {
+        const saved = await findSavedWidget(prompt);
+        if (saved) {
+          const reused = { type: "widget" as const, title: saved.title, description: saved.description, html: saved.html };
+          await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: "widget" });
+          Object.assign(job, { status: "done", visualization: reused });
+          return;
+        }
+      } catch (err) { console.error("widget library lookup failed (generating instead)", err); }
+    }
     const visualization = await Promise.race([
       generateWidget(prompt),
       new Promise<never>((_, reject) => setTimeout(() => reject(new InvalidVisualizationError("The visualization was too long to complete in time — try a simpler or more specific prompt.")), 255_000).unref?.()),
     ]);
     await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: visualization.type });
+    try { await saveWidget(prompt, visualization); } catch (err) { console.error("saving widget to library failed", err); }
     Object.assign(job, { status: "done", visualization });
   } catch (err) {
     const errorMessage = err instanceof AiNotConfiguredError ? err.message : err instanceof InvalidVisualizationError ? `Invalid AI output: ${err.issues}` : (err instanceof Error ? err.message.slice(0, 300) : "Unknown error");
@@ -116,6 +131,30 @@ router.get("/admin/ai-visualizer-logs", requireAdmin, async (req, res): Promise<
   const users = userIds.length ? await db.select().from(usersTable) : [];
   const userMap = new Map(users.filter((u) => userIds.includes(u.id)).map((u) => [u.id, { name: u.name, email: u.email }]));
   res.json(rows.map((row) => ({ ...row, student: userMap.get(row.userId) ?? { name: "Unknown", email: "—" } })));
+});
+
+
+// ---------------------------------------------------------------------------
+// Admin: the saved widget library (served to students with no AI call)
+// ---------------------------------------------------------------------------
+router.get("/admin/ai-visualizer-library", requireAdmin, async (_req, res): Promise<void> => {
+  const t = aiVisualizerLibraryTable;
+  const rows = await db.select({ id: t.id, prompt: t.prompt, title: t.title, hits: t.hits, version: t.version, lastUsedAt: t.lastUsedAt, createdAt: t.createdAt, bytes: sql<number>`length(${t.html})` })
+    .from(t).orderBy(desc(t.hits), desc(t.createdAt)).limit(300);
+  const totals = await db.select({ count: sql<number>`count(*)`, hits: sql<number>`coalesce(sum(${t.hits}), 0)` }).from(t);
+  res.json({ entries: rows, count: Number(totals[0]?.count ?? 0), totalReuses: Number(totals[0]?.hits ?? 0) });
+});
+
+router.delete("/admin/ai-visualizer-library/:id", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.delete(aiVisualizerLibraryTable).where(eq(aiVisualizerLibraryTable.id, id));
+  res.json({ ok: true });
+});
+
+router.delete("/admin/ai-visualizer-library", requireAdmin, async (_req, res): Promise<void> => {
+  await db.delete(aiVisualizerLibraryTable);
+  res.json({ ok: true });
 });
 
 export default router;

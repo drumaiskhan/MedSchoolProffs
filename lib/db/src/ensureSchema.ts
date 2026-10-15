@@ -551,6 +551,20 @@ CREATE TABLE IF NOT EXISTS med_ai_visualizer_logs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS med_ai_visualizer_library (
+  id SERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  prompt TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  html TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  hits INTEGER NOT NULL DEFAULT 0,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS med_flagged_mcqs (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL,

@@ -21,11 +21,13 @@ function AiVisualizer() {
   const aiVisualizerEnabled = siteContentQ.data?.AI_VISUALIZER_ENABLED !== 'false';
 
   const generate = useMutation({
-    mutationFn: (p: string) => aiVisualizerApi.generate(p),
+    mutationFn: ({ p, fresh }: { p: string; fresh: boolean }) => aiVisualizerApi.generate(p, fresh),
     onSuccess: (data) => { setSpec(data.visualization); setVersion((v) => v + 1); },
   });
 
-  const submit = () => { if (prompt.trim().length >= 3 && !generate.isPending) generate.mutate(prompt.trim()); };
+  const run = (fresh: boolean) => { if (prompt.trim().length >= 3 && !generate.isPending) generate.mutate({ p: prompt.trim(), fresh }); };
+  const submit = () => run(false); // repeat topics come from the saved library (no AI call)
+  const regenerate = () => run(true); // "Regenerate" always builds a new one and replaces the saved copy
   const startOver = () => { setSpec(null); setPrompt(''); generate.reset(); };
 
   if (!siteContentQ.isLoading && !aiVisualizerEnabled) return <EmptyState icon={Wand2} title="AI Visualizer is turned off" body="This feature isn't available right now — check back later." />;
@@ -85,7 +87,7 @@ function AiVisualizer() {
         />
       </div>
       <div className="flex gap-2">
-        <button onClick={submit} disabled={generate.isPending || prompt.trim().length < 3} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-extrabold text-primary-foreground disabled:opacity-50 sm:flex-none" data-testid="button-visualizer-regenerate">
+        <button onClick={regenerate} disabled={generate.isPending || prompt.trim().length < 3} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-extrabold text-primary-foreground disabled:opacity-50 sm:flex-none" data-testid="button-visualizer-regenerate">
           {generate.isPending ? <BrandSpinner size={13} /> : <RotateCcw size={13} />}{generate.isPending ? 'Generating…' : 'Regenerate'}
         </button>
         <button onClick={startOver} className="inline-flex h-10 flex-1 items-center justify-center rounded-xl border border-border bg-card px-4 text-xs font-bold hover:bg-muted sm:flex-none" data-testid="button-visualizer-new">New</button>

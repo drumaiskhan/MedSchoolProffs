@@ -33,12 +33,45 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // background refetches of data nothing has touched.
 import { EmptyState, SectionHeader, Stat, cn } from '@/lib/shared';
 
+function SavedLibrary() {
+  const lib = useQuery({ queryKey: ['admin-ai-visualizer-library'], queryFn: () => aiVisualizerAdminApi.library() });
+  const refresh = () => lib.refetch();
+  const del = useMutation({ mutationFn: (id: number) => aiVisualizerAdminApi.deleteLibraryEntry(id), onSuccess: () => { void refresh(); } });
+  const clear = useMutation({ mutationFn: () => aiVisualizerAdminApi.clearLibrary(), onSuccess: () => { void refresh(); } });
+  const d = lib.data;
+  return <div className="mb-8 rounded-2xl border border-border bg-card p-5" data-testid="card-ai-visualizer-library">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 className="text-sm font-extrabold">Saved widget library</h3>
+        <p className="mt-1 text-xs text-muted-foreground">Every successful visualization is saved. Repeat or near-identical prompts are served from here instantly with no AI call, so no tokens are used.</p>
+      </div>
+      {!!d?.count && <button onClick={() => { if (window.confirm('Delete every saved widget? Students will get freshly generated ones (and the library refills).')) clear.mutate(); }} className="rounded-xl border border-destructive/40 px-3 py-2 text-xs font-bold text-destructive hover:bg-destructive/10" data-testid="button-clear-visualizer-library">Clear library</button>}
+    </div>
+    <div className="mt-4 grid grid-cols-2 gap-3">
+      <Stat label="Saved widgets" value={d?.count ?? 0} />
+      <Stat label="AI generations saved" value={d?.totalReuses ?? 0} />
+    </div>
+    <div className="mt-4 max-h-80 space-y-2 overflow-auto">
+      {(d?.entries ?? []).map((e) => <div key={e.id} className="flex items-start justify-between gap-3 rounded-xl border border-border px-3 py-2" data-testid={`row-visualizer-library-${e.id}`}>
+        <div className="min-w-0">
+          <div className="truncate text-xs font-bold">{e.title}</div>
+          <div className="truncate text-[11px] text-muted-foreground">{e.prompt}</div>
+          <div className="text-[10px] text-muted-foreground">{e.hits} reuse{e.hits === 1 ? '' : 's'} · {(e.bytes / 1024).toFixed(1)} KB · saved {new Date(e.createdAt).toLocaleDateString()}</div>
+        </div>
+        <button onClick={() => del.mutate(e.id)} className="shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold text-destructive hover:bg-destructive/10" data-testid={`button-delete-visualizer-library-${e.id}`}>Delete</button>
+      </div>)}
+      {!d?.entries.length && <p className="text-xs text-muted-foreground">Nothing saved yet — widgets appear here as students generate them.</p>}
+    </div>
+  </div>;
+}
+
 function AdminAiVisualizerLogs() {
   const logs = useQuery({ queryKey: ['admin-ai-visualizer-logs'], queryFn: () => aiVisualizerAdminApi.list() });
   const successCount = (logs.data ?? []).filter((l) => l.status === 'success').length;
   const errorCount = (logs.data ?? []).filter((l) => l.status === 'error').length;
   return <div>
     <SectionHeader eyebrow="Community" title="AI Visualizer activity" />
+    <SavedLibrary />
     <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3">
       <Stat label="Generations shown" value={logs.data?.length ?? 0} />
       <Stat label="Succeeded" value={successCount} />

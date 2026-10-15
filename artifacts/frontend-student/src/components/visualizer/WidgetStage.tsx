@@ -81,6 +81,7 @@ svg{max-width:100%;height:auto}
 @keyframes msp-spin{to{transform:rotate(360deg)}}
 .msp-flow{stroke-dasharray:6 6;animation:msp-flow var(--msp-dur,1s) linear infinite}
 .msp-flow.msp-rev{animation-name:msp-flow-rev}
+.msp-pulse,.msp-float,.msp-spin,.msp-blink{transform-box:fill-box;transform-origin:center}
 .msp-pulse{animation:msp-pulse var(--msp-dur,1s) ease-in-out infinite}
 .msp-float{animation:msp-float var(--msp-dur,3s) ease-in-out infinite}
 .msp-blink{animation:msp-blink var(--msp-dur,1.2s) ease-in-out infinite}

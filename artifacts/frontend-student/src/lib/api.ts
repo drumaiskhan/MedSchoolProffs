@@ -811,12 +811,14 @@ export const challengesApi = {
 export const aiVisualizerApi = {
   // Generation runs as a background job (it can outlast the host proxy's request
   // limit): start it, then poll until it's done.
-  generate: async (prompt: string, mode: VisualizerMode = 'widget'): Promise<{ visualization: AnyVisualization }> => {
-    const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) });
+  generate: async (prompt: string, fresh = false, mode: VisualizerMode = 'widget'): Promise<{ visualization: AnyVisualization }> => {
+    const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode, fresh }) });
     const deadline = Date.now() + 5 * 60 * 1000;
     let failures = 0;
+    let polls = 0;
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2500));
+      // First check comes quickly: a saved-library hit is already done by then.
+      await new Promise((r) => setTimeout(r, polls++ === 0 ? 700 : 2500));
       try {
         const res = await request<{ status: 'pending' | 'done'; visualization?: AnyVisualization }>(`/ai/visualizer/job/${jobId}`);
         failures = 0;

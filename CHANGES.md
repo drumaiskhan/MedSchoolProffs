@@ -1,3 +1,26 @@
+## v81 - Saved widget library: reuse instead of regenerate (zero tokens on repeats)
+- NEW table `med_ai_visualizer_library` (created automatically by ensureSchema on startup; nothing to run). Every successful AI Visualizer widget is saved under a normalised key of the student's prompt (filler words like "show me / explain / how does" removed, plurals folded, words sorted).
+- `routes/ai-visualizer.ts`: before calling the AI, the job looks the prompt up in the library (exact key, then a very close match: >=80% shared significant words and >=2 shared words). A hit returns the saved widget immediately with NO AI call. Misses generate as before and are then saved.
+- Students: "Regenerate" always builds a fresh widget and replaces the saved copy, so a poor widget is never stuck. First status check after submit is now 0.7s, so saved hits appear almost instantly.
+- Admin -> AI Visualizer activity: new "Saved widget library" card (saved count, AI generations saved, per-entry reuse counts, Delete, Clear library). `LIBRARY_VERSION` in `lib/widgetLibrary.ts` can be bumped to retire all saved widgets at once after a big prompt/figure improvement.
+- Works together with v80: figures cut tokens for NEW prompts; the library removes them entirely for REPEAT prompts.
+- Matching is deliberately conservative ("cardiac output increases" does not reuse "cardiac output decreases").
+- NOTE: not built/typechecked here. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`.
+
+## v80 - AI Visualizer figure library (26 figures) + token-saving figure retrieval
+- Replaces the v79 client-side library. New server registry `api-server/src/lib/figures/` (data.ts = figures, index.ts = logic). Figures: heart, lungs, red cell, platelets, 5 white cells, staph, strep, diplococci, bacilli, flagellated bacillus, vibrio, spirillum, spirochete, enveloped virus, bacteriophage, neuron, synapse, kidney, alveolus+capillary, artery vs vein, animal cell, DNA helix.
+- How it saves tokens: (1) only the 1-4 figures matching the student's prompt (keyword tags) are described in the AI prompt (~350 tokens each; none when nothing matches) so the prompt stays small however large the library grows; (2) the AI draws a whole organ/cell with one `<use href="#hs-xxx">` tag instead of hundreds of tokens of SVG; (3) after generation the server embeds just the symbols the widget uses, so saved widgets are self-contained. The browser no longer carries a library.
+- TO ADD FIGURES: append objects to `FIGURES` in data.ts (id "hs-...", tags = lowercase keywords/phrases, svg = symbol contents, colour parts with `var(--hs-xxx,#default)`). Nothing else to change. Tags are prefix-matched ("ventricle" also matches "ventricles"); use multi-word phrases for precision.
+- Fixed host CSS so msp-pulse/float/spin/blink transform around the shape's own centre.
+- NOTE: not built/typechecked here. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`.
+
+## v79 - AI Visualizer: realistic, shaded anatomy figures
+- NEW `components/visualizer/figureLibrary.ts`: hand-drawn SVG illustrations injected (hidden) into every widget iframe: a four-chamber cut-away HEART (shaded wall, 4 chambers, valves, papillary muscles, chordae, SVC/IVC/pulmonary trunk/aortic arch/pulmonary veins), LUNGS with trachea + bronchial tree, and a biconcave RED BLOOD CELL. Parts are recoloured with CSS variables (--hs-ra/rv/la/lv/svc/ivc/pa/ao/pv, --hs-lung, --hs-rbc) so widgets can show shunts/cyanosis/desaturation live.
+- `aiWidget.ts` prompt documents the symbols, their 300x340 / 300x260 / 60x60 coordinate spaces and landmark positions, and tells the AI to put labels OUTSIDE the anatomy with leader lines (fixes labels sitting on top of vessels/chambers). For any other organ it must now use organic Bezier paths, gradients, highlights, drop shadow and realistic colours instead of flat cartoon shapes. Size limit relaxed slightly (170 lines / 14k chars) since figures are now a single <use> tag.
+- Host CSS: `msp-pulse/float/spin/blink` now use transform-box:fill-box so shapes pulse/rotate around their own centre (previously scaled from the SVG origin).
+- Already-generated widgets keep their old drawings; regenerate them to get the new figures.
+- NOTE: not built/typechecked here. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`.
+
 ## v78 - Marketing copy refreshed for new features
 - Home, About, FAQ, Pricing and the site meta description now mention OSPE/OSCE, the AI Visualizer (interactive 2D), AI MCQ Maker, Books reader, Notebook, saved sessions, Challenge (share a quiz code) and streaks/leaderboard. FAQ grew from 7 to 14 questions (still emits FAQPage JSON-LD).
 - Copy only states things verified in the code. Plan contents, trial limits and any app-store/mobile-app claims were deliberately left out because they depend on your admin settings. Edit the FAQS arrays if you want to add them.

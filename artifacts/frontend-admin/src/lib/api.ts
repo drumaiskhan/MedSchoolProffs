@@ -1068,6 +1068,10 @@ export interface AiVisualizerLogEntry {
   createdAt: string;
   student: { name: string; email: string };
 }
+export interface AiVisualizerLibraryEntry { id: number; prompt: string; title: string; hits: number; version: number; lastUsedAt: string | null; createdAt: string; bytes: number }
 export const aiVisualizerAdminApi = {
   list: (limit = 100) => request<AiVisualizerLogEntry[]>(`/admin/ai-visualizer-logs?limit=${limit}`),
+  library: () => request<{ entries: AiVisualizerLibraryEntry[]; count: number; totalReuses: number }>('/admin/ai-visualizer-library'),
+  deleteLibraryEntry: (id: number) => request<{ ok: boolean }>(`/admin/ai-visualizer-library/${id}`, { method: 'DELETE' }),
+  clearLibrary: () => request<{ ok: boolean }>('/admin/ai-visualizer-library', { method: 'DELETE' }),
 };

@@ -777,6 +777,22 @@ export const savedSessionsTable = pgTable("med_saved_sessions", {
   ...timestamps,
 });
 
+// Saved library of successfully generated AI Visualizer widgets (v81). A repeat (or
+// near-identical) prompt is served from here with NO AI call, which is what saves
+// tokens. `key` is the normalised prompt (see api-server/src/lib/widgetLibrary.ts).
+export const aiVisualizerLibraryTable = pgTable("med_ai_visualizer_library", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  prompt: text("prompt").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  html: text("html").notNull(),
+  version: integer("version").notNull().default(1),
+  hits: integer("hits").notNull().default(0),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  ...timestamps,
+});
+
 export const aiVisualizerLogsTable = pgTable("med_ai_visualizer_logs", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull(),
