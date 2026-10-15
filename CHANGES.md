@@ -1,3 +1,14 @@
+## v76 - AI Visualizer: "try a simpler prompt" on heavy topics (e.g. Hb-O2 curve)
+- Cause: a slow first AI attempt (cut off / invalid) used up most of the time budget, so no retry was possible and the generic "too long, try a simpler prompt" error was shown.
+- Prompt now demands very compact widgets (<150 lines / 12k chars, curves computed by formula); retry prompt asks for <100 lines / 8k chars.
+- Time budget raised: widget 170s -> 240s, route guard 185s -> 255s, client polling 4 -> 5 min.
+- If it still fails, Admin -> AI Visualizer activity shows the exact reason (truncated / not animated / provider error).
+
+## v75 — AI Visualizer widget polish
+- Raw LaTeX showing in widgets (`$\bar{g}_{Na}$`): the sandboxed iframe has no math renderer. `WidgetStage.tsx` now converts the common LaTeX subset (\bar, _{}, ^{}, \Delta, \frac, Greek, \cdot, \times, arrows...) to HTML sub/sup/Unicode in every text node, on load and whenever the widget updates its own text — so existing and new widgets are fixed.
+- `aiWidget.ts` prompt: never emit LaTeX/`$...$` (use <sub>/<sup>/Unicode) and tidier chart rules (56-unit left margin so the y-axis title doesn't overlap tick labels, no empty space around the SVG, non-overlapping labels).
+- NOTE: not built/typechecked here. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`.
+
 ## v74 — AI Visualizer: fix endless loading, 2D only
 - ROOT CAUSE: every AI provider call was hard-capped at 25s (`AI_FETCH_TIMEOUT_MS`, a leftover from Netlify's 26s proxy limit). A 2D widget is ~7k tokens and takes 40-120s, so every provider timed out, the job failed over through ALL configured providers (25s each, x2 attempts) and the page spun until the client gave up.
 - `aiExplain.ts`: `runPrompt` takes optional `{ timeoutMs, deadlineAt }` (AsyncLocalStorage -> `fetchWithTimeout`); provider failover stops once the deadline is near. Default 25s for everything else is unchanged.

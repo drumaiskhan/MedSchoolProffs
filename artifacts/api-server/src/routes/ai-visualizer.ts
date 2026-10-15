@@ -66,7 +66,7 @@ async function runJob(jobId: string, userId: number, prompt: string, mode: "auto
     // the page can never spin forever.
     const visualization = await Promise.race([
       generateWidget(prompt),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new InvalidVisualizationError("The visualization was too long to complete in time — try a simpler or more specific prompt.")), 185_000).unref?.()),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new InvalidVisualizationError("The visualization was too long to complete in time — try a simpler or more specific prompt.")), 255_000).unref?.()),
     ]);
     await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: visualization.type });
     Object.assign(job, { status: "done", visualization });

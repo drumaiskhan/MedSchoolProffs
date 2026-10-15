@@ -33,7 +33,7 @@ const WIDGET_MAX_TOKENS = 7000;
 const WIDGET_RETRY_MAX_TOKENS = 9000;
 // Runs as a background job (see routes/ai-visualizer.ts), so the old ~26s proxy
 // ceiling no longer applies; keep a sane overall cap so a retry can still fit.
-const MAX_TOTAL_GENERATION_MS = 170_000;
+const MAX_TOTAL_GENERATION_MS = 240_000;
 
 const WIDGET_INSTRUCTIONS = `You are an interactive medical-education widget designer for MedschoolProffs, an MBBS/BDS exam-prep platform. A student describes a physiological, anatomical, pharmacological, pathological or biochemical concept. You respond with ONE self-contained, FLAT 2D interactive widget (HTML + inline CSS + inline SVG + vanilla JavaScript) that makes the concept click by letting the student change something and see the result immediately. NOT 3D, no WebGL, no canvas 3D.
 
@@ -45,7 +45,7 @@ OUTPUT FORMAT (strict):
 
 HARD CONSTRAINTS (the widget runs in a locked sandbox):
 - Everything inline. NO external resources of any kind: no <script src>, no <link>, no @import, no web fonts, no <img src="http...">, no fetch/XMLHttpRequest/WebSocket, no iframes, no forms that submit, no localStorage/cookies, no window.parent/top.
-- Vanilla JS only, no libraries. Keep it compact — under ~250 lines total — so it generates quickly.
+- Vanilla JS only, no libraries. Keep it VERY compact — under ~150 lines and under 12,000 characters in total (one diagram, 1-3 controls, no repeated boilerplate, short variable names, compute curves with a loop/formula instead of listing coordinates) — so it generates quickly and is never cut off.
 - Must work with mouse AND touch, and on a narrow phone screen (~360px wide): use fluid widths (width:100%, flex-wrap, grid with auto-fit), SVG with viewBox and width:100%, tap targets at least 36px.
 
 DESIGN:
@@ -59,6 +59,8 @@ DESIGN:
 - The visual must be a meaningful 2D diagram of the actual structures (e.g. a labelled heart with chambers and vessels whose flow arrows/animation change with heart rate; stacked bars for fluid compartments that resize with body weight; a nephron schematic; a pressure-volume loop that deforms; an oxygen-haemoglobin curve whose marker moves with pO2 and shifts with pH/2,3-BPG/temperature). Animate meaningful things (flow dashes, pulsing at the real rate); keep it smooth and calm, never flashing faster than 3 Hz.
 - Choose controls that teach the key relationship (preload/afterload, dose, concentration, time, body weight, pH...). 1-4 controls is ideal. Show the governing equation when there is one (e.g. CO = HR x SV) and compute it live.
 - Add short text labels directly on the diagram parts. Labels must not overlap.
+- NEVER use LaTeX or dollar-sign math ($...$, \\bar, \\frac, _{ }, ^{ }) anywhere — the widget has no math renderer, so it would show as raw code. Write symbols in plain HTML/Unicode instead: subscripts with <sub>, superscripts with <sup>, e.g. g<sub>Na</sub>, E<sub>K</sub>, V<sub>m</sub>, Na<sup>+</sup>, ḡ for a bar, Δ, μ, ×, ≈, →.
+- CHARTS/GRAPHS: keep the plot compact and tidy. Use one <svg> with a viewBox (e.g. 0 0 400 220) and width:100%; reserve a left margin of at least 56 units for y-axis tick labels and put the rotated y-axis title at x≈12 so it never overlaps the tick labels; reserve ~34 units at the bottom for x tick labels and the x-axis title. No big empty space above/below/inside the chart: the SVG's viewBox height must match its content, and do not add fixed heights or large margins around it. Keep tick labels at font-size 10-11 and make sure no two labels overlap.
 
 ACCURACY (do not violate):
 - Standard textbook values and relationships only; round sensibly; state units. If you use a simplification, say so in the note. Never invent mechanisms. Use correct terminology for medical students.
@@ -143,7 +145,7 @@ export async function generateWidget(userPrompt: string): Promise<WidgetSpecT> {
     throw new InvalidVisualizationError(first.truncated ? "Response was too long to complete in time — try a simpler or more specific prompt." : first.problem, first.raw);
   }
   const retryPrompt = first.truncated
-    ? `${base}\n\nIMPORTANT: Your previous response was cut off. Make the widget simpler: one diagram, at most 2 controls, under 200 lines, and finish with </script>.`
+    ? `${base}\n\nIMPORTANT: Your previous response was cut off. Make the widget simpler: one diagram, at most 2 controls, under 100 lines and 8,000 characters, minimal text, and finish with </script>.`
     : `${base}\n\nIMPORTANT: Your previous response was rejected: ${first.problem}. Fix it and return the complete HTML fragment following every constraint.`;
   const second = await attempt(retryPrompt, first.truncated ? WIDGET_RETRY_MAX_TOKENS : WIDGET_MAX_TOKENS, deadlineAt);
   if (!second.problem) return { type: "widget", ...extractMeta(second.cleaned, trimmed.slice(0, 80)) };

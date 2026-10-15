@@ -813,7 +813,7 @@ export const aiVisualizerApi = {
   // limit): start it, then poll until it's done.
   generate: async (prompt: string, mode: VisualizerMode = 'widget'): Promise<{ visualization: AnyVisualization }> => {
     const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode }) });
-    const deadline = Date.now() + 4 * 60 * 1000;
+    const deadline = Date.now() + 5 * 60 * 1000;
     let failures = 0;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 2500));
