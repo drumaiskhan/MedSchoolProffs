@@ -3,16 +3,18 @@
 // main reason the page seemed to load forever on phones.
 import { Suspense, lazy, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { RotateCcw, Sparkles, Wand2 } from 'lucide-react';
+import { BookMarked, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
 import { aiVisualizerApi, ApiRequestError, siteContentApi, type AnyVisualization } from '@/lib/api';
 import { AI_VISUALIZER_EXAMPLES, BrandSpinner, EmptyState, SectionHeader, SkeletonPage } from '@/lib/shared';
 
 const WidgetStage = lazy(() => import('@/components/visualizer/WidgetStage'));
+const TopicCatalog = lazy(() => import('@/components/visualizer/TopicCatalog'));
 
 function AiVisualizer() {
   const [prompt, setPrompt] = useState('');
   const [spec, setSpec] = useState<AnyVisualization | null>(null);
   const [version, setVersion] = useState(0);
+  const [browsing, setBrowsing] = useState(false);
 
   // Same AI_VISUALIZER_ENABLED check SideNav uses — this covers someone
   // navigating here directly by URL while the sidebar link is hidden, or a
@@ -27,6 +29,8 @@ function AiVisualizer() {
 
   const run = (fresh: boolean) => { if (prompt.trim().length >= 3 && !generate.isPending) generate.mutate({ p: prompt.trim(), fresh }); };
   const submit = () => run(false); // repeat topics come from the saved library (no AI call)
+  // Picking a catalog topic fills the prompt and opens it straight away (instant when already saved).
+  const pickTopic = (p: string) => { setPrompt(p); if (!generate.isPending) generate.mutate({ p, fresh: false }); };
   const regenerate = () => run(true); // "Regenerate" always builds a new one and replaces the saved copy
   const startOver = () => { setSpec(null); setPrompt(''); generate.reset(); };
 
@@ -68,6 +72,8 @@ function AiVisualizer() {
         {generate.isPending && <div className="mt-5"><SkeletonPage /></div>}
         {errorBlock}
       </div>
+      <button onClick={() => setBrowsing((v) => !v)} aria-expanded={browsing} className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-xs font-bold hover:bg-muted" data-testid="button-visualizer-browse-topics"><BookMarked size={14} className="text-primary" /> {browsing ? 'Hide topic library' : 'Browse the topic library'}</button>
+      {browsing && <div className="mt-3"><Suspense fallback={<SkeletonPage />}><TopicCatalog onPick={pickTopic} disabled={generate.isPending} /></Suspense></div>}
     </div>;
   }
 

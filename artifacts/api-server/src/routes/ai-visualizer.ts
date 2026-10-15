@@ -7,7 +7,8 @@ import { requireAuth, requireMembershipFor, requireAdmin } from "../middlewares/
 import { checkRateLimit } from "../lib/rateLimit";
 import { explainStep, AiNotConfiguredError, InvalidVisualizationError } from "../lib/aiVisualizer";
 import { generateWidget } from "../lib/aiWidget";
-import { findSavedWidget, saveWidget } from "../lib/widgetLibrary";
+import { findSavedWidget, saveWidget, LIBRARY_VERSION } from "../lib/widgetLibrary";
+import { CATALOG_DISCIPLINES, catalogKeySet, getCatalog } from "../lib/visualizerCatalog";
 import { getAllSettings } from "../lib/settings";
 
 const router: IRouter = Router();
@@ -100,6 +101,52 @@ async function runJob(jobId: string, userId: number, prompt: string, mode: "auto
 }
 
 // ---------------------------------------------------------------------------
+// Student: browse the topic catalog (5000+ topics, Discipline > Group > Topic)
+// ---------------------------------------------------------------------------
+// Keys of widgets already saved at the current library version (short-cached): a catalog topic with a
+// saved widget opens instantly, so the picker marks it.
+let savedKeysCache: { at: number; keys: Set<string> } | null = null;
+async function savedKeys(): Promise<Set<string>> {
+  if (savedKeysCache && Date.now() - savedKeysCache.at < 60_000) return savedKeysCache.keys;
+  const rows = await db.select({ key: aiVisualizerLibraryTable.key }).from(aiVisualizerLibraryTable).where(eq(aiVisualizerLibraryTable.version, LIBRARY_VERSION));
+  savedKeysCache = { at: Date.now(), keys: new Set(rows.map((r) => r.key)) };
+  return savedKeysCache.keys;
+}
+
+const CatalogQuery = z.object({
+  q: z.string().trim().max(100).optional(),
+  discipline: z.string().max(60).optional(),
+  group: z.string().max(120).optional(),
+  program: z.enum(["MBBS", "BDS"]).optional(),
+  saved: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(40),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get("/ai/visualizer/catalog", requireAuth, requireMembershipFor("ai_visualizer"), async (req, res): Promise<void> => {
+  const parsed = CatalogQuery.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid catalog query" }); return; }
+  const { q, discipline, group, program, saved, limit, offset } = parsed.data;
+  const keys = await savedKeys();
+  const words = (q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const inProgram = (p: string) => !program || p === "Both" || p === program;
+  const all = getCatalog().filter((t) => inProgram(t.program));
+  const matches = all.filter((t) =>
+    (!discipline || t.disciplineId === discipline) && (!group || t.group === group) &&
+    (saved === undefined || keys.has(t.key) === (saved === "true")) &&
+    (!words.length || words.every((w) => t.prompt.toLowerCase().includes(w))));
+  const disciplines = CATALOG_DISCIPLINES.filter((d) => inProgram(d.program)).map((d) => ({
+    id: d.id, name: d.name, program: d.program,
+    count: all.filter((t) => t.disciplineId === d.id).length,
+    groups: d.groups.map((g) => ({ name: g.name, count: g.entities.length * d.aspects.length })),
+  }));
+  res.json({
+    total: matches.length, offset, limit, totalAll: all.length, disciplines,
+    topics: matches.slice(offset, offset + limit).map((t) => ({ id: t.id, prompt: t.prompt, disciplineId: t.disciplineId, discipline: t.discipline, group: t.group, entity: t.entity, aspect: t.aspect, saved: keys.has(t.key) })),
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Student: explain one step further (not logged — high-frequency follow-up,
 // same trust tier as ask-ai, not the thing admins need to review)
 // ---------------------------------------------------------------------------
@@ -137,23 +184,61 @@ router.get("/admin/ai-visualizer-logs", requireAdmin, async (req, res): Promise<
 // ---------------------------------------------------------------------------
 // Admin: the saved widget library (served to students with no AI call)
 // ---------------------------------------------------------------------------
-router.get("/admin/ai-visualizer-library", requireAdmin, async (_req, res): Promise<void> => {
+const LibraryQuery = z.object({
+  q: z.string().trim().max(100).optional(),
+  sort: z.enum(["hits", "recent", "size", "oldest"]).default("hits"),
+  source: z.enum(["all", "catalog", "custom"]).default("all"),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get("/admin/ai-visualizer-library", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = LibraryQuery.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid library query" }); return; }
+  const { q, sort, source, limit, offset } = parsed.data;
   const t = aiVisualizerLibraryTable;
-  const rows = await db.select({ id: t.id, prompt: t.prompt, title: t.title, hits: t.hits, version: t.version, lastUsedAt: t.lastUsedAt, createdAt: t.createdAt, bytes: sql<number>`length(${t.html})` })
-    .from(t).orderBy(desc(t.hits), desc(t.createdAt)).limit(300);
-  const totals = await db.select({ count: sql<number>`count(*)`, hits: sql<number>`coalesce(sum(${t.hits}), 0)` }).from(t);
-  res.json({ entries: rows, count: Number(totals[0]?.count ?? 0), totalReuses: Number(totals[0]?.hits ?? 0) });
+  const rows = await db.select({ id: t.id, key: t.key, prompt: t.prompt, title: t.title, hits: t.hits, version: t.version, lastUsedAt: t.lastUsedAt, createdAt: t.createdAt, bytes: sql<number>`length(${t.html})` }).from(t);
+  const catalogKeys = catalogKeySet();
+  const words = (q ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const tagged = rows.map(({ key, ...r }) => ({ ...r, source: catalogKeys.has(key) ? "catalog" as const : "custom" as const }));
+  const matches = tagged.filter((r) => (source === "all" || r.source === source) && (!words.length || words.every((w) => `${r.title} ${r.prompt}`.toLowerCase().includes(w))));
+  const time = (d: Date | string | null) => (d ? new Date(d).getTime() : 0);
+  matches.sort((a, b) => sort === "hits" ? b.hits - a.hits || time(b.createdAt) - time(a.createdAt) : sort === "size" ? b.bytes - a.bytes : sort === "oldest" ? time(a.createdAt) - time(b.createdAt) : time(b.createdAt) - time(a.createdAt));
+  res.json({
+    entries: matches.slice(offset, offset + limit), matched: matches.length, offset, limit,
+    count: rows.length, totalReuses: rows.reduce((n, r) => n + Number(r.hits ?? 0), 0),
+    catalogSaved: tagged.filter((r) => r.source === "catalog" && r.version === LIBRARY_VERSION).length, customSaved: tagged.filter((r) => r.source === "custom").length,
+  });
+});
+
+// How much of the topic catalog already has a saved widget, per discipline and group, plus the
+// most-wanted topics that don't have one yet (students asked for them but generation failed or hasn't happened).
+router.get("/admin/ai-visualizer-catalog", requireAdmin, async (_req, res): Promise<void> => {
+  const rows = await db.select({ key: aiVisualizerLibraryTable.key, hits: aiVisualizerLibraryTable.hits }).from(aiVisualizerLibraryTable).where(eq(aiVisualizerLibraryTable.version, LIBRARY_VERSION));
+  const saved = new Map(rows.map((r) => [r.key, Number(r.hits ?? 0)]));
+  const catalog = getCatalog();
+  const disciplines = CATALOG_DISCIPLINES.map((d) => {
+    const topics = catalog.filter((t) => t.disciplineId === d.id);
+    return {
+      id: d.id, name: d.name, program: d.program, total: topics.length, saved: topics.filter((t) => saved.has(t.key)).length,
+      reuses: topics.reduce((n, t) => n + (saved.get(t.key) ?? 0), 0),
+      groups: d.groups.map((g) => { const gt = topics.filter((t) => t.group === g.name); return { name: g.name, total: gt.length, saved: gt.filter((t) => saved.has(t.key)).length }; }),
+    };
+  });
+  res.json({ total: catalog.length, saved: disciplines.reduce((n, d) => n + d.saved, 0), disciplines });
 });
 
 router.delete("/admin/ai-visualizer-library/:id", requireAdmin, async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.delete(aiVisualizerLibraryTable).where(eq(aiVisualizerLibraryTable.id, id));
+  savedKeysCache = null;
   res.json({ ok: true });
 });
 
 router.delete("/admin/ai-visualizer-library", requireAdmin, async (_req, res): Promise<void> => {
   await db.delete(aiVisualizerLibraryTable);
+  savedKeysCache = null;
   res.json({ ok: true });
 });
 

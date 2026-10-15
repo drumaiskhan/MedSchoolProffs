@@ -835,7 +835,19 @@ export const aiVisualizerApi = {
   },
   explainStep: (overallTitle: string, stepTitle: string, stepDescription: string) =>
     request<{ explanation: string }>('/ai/visualizer/explain-step', { method: 'POST', body: JSON.stringify({ overallTitle, stepTitle, stepDescription }) }),
+  /** Browse the topic catalog (Discipline > Group > Topic); `saved` topics open instantly. */
+  catalog: (params: VisualizerCatalogParams = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
+    return request<VisualizerCatalogPage>(`/ai/visualizer/catalog${qs.toString() ? `?${qs.toString()}` : ''}`);
+  },
 };
+export interface VisualizerCatalogParams { q?: string; discipline?: string; group?: string; program?: 'MBBS' | 'BDS'; saved?: 'true' | 'false'; limit?: number; offset?: number }
+export interface VisualizerCatalogTopic { id: string; prompt: string; disciplineId: string; discipline: string; group: string; entity: string; aspect: string; saved: boolean }
+export interface VisualizerCatalogPage {
+  total: number; totalAll: number; offset: number; limit: number; topics: VisualizerCatalogTopic[];
+  disciplines: Array<{ id: string; name: string; program: 'MBBS' | 'BDS' | 'Both'; count: number; groups: Array<{ name: string; count: number }> }>;
+}
 
 export type AiMcqDifficulty = 'easy' | 'moderate' | 'hard' | 'mixed';
 export interface AiMcq { question: string; options: string[]; correctAnswer: string; explanation: string; optionExplanations: string[]; difficulty: string }

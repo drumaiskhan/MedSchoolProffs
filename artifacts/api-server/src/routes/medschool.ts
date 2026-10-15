@@ -959,7 +959,34 @@ router.get("/admin/mcqs", requireAdmin, async (req, res): Promise<void> => {
     params.data.difficulty ? eq(mcqsTable.difficulty, params.data.difficulty) : undefined,
     includeArchived ? undefined : ne(mcqsTable.status, "archived"),
   )).orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, desc(mcqsTable.createdAt));
-  res.json(rows);
+  // Each row also carries its curriculum path (program/year > block > module > subject > topic, names
+  // + ids), so the admin UI can show WHERE a question is filed - above all for questions the AI MCQ
+  // Maker saved in the background - instead of only the flat question text.
+  const [blocks, mods, subs, tops] = await Promise.all([
+    db.select({ id: blocksTable.id, name: blocksTable.name, program: blocksTable.programTargetKind, year: blocksTable.yearTargetNumber }).from(blocksTable),
+    db.select({ id: modulesTable.id, name: modulesTable.name, blockId: modulesTable.blockId, program: modulesTable.programTargetKind, year: modulesTable.yearTargetNumber }).from(modulesTable),
+    db.select({ id: subjectsTable.id, name: subjectsTable.name }).from(subjectsTable),
+    db.select({ id: topicsTable.id, name: topicsTable.name }).from(topicsTable),
+  ]);
+  const blockById = new Map(blocks.map((b) => [b.id, b]));
+  const moduleById = new Map(mods.map((m) => [m.id, m]));
+  const subjectById = new Map(subs.map((x) => [x.id, x.name]));
+  const topicById = new Map(tops.map((x) => [x.id, x.name]));
+  res.json(rows.map((row) => {
+    const mod = row.moduleId != null ? moduleById.get(row.moduleId) : undefined;
+    const block = mod?.blockId != null ? blockById.get(mod.blockId) : undefined;
+    return {
+      ...row,
+      path: {
+        program: mod?.program ?? block?.program ?? null,
+        year: mod?.year ?? block?.year ?? null,
+        blockId: block?.id ?? null, block: block?.name ?? null,
+        module: mod?.name ?? null,
+        subject: row.subjectId != null ? subjectById.get(row.subjectId) ?? null : null,
+        topic: row.topicId != null ? topicById.get(row.topicId) ?? null : null,
+      },
+    };
+  }));
 });
 
 router.post("/mcqs", requireAdmin, async (req, res): Promise<void> => {

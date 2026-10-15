@@ -38,6 +38,7 @@ import NotFound from '@/pages/not-found';
 import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, adminSearchApi, type AdminSearchResponse, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry, type BackupScope } from '@/lib/api';
 
 import { Badge, BrandSpinner, ConfirmDialog, DifficultyPicker, EmptyState, InlineLoading, SkeletonPage, SuggestedPathHint, cn } from './ui';
+import { STUDENT_AI_SOURCE, type McqPath } from '@/lib/api';
 import { DEGREE_OPTIONS, DEGREE_YEAR_OPTIONS, studyYearToNumber } from './groups';
 
 
@@ -131,7 +132,20 @@ export function McqEditForm({ mcq, onDone }: { mcq: AdminMcqRow; onDone: () => v
 // ExamManagePanel/AdminPastPapers, which have their own dedicated delete
 // flows) renders this row with no checkbox at all.
 
-export function McqTreeRow({ mcq, selectedIds, onToggleSelect }: { mcq: AdminMcqRow; selectedIds?: Set<number>; onToggleSelect?: (id: number) => void }) {
+// "MBBS · Year 2 › Block › Module › Subject › Topic" for one question - shown wherever a question is
+// listed OUTSIDE the tree (AI review panel, unassigned list), since there it has no parent rows to say
+// where it is filed. Missing levels are skipped; a question with no topic says so.
+export function McqPathCrumb({ path, className }: { path?: McqPath; className?: string }) {
+  if (!path) return null;
+  const scope = [path.program, path.year != null ? `Year ${path.year}` : null].filter(Boolean).join(' · ');
+  const parts = [scope, path.block, path.module, path.subject, path.topic].filter((x): x is string => !!x);
+  if (!parts.length) return <p className={cn('text-[10px] font-semibold text-accent-text', className)}>Not filed under any module, subject or topic</p>;
+  return <p className={cn('flex flex-wrap items-center gap-x-1 gap-y-0.5 text-[10px] font-semibold text-muted-foreground', className)} data-testid="text-mcq-path">
+    {parts.map((part, i) => <span key={i} className="inline-flex items-center gap-1">{i > 0 && <ChevronRight size={9} className="shrink-0 opacity-60" />}<span className={cn(i === parts.length - 1 && 'text-foreground')}>{part}</span></span>)}
+  </p>;
+}
+
+export function McqTreeRow({ mcq, selectedIds, onToggleSelect, showPath }: { mcq: AdminMcqRow; selectedIds?: Set<number>; onToggleSelect?: (id: number) => void; showPath?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const remove = useMutation({
@@ -143,7 +157,7 @@ export function McqTreeRow({ mcq, selectedIds, onToggleSelect }: { mcq: AdminMcq
     <div className="flex items-start justify-between gap-3">
       <div className="flex flex-1 items-start gap-2">
         {onToggleSelect && <input type="checkbox" className="mt-1" checked={selectedIds?.has(mcq.id) ?? false} onChange={() => onToggleSelect(mcq.id)} data-testid={`checkbox-select-tree-mcq-${mcq.id}`} />}
-        <div className="flex-1"><div className="flex items-center gap-2"><Badge tone={mcq.status === 'published' ? 'green' : 'amber'}>{mcq.status}</Badge><Badge tone={mcq.explanationStatus === 'APPROVED' ? 'green' : mcq.explanationStatus === 'PENDING' ? 'neutral' : 'blue'}>{mcq.explanationStatus.replace('_', ' ')}</Badge></div><p className="mt-2 text-xs font-bold leading-5">{mcq.question}</p></div>
+        <div className="flex-1"><div className="flex flex-wrap items-center gap-2"><Badge tone={mcq.status === 'published' ? 'green' : 'amber'}>{mcq.status}</Badge><Badge tone={mcq.explanationStatus === 'APPROVED' ? 'green' : mcq.explanationStatus === 'PENDING' ? 'neutral' : 'blue'}>{mcq.explanationStatus.replace('_', ' ')}</Badge>{mcq.source === STUDENT_AI_SOURCE && <Badge tone="blue">AI MCQ Maker</Badge>}</div>{showPath && <McqPathCrumb path={mcq.path} className="mt-1.5" />}<p className="mt-2 text-xs font-bold leading-5">{mcq.question}</p></div>
       </div>
       <div className="flex shrink-0 items-center gap-1"><button onClick={() => setEditing((v) => !v)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted" data-testid={`button-edit-mcq-${mcq.id}`}><Pencil size={14} /></button><button onClick={() => setDeleting(true)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" data-testid={`button-delete-tree-mcq-${mcq.id}`}><Trash2 size={14} /></button></div>
     </div>
@@ -637,14 +651,14 @@ export function BackupScopePicker({ blocks, allModules, onChange }: { blocks: Ad
 }
 
 
-export function McqBankTree({ modules, blocks, search, statusFilter, difficultyFilter, publishFilter, selectedIds, onToggleSelect }: { modules: AdminModule[]; blocks: AdminBlock[]; search?: string; statusFilter?: ExplanationStatus | null; difficultyFilter?: string | null; publishFilter?: 'published' | 'draft' | null; selectedIds: Set<number>; onToggleSelect: (id: number) => void }) {
+export function McqBankTree({ modules, blocks, search, statusFilter, difficultyFilter, publishFilter, sourceFilter, selectedIds, onToggleSelect }: { modules: AdminModule[]; blocks: AdminBlock[]; search?: string; statusFilter?: ExplanationStatus | null; difficultyFilter?: string | null; publishFilter?: 'published' | 'draft' | null; sourceFilter?: string | null; selectedIds: Set<number>; onToggleSelect: (id: number) => void }) {
   const treeQ = useQuery({ queryKey: ['admin-mcqs-tree'], queryFn: mcqAdminApi.list });
   const allRows = treeQ.data ?? [];
   // Search box + explanation-status filter (the latter driven by clicking a
   // tile in ExplanationCoverage) — this used to only apply to the flat list;
   // now the tree is the only view, so it filters the rows itself.
   const q = (search ?? '').trim().toLowerCase();
-  const rows = allRows.filter((r) => (!q || r.question.toLowerCase().includes(q)) && (!statusFilter || r.explanationStatus === statusFilter) && (!difficultyFilter || r.difficulty === difficultyFilter) && (!publishFilter || (publishFilter === 'published') === (r.status.toLowerCase() === 'published')));
+  const rows = allRows.filter((r) => (!q || r.question.toLowerCase().includes(q)) && (!statusFilter || r.explanationStatus === statusFilter) && (!difficultyFilter || r.difficulty === difficultyFilter) && (!publishFilter || (publishFilter === 'published') === (r.status.toLowerCase() === 'published')) && (!sourceFilter || r.source === sourceFilter));
   const mcqsByTopic = new Map<number, AdminMcqRow[]>();
   const trulyUnassigned: AdminMcqRow[] = [];
   for (const row of rows) {
@@ -679,7 +693,7 @@ export function McqBankTree({ modules, blocks, search, statusFilter, difficultyF
   const showBlockLabel = blocks.length > 0 || standaloneLeaves.length > 0;
   return <div className="space-y-4">
     {programYearGroups.map(({ programLabel, yearLabel, groups }) => <McqTreeYearGroup key={`${programLabel}-${yearLabel}`} programLabel={programLabel} yearLabel={yearLabel} groups={groups} showBlockLabel={showBlockLabel} rows={rows} countByModule={countByModule} mcqsByTopic={mcqsByTopic} selectedIds={selectedIds} onToggleSelect={onToggleSelect} />)}
-    {!!trulyUnassigned.length && <div className="rounded-2xl border border-dashed border-border bg-card p-4"><p className="mb-3 text-xs font-bold text-muted-foreground">{trulyUnassigned.length} question{trulyUnassigned.length === 1 ? '' : 's'} with no module/subject/topic, exam, or past paper</p><div className="space-y-2">{trulyUnassigned.map((m) => <McqTreeRow key={m.id} mcq={m} selectedIds={selectedIds} onToggleSelect={onToggleSelect} />)}</div></div>}
+    {!!trulyUnassigned.length && <div className="rounded-2xl border border-dashed border-border bg-card p-4"><p className="mb-3 text-xs font-bold text-muted-foreground">{trulyUnassigned.length} question{trulyUnassigned.length === 1 ? '' : 's'} with no module/subject/topic, exam, or past paper</p><div className="space-y-2">{trulyUnassigned.map((m) => <McqTreeRow key={m.id} mcq={m} selectedIds={selectedIds} onToggleSelect={onToggleSelect} showPath />)}</div></div>}
   </div>;
 }
 

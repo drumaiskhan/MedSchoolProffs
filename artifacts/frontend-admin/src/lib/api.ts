@@ -498,7 +498,12 @@ export interface AdminMcqRow {
   explanationStatus: ExplanationStatus; reference: string | null; difficulty: string; tags: string[]; imagePath: string | null;
   status: string; source: string; moduleId: number | null; subjectId: number | null; topicId: number | null; pastPaperId: number | null; examId: number | null;
   createdAt: string; updatedAt: string;
+  /** Where the question is filed (GET /admin/mcqs adds this). */
+  path?: McqPath;
 }
+export interface McqPath { program: string | null; year: number | null; blockId: number | null; block: string | null; module: string | null; subject: string | null; topic: string | null }
+/** Source tag the student AI MCQ Maker gives the questions it files into the Qbank. */
+export const STUDENT_AI_SOURCE = 'student_ai';
 export const mcqAdminApi = {
   remove: (id: number) => request<{ ok: true }>(`/mcqs/${id}`, { method: 'DELETE' }),
   list: () => request<AdminMcqRow[]>('/admin/mcqs'),
@@ -1068,10 +1073,18 @@ export interface AiVisualizerLogEntry {
   createdAt: string;
   student: { name: string; email: string };
 }
-export interface AiVisualizerLibraryEntry { id: number; prompt: string; title: string; hits: number; version: number; lastUsedAt: string | null; createdAt: string; bytes: number }
+export interface AiVisualizerLibraryEntry { id: number; prompt: string; title: string; hits: number; version: number; lastUsedAt: string | null; createdAt: string; bytes: number; source: 'catalog' | 'custom' }
+export interface AiVisualizerLibraryPage { entries: AiVisualizerLibraryEntry[]; matched: number; offset: number; limit: number; count: number; totalReuses: number; catalogSaved: number; customSaved: number }
+export interface AiVisualizerLibraryParams { q?: string; sort?: 'hits' | 'recent' | 'size' | 'oldest'; source?: 'all' | 'catalog' | 'custom'; limit?: number; offset?: number }
+export interface AiVisualizerCatalogCoverage { total: number; saved: number; disciplines: Array<{ id: string; name: string; program: 'MBBS' | 'BDS' | 'Both'; total: number; saved: number; reuses: number; groups: Array<{ name: string; total: number; saved: number }> }> }
 export const aiVisualizerAdminApi = {
   list: (limit = 100) => request<AiVisualizerLogEntry[]>(`/admin/ai-visualizer-logs?limit=${limit}`),
-  library: () => request<{ entries: AiVisualizerLibraryEntry[]; count: number; totalReuses: number }>('/admin/ai-visualizer-library'),
+  library: (params: AiVisualizerLibraryParams = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
+    return request<AiVisualizerLibraryPage>(`/admin/ai-visualizer-library${qs.toString() ? `?${qs.toString()}` : ''}`);
+  },
+  catalog: () => request<AiVisualizerCatalogCoverage>('/admin/ai-visualizer-catalog'),
   deleteLibraryEntry: (id: number) => request<{ ok: boolean }>(`/admin/ai-visualizer-library/${id}`, { method: 'DELETE' }),
   clearLibrary: () => request<{ ok: boolean }>('/admin/ai-visualizer-library', { method: 'DELETE' }),
 };

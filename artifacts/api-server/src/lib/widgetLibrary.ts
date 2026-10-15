@@ -7,33 +7,15 @@
 // single entries or clear the library from Admin -> AI Visualizer activity.
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db, aiVisualizerLibraryTable } from "@workspace/db";
+import { FUZZY_THRESHOLD, MAX_KEY_LENGTH, jaccard, promptKey, promptTokens } from "./promptKey";
+import { catalogKeySet } from "./visualizerCatalog";
 
-export const LIBRARY_VERSION = 1;
-const MAX_KEY_LENGTH = 240;
-const FUZZY_THRESHOLD = 0.8; // Jaccard similarity of the significant words
-const MAX_FUZZY_ROWS = 4000;
+// v2 (v82): figures became animated, so widgets saved with the old still figures are retired.
+export const LIBRARY_VERSION = 2;
+const MAX_FUZZY_ROWS = 20000; // the library is meant to hold 5000+ topics, so the near-match scan must cover them all
 
-// Words that don't change WHAT is being visualised.
-const STOP = new Set(("a an the of and or in on at to for with from by into as is are was were be been it its this that these those " +
-  "show shows showing me my us our please can could would should you your i we explain explains explanation visualize visualise " +
-  "visualization visualisation interactive diagram animation animated simulation simulator simulate demonstrate demo draw make create " +
-  "build give about how what why when does do did work works working vs versus between using use via").split(" "));
-
-function stem(w: string): string { return w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w; }
-
-export function promptTokens(prompt: string): string[] {
-  const words = prompt.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
-  return [...new Set(words.filter((w) => w && !STOP.has(w)).map(stem))].sort();
-}
-
-export function promptKey(prompt: string): string { return promptTokens(prompt).join(" ").slice(0, MAX_KEY_LENGTH); }
-
-function jaccard(a: string[], b: string[]): { score: number; shared: number } {
-  const B = new Set(b); let shared = 0;
-  for (const x of a) if (B.has(x)) shared++;
-  const union = a.length + b.length - shared;
-  return { score: union ? shared / union : 0, shared };
-}
+// Normalisation lives in promptKey.ts (pure, shared with the topic catalog).
+export { promptTokens, promptKey };
 
 export interface SavedWidget { id: number; title: string; description: string; html: string }
 
@@ -45,12 +27,17 @@ export async function findSavedWidget(prompt: string): Promise<SavedWidget | nul
   const exact = await db.select().from(aiVisualizerLibraryTable)
     .where(and(eq(aiVisualizerLibraryTable.key, key), eq(aiVisualizerLibraryTable.version, LIBRARY_VERSION))).limit(1);
   let hit = exact[0];
-  if (!hit) {
+  // Catalog topics are curated and distinct ("Infarction: morphology" vs "Myocardial infarction:
+  // morphology" differ by one word but must not share a widget), so a catalog topic is matched
+  // exactly only, and a free-text prompt is never fuzzy-matched onto a different catalog topic's widget.
+  const catalogKeys = catalogKeySet();
+  if (!hit && !catalogKeys.has(key)) {
     const rows = await db.select({ id: aiVisualizerLibraryTable.id, key: aiVisualizerLibraryTable.key })
       .from(aiVisualizerLibraryTable).where(eq(aiVisualizerLibraryTable.version, LIBRARY_VERSION))
       .orderBy(desc(aiVisualizerLibraryTable.hits)).limit(MAX_FUZZY_ROWS);
     let best: { id: number; score: number } | null = null;
     for (const r of rows) {
+      if (catalogKeys.has(r.key)) continue;
       const { score, shared } = jaccard(tokens, r.key.split(" "));
       if (shared >= 2 && score >= FUZZY_THRESHOLD && (!best || score > best.score)) best = { id: r.id, score };
     }
