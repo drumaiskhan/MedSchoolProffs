@@ -14,9 +14,16 @@ const FAQS = [
   { q: 'Is practice mode timed?', a: "No — practice mode is untimed and explanation-first by default. Timed Pre-Proffs exams are there separately, for when you actually want the exam-day pressure." },
   { q: 'Which programs and years are covered?', a: 'MBBS and BDS, across every college, program, and academic year — organised by subject and topic so you only see what\'s relevant to you.' },
   { q: 'Do questions come with explanations?', a: 'Yes — every MCQ includes a worked explanation, not just the correct answer, so you understand the "why" as you go.' },
-  { q: 'Can I track my weak areas?', a: 'Yes — progress tracking automatically flags weak topics from your practice history, so revision time goes where it actually helps.' },
-  { q: 'What do the paid plans include?', a: 'Paid plans unlock full access to the MCQ bank, timed Pre-Proffs exams, past papers, and flashcards. See the Pricing page for current plans and rates.' },
-  { q: 'How do I cancel or change my plan?', a: 'Manage your membership any time from Profile → Membership once you\'re signed in. Plans can be changed or cancelled there, no hidden fees.' },
+  { q: 'Can I track my weak areas?', a: 'Yes — progress tracking automatically flags weak topics from your practice history, so revision time goes where it actually helps. Your stats are visible only to you.' },
+  { q: 'What is the AI Visualizer?', a: 'Describe a concept — for example cardiac output, body fluid compartments or the oxygen–haemoglobin curve — and it builds an interactive 2D diagram with sliders and live values. Generating one can take up to a minute, and more specific prompts usually give better results.' },
+  { q: 'What is the AI MCQ Maker?', a: 'Type any topic, or a fuller instruction like "management of DKA, clinical vignettes", and it writes a practice set for you. It is handy for extra practice on a topic you want to drill.' },
+  { q: 'Do you cover OSPE and OSCE?', a: 'Yes — the OSPE / OSCE section has learning material and exams for your program and year. What you see depends on what has been published for your program and year.' },
+  { q: 'Are past papers, flashcards and books included?', a: 'Yes — past papers are organised block by block, flashcards give quick spaced review, and the Books section lets you read free books or unlock paid ones in a protected in-app reader.' },
+  { q: 'Can I challenge a friend?', a: 'Yes — in Challenge you set a quiz, send the code to a classmate, and see who scores higher. You can also keep a daily streak and climb the leaderboard.' },
+  { q: 'Can I take notes and save my place?', a: 'Yes — flag or bookmark tricky MCQs, keep private notes in your Notebook, and save a practice session to resume it later from Saved Sessions.' },
+  { q: 'Does it work on my phone?', a: 'Yes — the site is built to work well on phones, so you can practise in your mobile browser as comfortably as on a laptop.' },
+  { q: 'What do the paid plans include?', a: 'Paid plans unlock deeper access to the MCQ bank, timed Pre-Proffs exams, past papers, flashcards and more. Exactly what is included depends on the plan — see the Pricing page for current plans and rates.' },
+  { q: 'How do I cancel or change my plan?', a: 'Manage your membership any time from Profile → Membership once you\'re signed in. Plans can be changed or cancelled there, no hidden fees. Your payment history is under Payments.' },
   { q: 'I found a wrong answer or a bug — how do I report it?', a: "Flag the MCQ directly from the question screen, or use Send Feedback from your account menu once you're signed in. You can also reach us on the Contact page." },
 ];
 
@@ -26,7 +33,7 @@ export default function Faq() {
 
   useDocumentHead({
     title: `FAQs — ${platformName}`,
-    description: `Frequently asked questions about ${platformName}'s MCQ bank, Pre-Proffs exams, pricing, and progress tracking for MBBS & BDS students.`,
+    description: `Frequently asked questions about ${platformName}'s MCQ bank, Pre-Proffs exams, OSPE/OSCE, AI Visualizer, AI MCQ Maker, pricing, and progress tracking for MBBS & BDS students.`,
     path: '/faq',
   });
 

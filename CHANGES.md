@@ -1,3 +1,14 @@
+## v78 - Marketing copy refreshed for new features
+- Home, About, FAQ, Pricing and the site meta description now mention OSPE/OSCE, the AI Visualizer (interactive 2D), AI MCQ Maker, Books reader, Notebook, saved sessions, Challenge (share a quiz code) and streaks/leaderboard. FAQ grew from 7 to 14 questions (still emits FAQPage JSON-LD).
+- Copy only states things verified in the code. Plan contents, trial limits and any app-store/mobile-app claims were deliberately left out because they depend on your admin settings. Edit the FAQS arrays if you want to add them.
+- Admin-managed text (platform name, team, plans, testimonials) is unchanged.
+
+## v77 - Search Console coverage issues
+- "Page with redirect" (2): the generated Hostinger .htaccess forced https but had no www -> apex rule, so www.* pages were served directly and http://www took two hops. `scripts/build-hostinger.sh` now does www -> apex + https in one 301 hop. (Caddy and Netlify setups already redirect www.)
+- "Discovered - currently not indexed" (6): Google has found but not yet crawled these; typical for a new, small site. Sitemap cleaned (login page removed, lastmod added), robots.txt blocks /api/ so crawl budget goes to real pages. Per-page title/canonical already exist.
+- "Blocked by robots.txt" (1): https://r.support.medschoolproffs.live/ is a SUBDOMAIN, not this app (likely an email/support tool's tracking link). Nothing to fix in the code; safe to ignore, or delete that DNS record if you don't use it.
+- After deploying: Search Console -> Sitemaps -> resubmit sitemap.xml, then URL Inspection -> Request indexing for /, /pricing, /about, /faq, /contact, /register, and click "Validate fix" on the redirect issue.
+
 ## v76 - AI Visualizer: "try a simpler prompt" on heavy topics (e.g. Hb-O2 curve)
 - Cause: a slow first AI attempt (cut off / invalid) used up most of the time budget, so no retry was possible and the generic "too long, try a simpler prompt" error was shown.
 - Prompt now demands very compact widgets (<150 lines / 12k chars, curves computed by formula); retry prompt asks for <100 lines / 8k chars.

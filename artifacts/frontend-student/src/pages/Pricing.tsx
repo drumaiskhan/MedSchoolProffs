@@ -49,7 +49,7 @@ export default function Pricing() {
       <div className="mx-auto max-w-2xl text-center">
         <div className="font-mono-app text-[10px] uppercase tracking-[.16em] text-primary">Pricing</div>
         <h1 className="mt-3 font-display text-4xl tracking-[-.03em] md:text-5xl">Simple, affordable plans</h1>
-        <p className="mt-3 text-sm text-muted-foreground">No hidden fees. Cancel anytime.</p>
+        <p className="mt-3 text-sm text-muted-foreground">No hidden fees. Cancel anytime. What each plan includes is listed below.</p>
       </div>
       {plansQ.isLoading ? <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {[0, 1, 2].map((i) => <div key={i} className="skeleton h-64 rounded-2xl" />)}

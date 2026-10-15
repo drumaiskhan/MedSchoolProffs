@@ -5,7 +5,7 @@
 // per the SEO fix requested for sitelinks/sitename. Mirrors Home's visual
 // language (same header/footer shape) rather than introducing a new look.
 import { Link } from 'wouter';
-import { ArrowRight, GraduationCap, Lightbulb, Target, TrendingUp, Trophy, Bookmark } from 'lucide-react';
+import { ArrowRight, GraduationCap, Lightbulb, Target, TrendingUp, Trophy, Bookmark, Stethoscope, Wand2, Sparkles } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { siteContentApi } from '@/lib/api';
 import { Footer, AnimatedBrandMark, useDocumentHead, TeamPhoto } from '@/lib/shared';
@@ -15,8 +15,11 @@ const VALUES = [
   { icon: Lightbulb, title: 'Explanations included', desc: "Every question comes with a worked explanation, not just an answer key." },
   { icon: Target, title: 'Practice, not panic', desc: 'Untimed practice by default. Timed Pre-Proffs exams when you actually want the pressure.' },
   { icon: TrendingUp, title: 'Analytics that find the gaps', desc: 'Automatic weak-topic tracking so revision time goes where it actually helps.' },
-  { icon: Trophy, title: 'Streaks & leaderboards', desc: 'A little friendly competition to keep daily practice from fizzling out.' },
-  { icon: Bookmark, title: 'Your own review flow', desc: 'Flag tricky MCQs, keep notes, and save sessions to pick up right where you left off.' },
+  { icon: Trophy, title: 'Streaks, leaderboards & challenges', desc: 'Keep a daily streak, climb the leaderboard, or send a quiz code to a classmate and see who scores higher.' },
+  { icon: Bookmark, title: 'Your own review flow', desc: 'Flag tricky MCQs, keep private notes in your notebook, and save sessions to pick up right where you left off.' },
+  { icon: Stethoscope, title: 'OSPE / OSCE prep', desc: 'Learning material and exams for the practical side of your program, matched to your year.' },
+  { icon: Wand2, title: 'AI Visualizer', desc: 'Describe a concept and get an interactive 2D diagram with sliders and live values — cardiac output, fluid compartments, the oxygen–haemoglobin curve and more.' },
+  { icon: Sparkles, title: 'AI MCQ Maker', desc: 'Type any topic or a fuller instruction and get a practice set written for you.' },
 ];
 
 export default function About() {
@@ -60,8 +63,10 @@ export default function About() {
     <section className="mx-auto max-w-6xl px-5 py-16 md:px-8">
       <p className="mx-auto max-w-2xl text-center text-sm leading-7 text-muted-foreground md:text-base">
         Practice mode stays untimed and explanation-first by default — the Pre-Proffs exams are there
-        for when you actually want the pressure. Progress tracking quietly keeps an eye on which
-        topics need another pass, so your next study session already knows where to start.
+        for when you actually want the pressure. Beyond MCQs you also get past papers, flashcards,
+        OSPE / OSCE material, a book reader, and AI tools that explain concepts visually or write
+        practice questions on any topic. Progress tracking quietly keeps an eye on which topics
+        need another pass, so your next study session already knows where to start.
       </p>
       <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {VALUES.map((item) => <div key={item.title} className="card-lift rounded-2xl border border-border bg-card p-6">

@@ -31,6 +31,12 @@ write_htaccess() {
   cat > "$1/.htaccess" <<HT
 RewriteEngine On
 
+# www -> apex in ONE hop (also forces https). Without this, www.<domain> served
+# the same pages without a redirect, and http://www -> https://www -> apex made
+# two hops: Search Console reported both as "Page with redirect".
+RewriteCond %{HTTP_HOST} ^www\.(.+)\$ [NC]
+RewriteRule ^ https://%1%{REQUEST_URI} [L,R=301]
+
 # Force HTTPS
 RewriteCond %{HTTPS} !=on
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]

@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import {
   ArrowRight, BookOpen, Bookmark, Check, ClipboardCheck, FileStack,
-  GraduationCap, Lightbulb, Menu, Target, Trophy, TrendingUp, Wand2, X, Zap,
+  GraduationCap, Lightbulb, Library, Menu, Sparkles, Stethoscope, Target, Trophy, TrendingUp, Wand2, X, Zap,
 } from 'lucide-react';
 import { useGetCurrentUser, getGetCurrentUserQueryKey, useListMembershipPlans } from '@workspace/api-client-react';
 import type { MembershipPlan } from '@workspace/api-client-react';
@@ -26,8 +26,8 @@ const WHY_US = [
   { hue: 45, icon: Lightbulb, title: 'Explanations included', desc: "Every question comes with a worked explanation, not just an answer key." },
   { hue: 205, icon: Target, title: 'Practice, not panic', desc: 'Untimed practice by default. Timed Pre-Proffs exams when you actually want the pressure.' },
   { hue: 262, icon: TrendingUp, title: 'Analytics that find the gaps', desc: 'Automatic weak-topic tracking so revision time goes where it actually helps.' },
-  { hue: 28, icon: Trophy, title: 'Streaks & leaderboards', desc: 'A little friendly competition to keep daily practice from fizzling out.' },
-  { hue: 340, icon: Bookmark, title: 'Your own review flow', desc: 'Flag tricky MCQs, keep notes, and save sessions to pick up right where you left off.' },
+  { hue: 28, icon: Trophy, title: 'Streaks, leaderboards & challenges', desc: 'Keep a daily streak, climb the leaderboard, or send a quiz code to a classmate and see who scores higher.' },
+  { hue: 340, icon: Bookmark, title: 'Your own review flow', desc: 'Flag tricky MCQs, keep private notes in your notebook, and save sessions to pick up right where you left off.' },
 ];
 
 const FEATURES = [
@@ -36,7 +36,10 @@ const FEATURES = [
   { hue: 262, icon: ClipboardCheck, title: 'Pre-Proffs Exams', desc: 'Timed mock exams built to feel like the real thing, with full result breakdowns.', href: '/exams' },
   { hue: 340, icon: FileStack, title: 'Past Papers', desc: "Previous years' papers, organised and ready to work through block by block.", href: '/past-papers' },
   { hue: 38, icon: Zap, title: 'Flashcards', desc: 'Quick-fire spaced review for the facts that need to just stick.', href: '/flashcards' },
-  { hue: 285, icon: Wand2, title: 'AI Visualizer', desc: 'Turn dense concepts into step-by-step visual explanations on demand.', href: '/ai-visualizer' },
+  { hue: 150, icon: Stethoscope, title: 'OSPE / OSCE', desc: 'Learning material and exams for the practical side of your program, matched to your year.', href: '/ospe-osce' },
+  { hue: 285, icon: Wand2, title: 'AI Visualizer', desc: 'Describe a concept and get an interactive 2D diagram with sliders and live values you can play with.', href: '/ai-visualizer' },
+  { hue: 320, icon: Sparkles, title: 'AI MCQ Maker', desc: 'Type any topic and get a fresh practice set written for you, with explanations.', href: '/ai-mcq-maker' },
+  { hue: 100, icon: Library, title: 'Books', desc: 'Read free books, or unlock paid ones in a protected in-app reader.', href: '/books' },
 ];
 
 function formatPrice(plan: MembershipPlan) {
