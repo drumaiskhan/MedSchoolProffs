@@ -1,0 +1,181 @@
+/* ==========================================================================
+   v43 — "real 3D" for the sidebar (.sb-*) and Subjects / Topics (.cu-*).
+
+   READ lib/fx.ts FIRST. This file follows the same rules:
+     * 3D = a small-angle perspective tilt on ONE hovered element
+       (`.fx-tilt.is-tilting > .fx-tilt__body`) and one hovered sidebar
+       keycap. At rest nothing here has a 3D transform, so a page of 50 cards
+       has zero 3D layers.
+     * NO preserve-3d, NO backface-visibility, NO translateZ, NO flips.
+     * Depth between layers inside a card is 2D parallax driven by the same
+       --tx/--ty pointer values.
+     * Motion only touches transform / opacity (compositor). Shadows are never
+       animated — the hover shadow is a pseudo-element whose opacity changes.
+     * Touch, prefers-reduced-motion and html[data-fx="lite"] skip the tilt.
+
+   Unlayered on purpose (like the v37/v40 blocks): it must beat the layered
+   Tailwind utilities that the older sidebar/cards relied on.
+   ========================================================================== */
+
+/* ---------- tilt primitive ------------------------------------------------ */
+.fx-tilt { position: relative; isolation: isolate; display: block; border-radius: var(--fx-r, 1.25rem); color: inherit; text-decoration: none; outline: none; -webkit-tap-highlight-color: transparent; }
+.fx-tilt__body { position: relative; display: block; height: 100%; border-radius: inherit; transition: transform .28s cubic-bezier(.2, .8, .2, 1); }
+.fx-tilt.is-tilting { z-index: 2; }
+.fx-tilt.is-tilting > .fx-tilt__body {
+  transition: none;
+  will-change: transform;
+  transform: perspective(1000px)
+    rotateX(calc(var(--ty, 0) * var(--tilt, 6) * -1deg))
+    rotateY(calc(var(--tx, 0) * var(--tilt, 6) * 1deg))
+    translateY(calc(var(--hv, 0) * -3px))
+    scale(calc(1 + var(--hv, 0) * .016));
+}
+/* Press feedback: plain 2D, works for touch and mouse. */
+.fx-tilt:active > .fx-tilt__body { transform: scale(.985); }
+.fx-tilt.is-tilting:active > .fx-tilt__body {
+  transform: perspective(1000px) rotateX(calc(var(--ty, 0) * var(--tilt, 6) * -1deg)) rotateY(calc(var(--tx, 0) * var(--tilt, 6) * 1deg)) scale(.982);
+}
+/* Keyboard focus ring lives on the body so it follows the card's real radius. */
+.fx-tilt:focus-visible > .fx-tilt__body { box-shadow: var(--raise-1), 0 0 0 3px hsl(var(--primary) / .6); }
+
+/* Ground shadow — exists ONLY while hovered (so lists don't carry 50 blurs). */
+.fx-tilt.is-tilting::before {
+  content: ''; position: absolute; inset: 12% 7% -5%; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: hsl(var(--h, 200) 70% 32% / .55); filter: blur(22px); opacity: calc(var(--hv, 0) * .5);
+}
+.dark .fx-tilt.is-tilting::before { background: hsl(var(--h, 200) 80% 4% / .9); opacity: calc(var(--hv, 0) * .7); }
+
+/* Pointer glare: a translated radial gradient (transform only). */
+.fx-glare { position: absolute; inset: 0; z-index: 3; overflow: hidden; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .25s ease; }
+.fx-glare > i { position: absolute; inset: 0; background: radial-gradient(circle at 50% 50%, hsl(0 0% 100% / .36), hsl(0 0% 100% / 0) 58%); transform: translate(calc(var(--tx, 0) * 50%), calc(var(--ty, 0) * 50%)); }
+.dark .fx-glare > i { background: radial-gradient(circle at 50% 50%, hsl(0 0% 100% / .13), hsl(0 0% 100% / 0) 58%); }
+.fx-tilt.is-tilting .fx-glare { opacity: var(--hv, 0); }
+
+/* ---------- shared keyframes ---------------------------------------------- */
+@keyframes cuRise { from { opacity: 0; transform: translateY(20px) scale(.975); } to { opacity: 1; transform: none; } }
+@keyframes cuPop { from { opacity: 0; transform: translateY(14px) scale(.7); } to { opacity: 1; } }
+@keyframes cuBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+@keyframes cuContact { 0%, 100% { transform: scale(1); opacity: .6; } 50% { transform: scale(.72); opacity: .32; } }
+@keyframes cuSpin { to { transform: rotate(360deg); } }
+@keyframes cuDrift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(34px, -22px) scale(1.14); } }
+@keyframes cuRing { 0% { transform: scale(.85); opacity: .75; } 100% { transform: scale(1.7); opacity: 0; } }
+@keyframes sbItem { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@keyframes sbDrawer { from { transform: translateX(-104%); } to { transform: none; } }
+@keyframes sbFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sbDrift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(38px, -26px) scale(1.12); } }
+@keyframes sbPop { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }
+
+/* ==========================================================================
+   SIDEBAR
+   ========================================================================== */
+.admin-sidebar { background-image: linear-gradient(180deg, hsl(0 0% 100% / .04), transparent 240px); }
+@media (min-width: 768px) { .admin-sidebar { border-right: 1px solid hsl(0 0% 100% / .05); } }
+
+/* Ambient light: a viewport-tall clipped layer that stays pinned while the
+   sidebar scrolls; it takes no space (negative margin). Two slow orbs.
+   The sidebar itself carries the py-5/px-3.5 padding (see student-sidebar
+   above), so as a plain flex child this layer used to start ~1.25rem below
+   the real top edge — the orb glow visibly stopped short of the sidebar's
+   top-left corner. Negative margins pull it out past the padding on all
+   sides (bottom stays -100dvh so it still takes no space in flow: the
+   extra 1.25rem pulled off the top is added back into `height`), and the
+   sticky `top` offset is shifted by the same amount so it still stays
+   flush with the true top edge once the sidebar scrolls. */
+.sb-ambient { position: sticky; top: -1.25rem; z-index: 0; flex: none; width: calc(100% + 1.75rem); height: calc(100dvh + 1.25rem); margin: -1.25rem -.875rem -100dvh; overflow: hidden; pointer-events: none; }
+.sb-orb { position: absolute; border-radius: 50%; will-change: transform; }
+.sb-orb--a { left: -120px; top: -90px; width: 320px; height: 320px; background: radial-gradient(circle, hsl(var(--sidebar-primary) / .22), transparent 66%); animation: sbDrift 16s ease-in-out infinite; }
+.sb-orb--b { right: -140px; bottom: 4%; width: 280px; height: 280px; background: radial-gradient(circle, hsl(262 80% 66% / .16), transparent 66%); animation: sbDrift 21s ease-in-out infinite reverse; }
+
+.sb-nav { position: relative; z-index: 1; margin: -4px -.875rem; padding: 4px .875rem; overflow: hidden; overflow: clip; }
+.sb-group + .sb-group { margin-top: 1.5rem; }
+.sb-group__label { display: flex; align-items: center; gap: .6rem; margin: 0 0 .5rem; padding: 0 .75rem; font-family: var(--app-font-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: hsl(var(--sidebar-foreground) / .4); }
+.sb-group__label::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, hsl(var(--sidebar-foreground) / .16), transparent); }
+/* NOT position:relative — that would make every group its own offsetParent,
+   so item.offsetTop (used to place .sb-puck/.sb-ghost) would reset to 0 at
+   the top of each group instead of counting continuously down .sb-nav (the
+   pill's real positioning container). .sb-item already has its own
+   position:relative + z-index:1, so items still paint above the pill without
+   this wrapper needing to be positioned at all. */
+.sb-group__items { display: grid; gap: 2px; }
+
+/* Pointer spotlight (translated, never repainted). */
+.sb-spot { position: absolute; left: 0; top: 0; z-index: 0; width: 260px; height: 260px; border-radius: 50%; pointer-events: none; opacity: 0; will-change: transform;
+  background: radial-gradient(circle, hsl(var(--sidebar-primary) / .17), transparent 62%); transition: opacity .35s ease; }
+
+/* Selection puck + hover ghost: one element each, moved with transform only. */
+.sb-puck, .sb-ghost { position: absolute; left: .875rem; right: .875rem; top: 0; z-index: 0; height: var(--ph, 40px); border-radius: .9rem; pointer-events: none; opacity: 0; transform: translateY(var(--y, 0px)); }
+.sb-puck { background: linear-gradient(180deg, hsl(var(--sidebar-accent)), hsl(var(--sidebar-accent) / .72)); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .11), 0 10px 22px -12px hsl(0 0% 0% / .75), 0 0 0 1px hsl(var(--k-h) 80% 60% / .16); }
+.sb-puck::before { content: ''; position: absolute; left: -.875rem; top: 50%; width: 4px; height: 20px; margin-top: -10px; border-radius: 0 4px 4px 0; background: hsl(var(--k-h) 90% 66%); box-shadow: 0 0 12px hsl(var(--k-h) 95% 62% / .8); }
+.sb-puck[data-on="true"] { opacity: 1; }
+.sb-ghost { background: hsl(var(--sidebar-accent) / .55); }
+.sb-ghost[data-on="true"] { opacity: 1; }
+/* Animate only after the first placement, so nothing slides in from the top on load. */
+.sb-nav[data-ready="true"] .sb-puck { transition: transform .5s cubic-bezier(.22, 1, .36, 1), opacity .25s ease; }
+.sb-nav[data-ready="true"] .sb-ghost { transition: transform .32s cubic-bezier(.22, 1, .36, 1), opacity .2s ease; }
+.sb-nav[data-ready="true"] .sb-ghost[data-jump="true"] { transition: opacity .2s ease; }
+
+.sb-item { position: relative; z-index: 1; display: flex; align-items: center; gap: .75rem; padding: .5rem .625rem; border-radius: .9rem; font-size: 13px; font-weight: 600; line-height: 1.2; color: hsl(var(--sidebar-foreground) / .72); text-decoration: none; -webkit-tap-highlight-color: transparent;
+  transition: color .2s ease; animation: sbItem .55s cubic-bezier(.22, 1, .36, 1) backwards; animation-delay: calc(var(--i, 0) * 22ms + 60ms); }
+.sb-item:hover { color: hsl(var(--sidebar-accent-foreground)); }
+.sb-item[aria-current="page"] { color: #fff; }
+.sb-item[data-locked="true"] { opacity: .6; }
+.sb-item:focus-visible { outline: 2px solid hsl(var(--sidebar-primary) / .7); outline-offset: -2px; border-radius: .9rem; }
+.sb-item__label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: transform .3s cubic-bezier(.22, 1, .36, 1); }
+@media (hover: hover) { .sb-item:hover .sb-item__label { transform: translateX(2px); } }
+
+/* Keycap icon: dim glass at rest, fills with the page's hue when hovered/active. */
+.sb-key { position: relative; flex: none; display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .7rem; color: hsl(var(--k-h) 88% 76%);
+  background: linear-gradient(165deg, hsl(0 0% 100% / .11), hsl(0 0% 100% / .03));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .18), inset 0 -3px 5px hsl(0 0% 0% / .25), 0 2px 0 hsl(0 0% 0% / .32), 0 8px 12px -8px hsl(0 0% 0% / .7);
+  transition: transform .35s cubic-bezier(.34, 1.56, .64, 1), box-shadow .25s ease, background-color .25s ease, color .2s ease; }
+.sb-item:hover .sb-key, .sb-item[aria-current="page"] .sb-key {
+  color: #fff;
+  background: radial-gradient(120% 90% at 28% 10%, hsl(var(--k-h) 95% 80% / .5), transparent 58%), linear-gradient(150deg, hsl(var(--k-h) 82% var(--k-l1, 58%)), hsl(calc(var(--k-h) + 16) 78% var(--k-l2, 42%)));
+  box-shadow: inset 0 1.5px 0 hsl(0 0% 100% / .5), inset 0 -4px 7px hsl(var(--k-h) 80% 16% / .4), 0 3px 0 hsl(var(--k-h) 65% 22%), 0 10px 16px -6px hsl(var(--k-h) 90% 48% / .6);
+}
+/* The one deliberately 3D piece in the sidebar: a small-angle turn of ONE keycap under a mouse. */
+@media (hover: hover) and (pointer: fine) {
+  html:not([data-fx="lite"]) .sb-item:hover .sb-key { transform: perspective(150px) rotateX(10deg) rotateY(-15deg) translateY(-1px) scale(1.07); }
+  html:not([data-fx="lite"]) .sb-item:active .sb-key { transform: perspective(150px) rotateX(4deg) rotateY(-6deg) translateY(2px) scale(.95); }
+}
+.sb-item:active .sb-key { transform: translateY(2px) scale(.94); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .3), inset 0 -2px 4px hsl(0 0% 0% / .3), 0 0 0 hsl(0 0% 0% / .3), 0 3px 6px -3px hsl(0 0% 0% / .6); }
+
+.sb-badge { display: grid; place-items: center; flex: none; min-width: 1.25rem; height: 1.25rem; padding: 0 .3rem; border-radius: 999px; font-size: 10px; font-weight: 800; color: #183844;
+  background: linear-gradient(180deg, #f3c574, #e5a952); box-shadow: inset 0 1px 0 hsl(0 0% 100% / .5), 0 2px 0 hsl(38 60% 30%), 0 6px 10px -4px hsl(38 90% 50% / .6); animation: sbPop .5s cubic-bezier(.34, 1.56, .64, 1) backwards; }
+
+/* Profile card */
+.sb-me { --fx-r: 1rem; --tilt: 5; }
+.sb-me__body { display: flex; align-items: center; gap: .75rem; padding: .7rem .75rem; overflow: hidden;
+  background: linear-gradient(160deg, hsl(var(--sidebar-accent) / .8), hsl(var(--sidebar-accent) / .34)); border: 1px solid hsl(var(--sidebar-border) / .7);
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / .09), 0 14px 22px -14px hsl(0 0% 0% / .8); }
+.sb-me__avatar { flex: none; display: grid; place-items: center; width: 2.4rem; height: 2.4rem; padding: 2px; border-radius: 50%;
+  background: conic-gradient(from 210deg, hsl(var(--sidebar-primary)), #b9f5ea, hsl(var(--sidebar-primary)) 55%, hsl(var(--sidebar-primary) / .5)); box-shadow: 0 6px 12px -4px hsl(var(--sidebar-primary) / .5); }
+.sb-me__avatar > span { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; font-size: 12px; font-weight: 800; color: hsl(var(--sidebar-primary-foreground));
+  background: radial-gradient(120% 90% at 30% 15%, hsl(var(--sidebar-primary)), hsl(164 42% 40%)); box-shadow: inset 0 1.5px 0 hsl(0 0% 100% / .55), inset 0 -4px 6px hsl(206 60% 12% / .35); }
+.sb-me__name, .sb-me__sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-me__name { font-size: 12px; font-weight: 800; color: hsl(var(--sidebar-foreground)); }
+.sb-me__sub { font-size: 10px; color: hsl(var(--sidebar-foreground) / .5); }
+.sb-out { position: relative; z-index: 4; display: grid; place-items: center; flex: none; width: 2rem; height: 2rem; border-radius: .6rem; color: hsl(var(--sidebar-foreground) / .6); transition: background-color .2s ease, color .2s ease; }
+.sb-out:hover:not(:disabled) { background: hsl(0 0% 100% / .1); color: hsl(var(--sidebar-foreground)); }
+.sb-out:disabled { opacity: .5; }
+
+/* Phone drawer: slides in with the scrim fading behind it. */
+@media (max-width: 767px) {
+  .admin-sidebar { animation: sbDrawer .42s cubic-bezier(.22, 1, .36, 1) backwards; }
+  .sb-scrim { animation: sbFade .3s ease backwards; }
+}
+
+
+/* Motion off: reduced-motion users and the "lite" kill switch (see lib/fx.ts). */
+@media (prefers-reduced-motion: reduce) {
+  .sb-item, .sb-badge, .admin-sidebar, .sb-scrim, .sb-orb { animation: none !important; }
+  .sb-puck, .sb-ghost, .sb-spot, .sb-key, .sb-item__label, .fx-tilt__body, .fx-glare { transition: none !important; }
+}
+html[data-fx="lite"] .sb-orb { animation: none; }
+html[data-fx="lite"] :is(.sb-spot, .sb-ghost) { display: none; }
+html[data-fx="lite"] .sb-ambient { display: none; }
+
+/* A flex/grid child must never out-grow the screen on phones. */
+.admin-content :is(.grid, .inline-grid) > * { min-width: 0; }
+.admin-content input[type="file"] { min-width: 0; max-width: 100%; }
+.admin-shell > main { min-width: 0; max-width: 100%; }

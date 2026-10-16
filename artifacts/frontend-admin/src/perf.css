@@ -1,0 +1,15 @@
+/* Admin performance layer — imported LAST (main.tsx). Same rules as the student app:
+   phones/tablets (html[data-fx="lite"], see lib/fx.ts) lose blur + endless decorative motion. */
+@media (hover: none) {
+  .card-lift:hover, .btn-pop:hover:not(:disabled) { transform: none; filter: none; }
+  button:hover:not(:disabled) { filter: none; }
+}
+html[data-fx="lite"] [class*="backdrop-blur"]:not([data-testid^="veil"]) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+html[data-fx="lite"] .admin-header { background-color: hsl(var(--background) / .97); }
+html[data-fx="lite"] .tabbar-dock { background-color: hsl(var(--card)); }
+html[data-fx="lite"] .skeleton { background: hsl(var(--muted)); animation: perfPulse 1.4s ease-in-out infinite; }
+@keyframes perfPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+html[data-fx="lite"] .page-enter { animation: perfFade .16s ease backwards; }
+@keyframes perfFade { from { opacity: 0; } to { opacity: 1; } }
+html[data-fx="lite"] .card-lift { transition: none; }
+a, button, [role="button"], label, select, summary { touch-action: manipulation; }

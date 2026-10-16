@@ -38,6 +38,7 @@ import NotFound from '@/pages/not-found';
 import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, adminSearchApi, type AdminSearchResponse, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry, type BackupScope } from '@/lib/api';
 
 import { BrandedLoadingScreen, InlineLoading, Logo, NavItem, cn, initials } from './ui';
+import { SidebarNav, SidebarProfile, type SidebarGroup } from '@/components/nav/SidebarNav';
 
 
 export const navGroups: Array<{ label: string; items: NavItem[] }> = [
@@ -76,17 +77,17 @@ export const adminGroups: Array<{ label: string; items: NavItem[] }> = [
   ] },
 ];
 
-// Per-group accent for the sidebar's icon tiles — a little colour so the
-// groups are recognisable at a glance instead of one uniform column of icons.
-const GROUP_TONE: Record<string, string> = {
-  Overview: 'bg-sidebar-primary/15 text-sidebar-primary',
-  Payments: 'bg-accent/15 text-accent',
-  Curriculum: 'bg-chip-info/15 text-chip-info',
-  'Question banks': 'bg-chip-violet/15 text-chip-violet',
-  'Site & team': 'bg-destructive/15 text-destructive',
-  Activity: 'bg-chip-success/15 text-chip-success',
-  Workspace: 'bg-sidebar-foreground/15 text-sidebar-foreground',
+// Hue (HSL degrees) of each page's keycap in the sidebar — same idea as the
+// student panel's NAV_HUE, so the glossy icon tiles tint per destination.
+const NAV_HUE: Record<string, number> = {
+  '/admin': 214, '/admin/students': 172, '/admin/plans': 152, '/admin/coupons': 38, '/admin/payments': 45,
+  '/admin/academic-structure': 205, '/admin/content': 228, '/admin/subjects': 190, '/admin/topics': 200,
+  '/admin/mcqs': 268, '/admin/quality': 160, '/admin/flashcards': 290, '/admin/books': 22, '/admin/book-purchases': 12,
+  '/admin/past-papers': 350, '/admin/exams': 4, '/admin/ospe-osce': 330,
+  '/admin/team': 240, '/admin/site-content': 215, '/admin/feedback': 180, '/admin/ai-visualizer-logs': 275,
+  '/admin/settings': 210, '/admin/database-backup': 195, '/notifications': 200, '/profile': 240,
 };
+const NAV_HUE_FALLBACK = 214;
 
 // Header title + section eyebrow for the current route, taken from the same
 // nav list the sidebar renders so the two can never disagree (the header
@@ -113,14 +114,8 @@ function useAdminBadges(): Record<string, number> {
   return { '/admin/payments': pendingPayments, '/admin/students': pendingStudents };
 }
 
-const NAV_OPEN_KEY = 'admin-nav-open-groups';
-function readOpenGroups(): string[] | null {
-  try { const raw = localStorage.getItem(NAV_OPEN_KEY); return raw ? (JSON.parse(raw) as string[]) : null; } catch { return null; }
-}
-
 export function SideNav({ user, onClose }: { user: User; onClose: () => void }) {
   const [location] = useLocation();
-  const groups = adminGroups;
   const badges = useAdminBadges();
   const notifQ = useListNotifications();
   const unreadCount = (notifQ.data ?? []).filter((n) => !n.read).length;
@@ -129,56 +124,34 @@ export function SideNav({ user, onClose }: { user: User; onClose: () => void }) 
   const siteQ = useQuery({ queryKey: ['site-content'], queryFn: siteContentApi.get });
   const trial = siteQ.data?.trial;
   const logout = useMutation({ mutationFn: authApi.logout, onSuccess: () => { queryClient.clear(); window.location.href = '/login'; } });
-  const isActive = (href: string) => location === href || (href === '/admin/payments' && location === '/admin/payment-details');
-  const activeGroup = groups.find((g) => g.items.some(([href]) => isActive(href)))?.label;
-  // Groups are collapsible so the long list stays scannable: the group you are
-  // in is always open, the rest remember how you left them.
-  const [openGroups, setOpenGroups] = useState<string[]>(() => readOpenGroups() ?? ['Overview', 'Payments']);
-  useEffect(() => { if (activeGroup) setOpenGroups((cur) => (cur.includes(activeGroup) ? cur : [...cur, activeGroup])); }, [activeGroup]);
-  const toggleGroup = (label: string) => setOpenGroups((cur) => {
-    const next = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label];
-    try { localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
-    return next;
+  const isActive = (href: string) => (href === '/admin'
+    ? location === '/admin' || location === '/'
+    : location === href || location.startsWith(`${href}/`) || (href === '/admin/payments' && location === '/admin/payment-details'));
+  const toItem = ([href, label, Icon]: NavItem, badge = 0) => ({
+    href, label, icon: Icon,
+    hue: NAV_HUE[href] ?? NAV_HUE_FALLBACK,
+    locked: false,
+    active: isActive(href),
+    slug: label.toLowerCase().replaceAll(' ', '-'),
+    badge,
   });
-  return <aside className="admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[min(300px,86vw)] flex-col overflow-y-auto bg-sidebar px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1.25rem,env(safe-area-inset-top))] text-sidebar-foreground shadow-2xl animate-in slide-in-from-left duration-200 md:sticky md:top-0 md:h-[100dvh] md:w-[268px] md:shadow-none md:animate-none">
-    <div className="mb-4 flex items-center justify-between px-2"><Logo dark /><button className="grid size-10 place-items-center rounded-xl text-sidebar-foreground/70 hover:bg-sidebar-accent md:hidden" onClick={onClose} aria-label="Close menu" data-testid="button-close-menu"><X size={18} /></button></div>
-    {trial?.active && <Link href="/admin/settings?tab=access" onClick={onClose} className="mb-3 flex items-center gap-2.5 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/20" data-testid="chip-admin-trial-live">
+  // Same presentation component as the student sidebar (sliding puck, hover
+  // ghost, pointer spotlight, keycap icons, tilting profile card).
+  const navView: SidebarGroup[] = [
+    ...adminGroups.map((group) => ({ label: group.label, items: group.items.map((item) => toItem(item, badges[item[0]] ?? 0)) })),
+    { label: 'Account', items: [toItem(['/notifications', 'Notifications', Bell], unreadCount), toItem(['/profile', 'Your profile', UserIcon])] },
+  ];
+  return <aside className="admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[256px] flex-col overflow-y-auto bg-sidebar px-3.5 py-5 text-sidebar-foreground shadow-xl md:sticky md:top-0 md:h-[100dvh] md:shadow-none">
+    <div className="sb-ambient" aria-hidden="true"><i className="sb-orb sb-orb--a" /><i className="sb-orb sb-orb--b" /></div>
+    <div className="relative z-[1] mb-6 flex items-center justify-between px-2"><Logo dark /><button className="rounded-lg p-2 text-sidebar-foreground/60 hover:bg-sidebar-accent md:hidden" onClick={onClose} aria-label="Close menu" data-testid="button-close-menu"><X size={18} /></button></div>
+    {trial?.active && <Link href="/admin/settings?tab=access" onClick={onClose} className="relative z-[1] mb-4 flex items-center gap-2.5 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2.5 text-[11px] font-bold text-accent transition-colors hover:bg-accent/20" data-testid="chip-admin-trial-live">
       <span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-70" /><span className="relative inline-flex size-2 rounded-full bg-accent" /></span>
       <span className="min-w-0 flex-1"><span className="block">Free trial is live</span><span className="block truncate text-[10px] font-medium text-accent/70">{trial.features.length} feature{trial.features.length === 1 ? '' : 's'}{trial.program ? ` · ${trial.program}` : ''}{trial.years.length ? ` · Yr ${trial.years.join(', ')}` : ''}</span></span>
       <ChevronRight size={13} />
     </Link>}
-    <nav className="space-y-1" aria-label="Admin navigation">
-      {groups.map((group) => {
-        const open = openGroups.includes(group.label);
-        const groupBadge = group.items.reduce((sum, [href]) => sum + (badges[href] ?? 0), 0);
-        return <div key={group.label}>
-          <button type="button" onClick={() => toggleGroup(group.label)} aria-expanded={open} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-mono-app text-[10px] font-bold uppercase tracking-[.14em] text-sidebar-foreground/50 transition-colors hover:text-sidebar-foreground/90" data-testid={`button-nav-group-${group.label.toLowerCase().replaceAll(' ', '-')}`}>
-            <span className="flex-1">{group.label}</span>
-            {!open && groupBadge > 0 && <span className="grid min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold leading-4 text-accent-foreground">{groupBadge}</span>}
-            <ChevronDown size={12} className={cn('transition-transform', !open && '-rotate-90')} />
-          </button>
-          {open && <div className="mb-2 space-y-0.5">{group.items.map(([href, label, Icon]) => {
-            const active = isActive(href);
-            const count = badges[href] ?? 0;
-            return <Link key={href} href={href} onClick={onClose} aria-current={active ? 'page' : undefined}
-              className={cn('group relative flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-semibold transition-colors', active ? 'bg-sidebar-primary/15 text-sidebar-primary' : 'text-sidebar-foreground/75 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground')}
-              data-testid={`link-nav-${label.toLowerCase().replaceAll(' ', '-')}`}>
-              {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-sidebar-primary" />}
-              <Icon size={17} strokeWidth={active ? 2.3 : 1.9} className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{label}</span>
-              {count > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[10px] font-bold leading-5 text-accent-foreground" aria-label={`${count} pending`}>{count > 99 ? '99+' : count}</span>}
-            </Link>;
-          })}</div>}
-        </div>;
-      })}
-    </nav>
-    <div className="mt-auto pt-5">
-      <Link href="/notifications" onClick={onClose} className="mb-2 flex min-h-10 items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-semibold text-sidebar-foreground/75 hover:bg-sidebar-accent/70" data-testid="link-nav-notifications"><Bell size={17} /><span className="flex-1">Notifications</span>{unreadCount > 0 && <span className="grid min-w-5 place-items-center rounded-full bg-accent px-1.5 text-[10px] font-bold leading-5 text-accent-foreground">{unreadCount > 9 ? '9+' : unreadCount}</span>}</Link>
-      <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/40 px-3 py-2.5">
-        <div className="grid size-9 shrink-0 place-items-center rounded-full bg-sidebar-primary text-xs font-extrabold text-sidebar-primary-foreground">{initials(user.name)}</div>
-        <div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-sidebar-foreground">{user.name}</div><div className="truncate text-[10px] text-sidebar-foreground/50">Administrator</div></div>
-        <button onClick={() => logout.mutate()} disabled={logout.isPending} className="grid size-9 place-items-center rounded-lg text-sidebar-foreground/60 transition-colors hover:bg-white/10 hover:text-sidebar-foreground disabled:opacity-50" data-testid="button-signout" title="Sign out" aria-label="Sign out"><LogOut size={15} /></button>
-      </div>
+    <SidebarNav groups={navView} onNavigate={onClose} />
+    <div className="relative z-[1] mt-auto pt-6">
+      <SidebarProfile initials={initials(user.name)} name={user.name} subtitle="Administrator" onSignOut={() => logout.mutate()} signingOut={logout.isPending} />
     </div>
   </aside>;
 }
@@ -254,6 +227,8 @@ export function Shell({ children }: { children: ReactNode }) {
   useEffect(() => { setMenuOpen(false); }, [location]);
   useEffect(() => { document.body.style.overflow = menuOpen ? 'hidden' : ''; return () => { document.body.style.overflow = ''; }; }, [menuOpen]);
   const badges = useAdminBadges();
+  const headerNotifQ = useListNotifications();
+  const headerUnread = (headerNotifQ.data ?? []).filter((n) => !n.read).length;
 
   useEffect(() => {
     if (userQuery.isLoading) return;
@@ -282,36 +257,41 @@ export function Shell({ children }: { children: ReactNode }) {
   if (!user || user.role !== 'admin') return <BrandedLoadingScreen />;
 
   const { title, group: pageGroup } = currentPageInfo(location);
-  const bottomTabs: Array<[string, string, typeof LayoutDashboard]> = [['/admin', 'Overview', LayoutDashboard], ['/admin/students', 'Students', Users], ['/admin/payments', 'Payments', ReceiptText], ['/admin/mcqs', 'MCQs', CircleHelp]];
-  const tabActive = (href: string) => (href === '/admin' ? location === '/admin' : location === href || location.startsWith(`${href}/`) || (href === '/admin/payments' && location === '/admin/payment-details'));
+  const bottomTabs: Array<[string, string, typeof LayoutDashboard]> = [['/admin', 'Home', LayoutDashboard], ['/admin/students', 'Students', Users], ['/admin/payments', 'Payments', ReceiptText], ['/admin/mcqs', 'MCQs', CircleHelp]];
+  const tabActive = (href: string) => (href === '/admin' ? location === '/admin' || location === '/' : location === href || location.startsWith(`${href}/`) || (href === '/admin/payments' && location === '/admin/payment-details'));
+  const todayLong = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const todayShort = new Date().toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
   return <div className="admin-shell flex min-h-[100dvh] bg-background">
-    <div className={cn(menuOpen ? 'block' : 'hidden', 'fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px] md:hidden')} onClick={() => setMenuOpen(false)} />
-    {(menuOpen || !isMobile) && <SideNav user={user} onClose={() => setMenuOpen(false)} />}
-    <main className="admin-main min-w-0 flex-1">
-      <header className="admin-header sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-border/70 bg-background/80 px-3 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:px-5 md:h-16 md:px-8 md:pt-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <button className="grid size-10 shrink-0 place-items-center rounded-xl hover:bg-muted md:hidden" onClick={() => setMenuOpen(true)} aria-label="Open menu" data-testid="button-open-menu"><Menu size={20} /></button>
-          <div className="min-w-0"><div className="hidden truncate font-mono-app text-[10px] uppercase tracking-[.14em] text-muted-foreground sm:block">Admin · {pageGroup}</div><h1 className="truncate text-[16px] font-extrabold leading-tight tracking-[-.02em] text-foreground md:text-[18px]">{title}</h1></div>
+    <div className={cn(menuOpen ? 'block' : 'hidden', 'sb-scrim fixed inset-0 z-30 bg-[#071e2b]/45 md:hidden')} onClick={() => setMenuOpen(false)} />
+    <div className={cn((menuOpen || !isMobile) ? 'block' : 'hidden')}><SideNav user={user} onClose={() => setMenuOpen(false)} /></div>
+    <main className="admin-main min-w-0 max-w-full flex-1">
+      <header className="admin-header sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-border/70 bg-background/90 px-4 backdrop-blur-md md:px-8">
+        <div className="flex min-w-0 items-center gap-3">
+          <button className="rounded-lg p-2 hover:bg-muted md:hidden" onClick={() => setMenuOpen(true)} aria-label="Open menu" data-testid="button-open-menu"><Menu size={20} /></button>
+          <div className="min-w-0"><div className="font-mono-app whitespace-nowrap text-[9px] uppercase tracking-[.16em] text-muted-foreground"><span className="hidden md:inline">{todayLong}</span><span className="md:hidden">{todayShort}</span><span className="hidden sm:inline"> · Admin · {pageGroup}</span></div><h1 className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[17px] font-extrabold leading-tight tracking-[-.02em] text-foreground" title={title}>{title}</h1></div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <button onClick={() => setSearchOpen(true)} className="hidden h-10 w-[220px] items-center gap-2 rounded-xl border border-border bg-card px-3 text-left text-[12px] text-muted-foreground hover:border-primary/50 sm:flex md:w-[320px]" data-testid="button-open-admin-search"><Search size={14} /><span className="truncate">Search students, MCQs, everything...</span><span className="ml-auto rounded border border-border px-1 text-[9px]">⌘K</span></button>
-          <button onClick={() => setSearchOpen(true)} className="grid size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted sm:hidden" aria-label="Search" data-testid="button-open-admin-search-mobile"><Search size={17} /></button>
-          <Link href="/notifications" className="relative grid size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted" aria-label="Notifications" data-testid="link-notifications"><Bell size={17} /></Link>
-          <Link href="/admin/settings" className="hidden size-10 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:grid" title="Platform settings" aria-label="Platform settings" data-testid="link-header-settings"><Settings size={16} /></Link>
-          <Link href="/profile" className="grid size-10 place-items-center rounded-full bg-primary/15 text-xs font-extrabold text-primary" aria-label="Your profile" data-testid="link-header-profile">{initials(user.name)}</Link>
+        <div className="relative flex items-center gap-2">
+          <button onClick={() => setSearchOpen(true)} className="hidden h-9 w-[220px] items-center gap-2 rounded-xl border border-border bg-card px-3 text-left text-[11px] text-muted-foreground shadow-sm hover:border-primary/50 sm:flex md:w-[340px]" data-testid="button-open-admin-search"><Search size={14} /><span className="truncate">Search students, MCQs, everything…</span><span className="ml-auto rounded border border-border px-1 text-[9px]">⌘K</span></button>
+          <button onClick={() => setSearchOpen(true)} className="grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:bg-muted sm:hidden" aria-label="Search" data-testid="button-open-admin-search-mobile"><Search size={16} /></button>
+          <Link href="/notifications" className="relative grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" aria-label="Notifications" data-testid="link-notifications"><Bell size={16} />{headerUnread > 0 && <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-[#e5a952] px-1 text-[9px] font-bold leading-4 text-[#183844] ring-2 ring-background" data-testid="badge-header-unread">{headerUnread > 9 ? '9+' : headerUnread}</span>}</Link>
+          <Link href="/admin/settings" className="hidden size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:grid" title="Platform settings" aria-label="Platform settings" data-testid="link-header-settings"><Settings size={16} /></Link>
+          <Link href="/profile" className="ml-1 grid size-9 place-items-center rounded-full bg-[#cdebf0] text-[11px] font-extrabold text-[#0d5267] ring-2 ring-transparent transition-shadow hover:ring-primary/30" aria-label="Your profile" data-testid="link-header-profile">{initials(user.name)}</Link>
         </div>
       </header>
-      <div className="admin-content page-enter mx-auto w-full max-w-[1400px] px-3 py-5 pb-28 sm:px-5 md:px-8 md:py-8 md:pb-10">{children}</div>
+      <div className="page-enter admin-content mx-auto w-full max-w-[1400px] px-4 py-6 pb-28 md:px-8 md:py-9">{children}</div>
+      <nav aria-label="Quick navigation" className="tabbar-safe fixed inset-x-0 bottom-0 z-20 w-full max-w-full px-3 md:hidden" data-testid="tabbar-mobile">
+        <div className="tabbar-dock mx-auto flex w-full max-w-md items-stretch gap-1 rounded-2xl border border-border bg-card/95 p-1.5 backdrop-blur-md">
+          {bottomTabs.map(([href, label, Icon]) => {
+            const active = tabActive(href); const count = badges[href] ?? 0;
+            return <Link key={href} href={href} aria-current={active ? 'page' : undefined} className={cn('relative flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[10px] font-bold transition-colors', active ? 'tab-key text-primary' : 'text-muted-foreground hover:bg-muted/70')} data-testid={`tab-${label.toLowerCase()}`}>
+              <Icon size={19} strokeWidth={active ? 2.4 : 2} />{label}
+              {count > 0 && <span className="absolute right-2 top-1 grid min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold leading-4 text-accent-foreground">{count > 99 ? '99+' : count}</span>}
+            </Link>;
+          })}
+          <button type="button" onClick={() => setMenuOpen(true)} className="relative flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[10px] font-bold text-muted-foreground hover:bg-muted/70" aria-label="More — open full menu" data-testid="tab-more"><Menu size={19} />More</button>
+        </div>
+      </nav>
     </main>
-    <nav className="admin-bottom-nav fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-border/70 bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden" aria-label="Quick navigation">
-      {bottomTabs.map(([href, label, Icon]) => {
-        const active = tabActive(href); const count = badges[href] ?? 0;
-        return <Link key={href} href={href} aria-current={active ? 'page' : undefined} className={cn('relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors', active ? 'text-primary' : 'text-muted-foreground')} data-testid={`tab-${label.toLowerCase()}`}>
-          <span className={cn('relative grid h-7 w-12 place-items-center rounded-full transition-colors', active && 'bg-primary/12')}><Icon size={19} strokeWidth={active ? 2.4 : 1.9} />{count > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent px-1 text-[9px] font-bold leading-4 text-accent-foreground">{count > 99 ? '99+' : count}</span>}</span>{label}
-        </Link>;
-      })}
-      <button type="button" onClick={() => setMenuOpen(true)} className="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-bold text-muted-foreground" data-testid="tab-more"><span className="grid h-7 w-12 place-items-center rounded-full"><Menu size={19} /></span>More</button>
-    </nav>
     <AdminGlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
   </div>;
 }

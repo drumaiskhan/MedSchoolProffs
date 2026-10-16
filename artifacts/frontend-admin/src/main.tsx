@@ -6,6 +6,13 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { enableGlobalScreenshotGuard } from '@/lib/nativeScreenshotGuard';
 
 import './index.css';
+import './fx.css'; // sidebar puck / keycaps / tilt (same as the student panel)
+import './modern.css'; // shared surfaces, buttons, fields, tables
+import './perf.css'; // must stay last: lite mode on phones
+import { initFx } from '@/lib/fx';
+
+// Stamps <html data-fx="full|lite"> before first paint (see lib/fx.ts).
+initFx();
 
 // Split deployments (frontend on Vercel/Netlify, backend on Railway/Render)
 // set VITE_API_BASE_URL to the backend's origin at build time. Same-origin
