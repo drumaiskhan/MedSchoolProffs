@@ -1188,3 +1188,12 @@ No schema / route-shape changes; nothing new for students to see or wait for.
 - Admin Settings → Student features → AI MCQ Maker: new toggles "Add student-made MCQs to the Qbank" (on by default; `AI_MCQ_MAKER_SAVE_TO_QBANK`) and "Publish them straight away" (off by default; `AI_MCQ_MAKER_AUTO_PUBLISH`). Both admin-only, not exposed via /site-content.
 - Student page note updated: it previously said questions aren't kept in the question bank, which is no longer true.
 - Not run: pnpm typecheck / build / DB / live AI (no node_modules or credentials here); structurally syntax-checked only. Test with one real student account before announcing.
+
+---
+
+# v89 — Saved (flagged) MCQs grouped into collapsible sections
+
+`FlaggedMcqs.tsx` now groups the student's saved MCQs as Block/Module → Subject → Topic collapsible sections
+with counts, Expand all / Collapse all, and auto-expand while searching (modules start collapsed unless there is
+only one). `GET /flagged-mcqs` additionally returns `blockName/moduleName/subjectName/topicName` (additive; old
+clients unaffected). Questions with missing curriculum placement fall under "Uncategorised"/"General".

@@ -93,6 +93,11 @@ router.get("/flagged-mcqs", requireAuth, async (req, res): Promise<void> => {
     ...r.flag,
     question: r.question,
     path: [r.blockName, r.moduleName, r.subjectName, r.topicName].filter(Boolean).join(" \u203a ") || null,
+    // Structured parts so the student page can group into collapsible Block/Module > Subject > Topic sections.
+    blockName: r.blockName ?? null,
+    moduleName: r.moduleName ?? null,
+    subjectName: r.subjectName ?? null,
+    topicName: r.topicName ?? null,
     mcqDeleted: r.question === null,
   })));
 });
