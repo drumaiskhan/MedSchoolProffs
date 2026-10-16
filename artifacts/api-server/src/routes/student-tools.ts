@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, notebookEntriesTable, savedSessionsTable, flaggedMcqsTable, feedbackTable, feedbackRepliesTable, notificationsTable, usersTable, mcqsTable, topicsTable, subjectsTable, modulesTable, blocksTable } from "@workspace/db";
 import { requireAuth, requireAdmin, isAdminRole } from "../middlewares/auth";
@@ -74,6 +74,13 @@ router.delete("/saved-sessions/:id", requireAuth, async (req, res): Promise<void
 // instead of navigating to a question that's gone.
 router.get("/flagged-mcqs", requireAuth, async (req, res): Promise<void> => {
   const isAdmin = isAdminRole(req.user!.role);
+  // Placement is resolved by walking UP the curriculum tree from the topic
+  // (topic -> subject -> module -> block), falling back to the MCQ's own
+  // subjectId / moduleId only where a link is missing. Older questions often
+  // carry just a topicId (or a stale/null subjectId/moduleId copy), and the
+  // previous direct joins on mcq.subjectId / mcq.moduleId dropped those into
+  // "Uncategorised". Walking the parent chain files every old flag under its
+  // real Block > Module > Subject > Topic automatically, with no data fix.
   const rows = await db.select({
     flag: flaggedMcqsTable,
     question: mcqsTable.question,
@@ -81,11 +88,15 @@ router.get("/flagged-mcqs", requireAuth, async (req, res): Promise<void> => {
     subjectName: subjectsTable.name,
     moduleName: modulesTable.name,
     blockName: blocksTable.name,
+    topicOrder: topicsTable.displayOrder,
+    subjectOrder: subjectsTable.displayOrder,
+    moduleOrder: modulesTable.displayOrder,
+    blockOrder: blocksTable.displayOrder,
   }).from(flaggedMcqsTable)
     .leftJoin(mcqsTable, eq(flaggedMcqsTable.mcqId, mcqsTable.id))
     .leftJoin(topicsTable, eq(mcqsTable.topicId, topicsTable.id))
-    .leftJoin(subjectsTable, eq(mcqsTable.subjectId, subjectsTable.id))
-    .leftJoin(modulesTable, eq(mcqsTable.moduleId, modulesTable.id))
+    .leftJoin(subjectsTable, eq(subjectsTable.id, sql`coalesce(${topicsTable.subjectId}, ${mcqsTable.subjectId})`))
+    .leftJoin(modulesTable, eq(modulesTable.id, sql`coalesce(${subjectsTable.moduleId}, ${mcqsTable.moduleId})`))
     .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
     .where(isAdmin ? undefined : eq(flaggedMcqsTable.userId, req.user!.id))
     .orderBy(desc(flaggedMcqsTable.createdAt));
@@ -93,11 +104,16 @@ router.get("/flagged-mcqs", requireAuth, async (req, res): Promise<void> => {
     ...r.flag,
     question: r.question,
     path: [r.blockName, r.moduleName, r.subjectName, r.topicName].filter(Boolean).join(" \u203a ") || null,
-    // Structured parts so the student page can group into collapsible Block/Module > Subject > Topic sections.
+    // Structured parts (+ admin display order) so the student page can group into
+    // collapsible Block > Module > Subject > Topic sections in curriculum order.
     blockName: r.blockName ?? null,
     moduleName: r.moduleName ?? null,
     subjectName: r.subjectName ?? null,
     topicName: r.topicName ?? null,
+    blockOrder: r.blockOrder ?? null,
+    moduleOrder: r.moduleOrder ?? null,
+    subjectOrder: r.subjectOrder ?? null,
+    topicOrder: r.topicOrder ?? null,
     mcqDeleted: r.question === null,
   })));
 });

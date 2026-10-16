@@ -1197,3 +1197,9 @@ No schema / route-shape changes; nothing new for students to see or wait for.
 with counts, Expand all / Collapse all, and auto-expand while searching (modules start collapsed unless there is
 only one). `GET /flagged-mcqs` additionally returns `blockName/moduleName/subjectName/topicName` (additive; old
 clients unaffected). Questions with missing curriculum placement fall under "Uncategorised"/"General".
+
+# v90 — Admin Pre-Proffs Exams: degree and year sections are now collapsible (CollapsibleGroup, same as Past papers). Degree open by default, years collapsed; a just-created exam's year auto-opens.
+
+
+# v91 — Saved (flagged) MCQs: full Block > Module > Subject > Topic hierarchy, old flags auto-filed
+`GET /flagged-mcqs` now resolves placement by walking up from the question's topic (topic → subject → module → block), falling back to the MCQ's own subjectId/moduleId only if a link is missing. Older questions that only had a topicId (or null/stale subject/module copies) no longer land in "Uncategorised"; no data migration needed. Response also carries `blockOrder/moduleOrder/subjectOrder/topicOrder` (additive) so groups follow the admin's curriculum order. `FlaggedMcqs.tsx` now shows four collapsible levels (Block is the top level; Module was previously the top with Block as a label). Everything starts collapsed except a lone chain (a level with one node starts open); search auto-expands. Not run: typecheck/build/DB (no node_modules here).
