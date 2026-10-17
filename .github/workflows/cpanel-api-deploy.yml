@@ -19,6 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    env:
+      FTP_IP: "162.55.6.159"
+      FTP_USER: "github-deploy@site.medschoolproffs.live"
+      FTP_PORT: "21"
+      HEALTH_URL: "https://site.medschoolproffs.live/api/healthz"
+
     steps:
       # 1. CHECKOUT
       - name: Checkout repository
@@ -50,7 +56,9 @@ jobs:
           from pathlib import Path
           from datetime import datetime, timezone
 
-          bundle = Path("artifacts/api-server/dist/index.mjs")
+          bundle = Path(
+              "artifacts/api-server/dist/index.mjs"
+          )
 
           if not bundle.is_file():
               raise SystemExit("API bundle not found.")
@@ -80,31 +88,37 @@ jobs:
           for placeholder, value in replacements.items():
               if placeholder not in content:
                   raise SystemExit(
-                      f"Missing deployment placeholder: {placeholder}. "
-                      "Check health.ts and the API build."
+                      f"Missing placeholder: {placeholder}"
                   )
 
-              content = content.replace(placeholder, value)
+              content = content.replace(
+                  placeholder,
+                  value
+              )
 
-          bundle.write_text(content, encoding="utf-8")
+          bundle.write_text(
+              content,
+              encoding="utf-8"
+          )
 
-          print("Deployment information embedded.")
+          print("Deployment metadata embedded.")
           print(f"Commit: {commit}")
-          print(f"Deployed at: {deployed_at}")
           print(f"Deployment ID: {deployment_id}")
           PY
 
-      # 6. VERIFY BUILD
+      # 6. VERIFY API BUILD
       - name: Verify API build
         run: |
           set -euo pipefail
 
           test -s artifacts/api-server/dist/index.mjs
+
           ls -lh artifacts/api-server/dist/index.mjs
 
           if grep -q "__DEPLOY_COMMIT__" \
             artifacts/api-server/dist/index.mjs; then
-            echo "::error::Deployment version was not embedded."
+
+            echo "::error::Deployment metadata missing."
             exit 1
           fi
 
@@ -118,24 +132,41 @@ jobs:
           path: artifacts/api-server/dist/index.mjs
           retention-days: 7
 
-      # 8. DEPLOY API TO CPANEL
-      - name: Deploy index.mjs to cPanel
+      # 8. VALIDATE FTP SETTINGS
+      - name: Validate FTP configuration
         env:
+          FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
           set -euo pipefail
 
-          FTP_HOST="business300.mypowerfulserver.com"
-          FTP_IP="5.181.190.187"
-          FTP_USER="github-deploy@site.medschoolproffs.live"
+          if [ -z "${FTP_HOST}" ]; then
+            echo "::error::Set CPANEL_FTP_HOST to the verified FTPS hostname."
+            exit 1
+          fi
 
-          if [ -z "$FTP_PASSWORD" ]; then
+          if [ -z "${FTP_PASSWORD}" ]; then
             echo "::error::CPANEL_FTP_PASSWORD is missing."
             exit 1
           fi
 
-          echo "Uploading API build..."
-          echo "Connecting to cPanel FTP server IP..."
+          if [[ "${FTP_HOST}" == *"://"* || \
+                "${FTP_HOST}" == *"/"* ]]; then
+            echo "::error::FTP host must be a hostname only."
+            exit 1
+          fi
+
+          echo "FTP configuration supplied."
+
+      # 9. VERIFY FTP CONNECTION
+      - name: Verify secure FTP login
+        env:
+          FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
+          FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking secure FTPS authentication..."
 
           curl \
             --fail \
@@ -143,9 +174,32 @@ jobs:
             --silent \
             --ssl-reqd \
             --ftp-pasv \
-            --resolve "${FTP_HOST}:21:${FTP_IP}" \
-            --retry 3 \
-            --retry-delay 5 \
+            --resolve "${FTP_HOST}:${FTP_PORT}:${FTP_IP}" \
+            --connect-timeout 20 \
+            --max-time 45 \
+            --user "${FTP_USER}:${FTP_PASSWORD}" \
+            "ftp://${FTP_HOST}/" \
+            -o /dev/null
+
+          echo "FTPS login successful."
+
+      # 10. DEPLOY API
+      - name: Deploy index.mjs to cPanel
+        env:
+          FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
+          FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "Uploading API build..."
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --ssl-reqd \
+            --ftp-pasv \
+            --resolve "${FTP_HOST}:${FTP_PORT}:${FTP_IP}" \
             --connect-timeout 20 \
             --max-time 180 \
             --user "${FTP_USER}:${FTP_PASSWORD}" \
@@ -154,22 +208,19 @@ jobs:
 
           echo "API uploaded successfully."
 
-      # 9. RESTART CPANEL API
+      # 11. RESTART CPANEL APPLICATION
       - name: Restart cPanel API
         env:
+          FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-
-          FTP_HOST="business300.mypowerfulserver.com"
-          FTP_IP="5.181.190.187"
-          FTP_USER="github-deploy@site.medschoolproffs.live"
 
           echo "Deployment: ${GITHUB_SHA}" > restart.txt
           echo "Run: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> restart.txt
           echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> restart.txt
 
-          echo "Uploading Passenger restart signal..."
+          echo "Requesting Passenger restart..."
 
           curl \
             --fail \
@@ -177,23 +228,20 @@ jobs:
             --silent \
             --ssl-reqd \
             --ftp-pasv \
-            --ftp-create-dirs \
-            --resolve "${FTP_HOST}:21:${FTP_IP}" \
-            --retry 3 \
-            --retry-delay 5 \
+            --resolve "${FTP_HOST}:${FTP_PORT}:${FTP_IP}" \
             --connect-timeout 20 \
             --max-time 60 \
             --user "${FTP_USER}:${FTP_PASSWORD}" \
             --upload-file restart.txt \
             "ftp://${FTP_HOST}/tmp/restart.txt"
 
-          echo "cPanel restart requested."
+          echo "Restart signal uploaded."
 
-      # 10. WAIT FOR RESTART
+      # 12. WAIT FOR RESTART
       - name: Wait for API restart
         run: sleep 15
 
-      # 11. VERIFY EXACT DEPLOYED VERSION
+      # 13. VERIFY DEPLOYED API VERSION
       - name: Verify production API version
         shell: bash
         run: |
@@ -201,27 +249,24 @@ jobs:
 
           EXPECTED_COMMIT="$GITHUB_SHA"
           EXPECTED_DEPLOYMENT="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          HEALTH_URL="https://site.medschoolproffs.live/api/healthz"
 
           echo "Expected commit: $EXPECTED_COMMIT"
           echo "Expected deployment: $EXPECTED_DEPLOYMENT"
 
           for attempt in {1..12}; do
 
-            echo "=================================="
             echo "Verification attempt $attempt/12"
-            echo "=================================="
 
             if RESPONSE=$(curl \
               --fail \
               --show-error \
               --silent \
+              --resolve "site.medschoolproffs.live:443:${FTP_IP}" \
               --connect-timeout 10 \
               --max-time 20 \
               -H "Cache-Control: no-cache" \
               "${HEALTH_URL}?deployment=${EXPECTED_DEPLOYMENT}"); then
 
-              echo "API response:"
               echo "$RESPONSE"
 
               if echo "$RESPONSE" | jq -e \
@@ -233,40 +278,33 @@ jobs:
                   .deploymentId == $deployment
                 ' >/dev/null; then
 
-                echo ""
-                echo "=================================="
-                echo "API DEPLOYMENT VERIFIED"
-                echo "=================================="
+                echo "API deployment verified."
                 exit 0
-
               fi
 
-              echo "Production is not reporting this deployment yet."
+              echo "Waiting for new deployment..."
 
             else
-
-              echo "API health endpoint is not ready."
-
+              echo "API not ready yet."
             fi
 
             if (( attempt < 12 )); then
-              echo "Waiting 10 seconds..."
               sleep 10
             fi
 
           done
 
-          echo "::error::Production API did not report the expected deployment version."
+          echo "::error::Production API version verification failed."
           exit 1
 
-      # 12. DEPLOYMENT SUCCESS
+      # 14. DEPLOYMENT SUCCESS
       - name: Deployment completed
         run: |
-          echo "=========================================="
-          echo "MedSchoolProffs API Deployment Successful"
-          echo "=========================================="
+          echo "======================================"
+          echo "MedSchoolProffs API Deployment"
+          echo "Status: VERIFIED"
+          echo "Server: 162.55.6.159"
           echo "API: https://site.medschoolproffs.live"
           echo "Commit: $GITHUB_SHA"
           echo "Deployment: $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          echo "Status: Verified"
-          echo "=========================================="
+          echo "======================================"
