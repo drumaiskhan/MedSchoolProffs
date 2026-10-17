@@ -62,7 +62,8 @@ function Practice() {
   const pastPaperId = Number(params.get('pastPaperId')) || undefined;
   const mcqId = Number(params.get('mcqId')) || undefined;
   // v60: ?set=weak|mistakes&count=N builds a mixed set (weak topics / this device's mistakes).
-  const studySet = ['weak', 'mistakes', 'flagged'].includes(params.get('set') ?? '') ? (params.get('set') as string) : null;
+  const studySet = ['weak', 'mistakes', 'flagged', 'ids'].includes(params.get('set') ?? '') ? (params.get('set') as string) : null;
+  const studyIds = (params.get('ids') ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
   const studyCount = [10, 20, 50].includes(Number(params.get('count'))) ? Number(params.get('count')) : 20;
   // Drives the topic empty-state below: an unpaid/unactivated student sees a
   // call to activate, while a paid member sees a loading message instead of
@@ -71,7 +72,7 @@ function Practice() {
   const dashboardQ = useGetStudentDashboard();
   const paidMember = dashboardQ.data?.membershipStatus === 'ACTIVE';
   const baseQ = useListMcqs(studySet ? { mcqId: -1 } : mcqId ? { mcqId } : pastPaperId ? { pastPaperId } : topicId ? { topicId } : undefined);
-  const setQ = useQuery({ queryKey: ['study-set', studySet, studyCount], queryFn: () => buildStudySet(studySet!, studyCount), enabled: !!studySet, staleTime: Infinity, gcTime: 0 });
+  const setQ = useQuery({ queryKey: ['study-set', studySet, studyCount, studyIds.join(',')], queryFn: () => buildStudySet(studySet!, studyCount, studyIds), enabled: !!studySet, staleTime: Infinity, gcTime: 0 });
   const q = studySet ? setQ : baseQ;
   const [index, setIndex] = useState(0);
   // Every answer picked so far, keyed by mcq id — lets the student jump

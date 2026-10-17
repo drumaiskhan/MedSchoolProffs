@@ -1203,3 +1203,10 @@ clients unaffected). Questions with missing curriculum placement fall under "Unc
 
 # v91 — Saved (flagged) MCQs: full Block > Module > Subject > Topic hierarchy, old flags auto-filed
 `GET /flagged-mcqs` now resolves placement by walking up from the question's topic (topic → subject → module → block), falling back to the MCQ's own subjectId/moduleId only if a link is missing. Older questions that only had a topicId (or null/stale subject/module copies) no longer land in "Uncategorised"; no data migration needed. Response also carries `blockOrder/moduleOrder/subjectOrder/topicOrder` (additive) so groups follow the admin's curriculum order. `FlaggedMcqs.tsx` now shows four collapsible levels (Block is the top level; Module was previously the top with Block as a label). Everything starts collapsed except a lone chain (a level with one node starts open); search auto-expands. Not run: typecheck/build/DB (no node_modules here).
+
+## v91b — same hierarchy + "attempt anytime" for Notes, Saved sessions and Mistakes
+- Saved MCQs and flagged MCQs are one list (one table, one flag/bookmark icon); the page now says so. "Saved" in the review tabs means saved *practice sessions*, a different thing.
+- New shared `components/study/HierarchyTree.tsx`: Block > Module > Subject > Topic, collapsible, Expand/Collapse all, curriculum order, a **Practice** button on every group. Used by Flagged, Notes, Saved sessions and Mistakes (By topic).
+- API (additive): `GET /notebook` and `GET /saved-sessions` now return placement fields; new `POST /mcq-placements {ids}` resolves placement for the on-device Mistakes ledger. Placement helpers walk topic -> subject -> module -> block.
+- Practice: new `?set=ids&ids=1,2,3` (max 50) attempts exactly those questions; flagged items can be re-attempted any time (open or resolved).
+- Not run: typecheck/build/DB (no node_modules in the zip).

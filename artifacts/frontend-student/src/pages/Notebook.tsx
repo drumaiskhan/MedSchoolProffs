@@ -50,6 +50,7 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { ReviewTabs } from '@/components/study/ReviewTabs';
+import { HierarchyTree } from '@/components/study/HierarchyTree';
 import { EmptyState, NotebookCard, SectionHeader, SkeletonPage, cn } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
 
@@ -75,7 +76,7 @@ function Notebook() {
     {!!entries.data?.length && <div className="mt-4 flex flex-wrap items-center gap-2"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search notes…" className="h-9 min-w-0 flex-1 rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-search-notes" /><div className="flex overflow-hidden rounded-xl border border-border text-[11px] font-bold"><button onClick={() => setSortOrder('newest')} className={cn('px-3 py-2', sortOrder === 'newest' ? 'bg-primary text-primary-foreground' : 'bg-card')} data-testid="button-sort-newest">Newest</button><button onClick={() => setSortOrder('oldest')} className={cn('px-3 py-2', sortOrder === 'oldest' ? 'bg-primary text-primary-foreground' : 'bg-card')} data-testid="button-sort-oldest">Oldest</button></div></div>}
 
     <div className="mt-4 space-y-3">
-      {entries.isLoading ? <SkeletonPage /> : filtered.length ? filtered.map((note: NotebookEntry) => <NotebookCard key={note.id} note={note} onLinkedClick={(mcqId) => navigate(`/practice?mcqId=${mcqId}`)} />) : entries.data?.length ? <EmptyState icon={NotebookPen} title="No notes match your search" body="Try a different search term." /> : <EmptyState icon={NotebookPen} title="No notes yet" body="Jot down anything you want to remember while you practice." />}
+      {entries.isLoading ? <SkeletonPage /> : filtered.length ? <HierarchyTree<NotebookEntry> items={filtered} unit="note" testIdPrefix="note-tree" expandAll={!!search.trim()} ungroupedLabel="General notes (not linked to a question)" place={(n) => (n.mcqId !== null && (n.topicName || n.subjectName || n.moduleName || n.blockName) ? n : null)} mcqIds={(n) => (n.mcqId !== null ? [n.mcqId] : [])} renderItem={(note) => <NotebookCard note={note} onLinkedClick={(mcqId) => navigate(`/practice?mcqId=${mcqId}`)} />} /> : entries.data?.length ? <EmptyState icon={NotebookPen} title="No notes match your search" body="Try a different search term." /> : <EmptyState icon={NotebookPen} title="No notes yet" body="Jot down anything you want to remember while you practice." />}
     </div>
   </div>;
 }

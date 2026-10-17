@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, notebookEntriesTable, savedSessionsTable, flaggedMcqsTable, feedbackTable, feedbackRepliesTable, notificationsTable, usersTable, mcqsTable, topicsTable, subjectsTable, modulesTable, blocksTable } from "@workspace/db";
 import { requireAuth, requireAdmin, isAdminRole } from "../middlewares/auth";
@@ -10,9 +10,67 @@ const router: IRouter = Router();
 // Notebook
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Curriculum placement helpers (shared by flagged MCQs, notes, saved sessions
+// and the mistake ledger). Placement is resolved by walking UP the tree from the
+// topic (topic -> subject -> module -> block); the MCQ's own subjectId/moduleId
+// are only a fallback, because older questions often carry just a topicId.
+// ---------------------------------------------------------------------------
+type Placement = {
+  blockName: string | null; moduleName: string | null; subjectName: string | null; topicName: string | null;
+  blockOrder: number | null; moduleOrder: number | null; subjectOrder: number | null; topicOrder: number | null;
+};
+const NO_PLACEMENT: Placement = { blockName: null, moduleName: null, subjectName: null, topicName: null, blockOrder: null, moduleOrder: null, subjectOrder: null, topicOrder: null };
+
+async function placementsForMcqs(ids: number[]): Promise<Map<number, Placement>> {
+  const out = new Map<number, Placement>();
+  const unique = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 1000);
+  if (!unique.length) return out;
+  const rows = await db.select({
+    id: mcqsTable.id,
+    topicName: topicsTable.name, subjectName: subjectsTable.name, moduleName: modulesTable.name, blockName: blocksTable.name,
+    topicOrder: topicsTable.displayOrder, subjectOrder: subjectsTable.displayOrder, moduleOrder: modulesTable.displayOrder, blockOrder: blocksTable.displayOrder,
+  }).from(mcqsTable)
+    .leftJoin(topicsTable, eq(mcqsTable.topicId, topicsTable.id))
+    .leftJoin(subjectsTable, eq(subjectsTable.id, sql`coalesce(${topicsTable.subjectId}, ${mcqsTable.subjectId})`))
+    .leftJoin(modulesTable, eq(modulesTable.id, sql`coalesce(${subjectsTable.moduleId}, ${mcqsTable.moduleId})`))
+    .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
+    .where(inArray(mcqsTable.id, unique));
+  for (const r of rows) out.set(r.id, { blockName: r.blockName ?? null, moduleName: r.moduleName ?? null, subjectName: r.subjectName ?? null, topicName: r.topicName ?? null, blockOrder: r.blockOrder ?? null, moduleOrder: r.moduleOrder ?? null, subjectOrder: r.subjectOrder ?? null, topicOrder: r.topicOrder ?? null });
+  return out;
+}
+
+async function placementsForTopics(ids: number[]): Promise<Map<number, Placement>> {
+  const out = new Map<number, Placement>();
+  const unique = [...new Set(ids.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 1000);
+  if (!unique.length) return out;
+  const rows = await db.select({
+    id: topicsTable.id,
+    topicName: topicsTable.name, subjectName: subjectsTable.name, moduleName: modulesTable.name, blockName: blocksTable.name,
+    topicOrder: topicsTable.displayOrder, subjectOrder: subjectsTable.displayOrder, moduleOrder: modulesTable.displayOrder, blockOrder: blocksTable.displayOrder,
+  }).from(topicsTable)
+    .leftJoin(subjectsTable, eq(topicsTable.subjectId, subjectsTable.id))
+    .leftJoin(modulesTable, eq(subjectsTable.moduleId, modulesTable.id))
+    .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
+    .where(inArray(topicsTable.id, unique));
+  for (const r of rows) out.set(r.id, { blockName: r.blockName ?? null, moduleName: r.moduleName ?? null, subjectName: r.subjectName ?? null, topicName: r.topicName ?? null, blockOrder: r.blockOrder ?? null, moduleOrder: r.moduleOrder ?? null, subjectOrder: r.subjectOrder ?? null, topicOrder: r.topicOrder ?? null });
+  return out;
+}
+
+// Placement for a batch of question ids — used by the on-device Mistakes list
+// (its ledger only stores ids) so it can be grouped like every other review tool.
+router.post("/mcq-placements", requireAuth, async (req, res): Promise<void> => {
+  const parsed = z.object({ ids: z.array(z.number().int().positive()).max(1000) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "ids must be an array of question ids" }); return; }
+  const map = await placementsForMcqs(parsed.data.ids);
+  res.json(parsed.data.ids.map((id) => ({ id, ...(map.get(id) ?? NO_PLACEMENT), found: map.has(id) })));
+});
+
 router.get("/notebook", requireAuth, async (req, res): Promise<void> => {
   const rows = await db.select().from(notebookEntriesTable).where(eq(notebookEntriesTable.userId, req.user!.id)).orderBy(desc(notebookEntriesTable.updatedAt));
-  res.json(rows);
+  // Notes linked to a question are filed under that question's Block > Module > Subject > Topic (additive fields).
+  const places = await placementsForMcqs(rows.map((r) => r.mcqId).filter((x): x is number => x !== null));
+  res.json(rows.map((r) => ({ ...r, ...(r.mcqId !== null ? (places.get(r.mcqId) ?? NO_PLACEMENT) : NO_PLACEMENT) })));
 });
 
 const NotebookBody = z.object({ title: z.string().max(160).optional(), content: z.string().min(1).max(10000), mcqId: z.number().int().positive().optional() });
@@ -43,7 +101,11 @@ router.delete("/notebook/:id", requireAuth, async (req, res): Promise<void> => {
 
 router.get("/saved-sessions", requireAuth, async (req, res): Promise<void> => {
   const rows = await db.select().from(savedSessionsTable).where(eq(savedSessionsTable.userId, req.user!.id)).orderBy(desc(savedSessionsTable.createdAt));
-  res.json(rows.map((row) => ({ ...row, config: JSON.parse(row.config) })));
+  const parsedRows = rows.map((row) => { let config: Record<string, unknown> = {}; try { config = JSON.parse(row.config); } catch { /* corrupt config: keep empty */ } return { ...row, config }; });
+  // Sessions saved against a topic are filed under that topic's Block > Module > Subject > Topic (additive fields).
+  const topicIds = parsedRows.map((r) => Number(r.config.topicId)).filter((n) => Number.isInteger(n) && n > 0);
+  const places = await placementsForTopics(topicIds);
+  res.json(parsedRows.map((r) => ({ ...r, ...(places.get(Number(r.config.topicId)) ?? NO_PLACEMENT) })));
 });
 
 router.post("/saved-sessions", requireAuth, async (req, res): Promise<void> => {

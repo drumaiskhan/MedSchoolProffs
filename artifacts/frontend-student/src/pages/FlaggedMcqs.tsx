@@ -51,6 +51,7 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // queries that didn't specify anything.
 import { EmptyState, SectionHeader, cn } from '@/lib/shared';
 import { ReviewTabs } from '@/components/study/ReviewTabs';
+import { HierarchyTree, practiceIdsHref } from '@/components/study/HierarchyTree';
 import { queryClient } from '@/lib/query-client';
 
 function FlaggedMcqs() {
@@ -70,57 +71,6 @@ function FlaggedMcqs() {
   });
   const q = term.trim().toLowerCase();
   const visible = (flags.data || []).filter((f) => (filter === 'all' || f.status === filter) && (!q || `${f.question ?? ''} ${f.path ?? ''} ${f.reason}`.toLowerCase().includes(q)));
-  // Group: Block > Module > Subject > Topic (curriculum order). Missing levels fall back to "Unassigned"/"General" so nothing disappears.
-  type TopicNode = { key: string; topic: string; order: number; items: FlaggedMcq[] };
-  type SubjectNode = { key: string; subject: string; order: number; count: number; topics: Map<string, TopicNode> };
-  type ModuleNode = { key: string; module: string; order: number; count: number; subjects: Map<string, SubjectNode> };
-  type BlockNode = { key: string; block: string; order: number; count: number; modules: Map<string, ModuleNode> };
-  const byOrder = <T extends { order: number }>(get: (x: T) => string) => (a: T, b: T) => a.order - b.order || get(a).localeCompare(get(b), undefined, { numeric: true });
-  const tree = (() => {
-    const blocks = new Map<string, BlockNode>();
-    for (const f of visible) {
-      const block = f.blockName || (f.mcqDeleted ? 'Removed questions' : 'Unassigned block');
-      const bk = `b:${block}`;
-      const b = blocks.get(bk) ?? { key: bk, block, order: f.blockOrder ?? 1e9, count: 0, modules: new Map() }; blocks.set(bk, b); b.count++;
-      const module = f.moduleName || 'Unassigned module';
-      const mk = `${bk}/m:${module}`;
-      const m = b.modules.get(mk) ?? { key: mk, module, order: f.moduleOrder ?? 1e9, count: 0, subjects: new Map() }; b.modules.set(mk, m); m.count++;
-      const subject = f.subjectName || 'General';
-      const sk = `${mk}/s:${subject}`;
-      const sg = m.subjects.get(sk) ?? { key: sk, subject, order: f.subjectOrder ?? 1e9, count: 0, topics: new Map() }; m.subjects.set(sk, sg); sg.count++;
-      const topic = f.topicName || 'General';
-      const tk = `${sk}/t:${topic}`;
-      const tg = sg.topics.get(tk) ?? { key: tk, topic, order: f.topicOrder ?? 1e9, items: [] }; sg.topics.set(tk, tg); tg.items.push(f);
-    }
-    return [...blocks.values()].sort(byOrder((x) => x.block)).map((b) => ({
-      ...b,
-      modules: [...b.modules.values()].sort(byOrder((x) => x.module)).map((m) => ({
-        ...m,
-        subjects: [...m.subjects.values()].sort(byOrder((x) => x.subject)).map((sg) => ({
-          ...sg,
-          topics: [...sg.topics.values()].sort(byOrder((x) => x.topic)),
-        })),
-      })),
-    }));
-  })();
-  const moduleCount = tree.reduce((n, b) => n + b.modules.length, 0);
-  // Everything starts collapsed (compact, easy to scan), except a lone chain: while a level has exactly one node, that node starts open.
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [touched, setTouched] = useState(false);
-  const allKeys = tree.flatMap((b) => [b.key, ...b.modules.flatMap((m) => [m.key, ...m.subjects.map((x) => x.key)])]);
-  const defaultCollapsed = () => {
-    const set = new Set(allKeys);
-    let level: Array<{ key: string; children: any[] }> = tree.map((b) => ({ key: b.key, children: b.modules.map((m) => ({ key: m.key, children: m.subjects.map((x) => ({ key: x.key, children: [] })) })) }));
-    while (level.length === 1) { set.delete(level[0].key); level = level[0].children; }
-    return set;
-  };
-  const isCollapsed = (key: string) => (q ? false : (touched ? collapsed : defaultCollapsed()).has(key));
-  const setAll = (keys: string[]) => { setTouched(true); setCollapsed(new Set(keys)); };
-  const toggle = (key: string) => {
-    const base = new Set(touched ? collapsed : defaultCollapsed());
-    if (base.has(key)) base.delete(key); else base.add(key);
-    setTouched(true); setCollapsed(base);
-  };
   const renderFlag = (flag: FlaggedMcq) => <div key={flag.id} className="rounded-2xl border border-border bg-card p-4 transition-all hover:shadow-md pf-edit" data-testid={`card-flag-${flag.id}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -135,49 +85,16 @@ function FlaggedMcqs() {
         </div>
       </div>;
   return <div>
-    <SectionHeader eyebrow="Your tools" title="Flagged MCQs" description="Questions you bookmarked or flagged for review." />
+    <SectionHeader eyebrow="Your tools" title="Flagged MCQs" description="Questions you flagged or bookmarked (they are the same list), organised by Block › Module › Subject › Topic. Attempt any group or all of them whenever you like." />
     <ReviewTabs />
     {!!flags.data?.length && <div className="mb-4 flex flex-wrap items-center gap-2" data-testid="flag-toolbar">
       <div className="flex overflow-hidden rounded-xl border border-border bg-card text-xs font-extrabold">{(['all', 'open', 'resolved'] as const).map((f) => <button key={f} onClick={() => setFilter(f)} className={cn('px-3 py-2 capitalize transition-colors', filter === f ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}>{f}{f !== 'all' && ` · ${flags.data!.filter((x) => x.status === f).length}`}</button>)}</div>
       <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search flagged questions…" className="h-9 min-w-0 flex-1 rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-search-flags" />
-      {flags.data.some((f) => f.status === 'open' && !f.mcqDeleted) && <button onClick={() => navigate('/practice?set=flagged&count=20')} className="rounded-xl bg-primary px-3.5 py-2 text-xs font-extrabold text-primary-foreground transition-transform active:scale-95" data-testid="button-practice-flagged">Practice flagged</button>}
+      {flags.data.some((f) => !f.mcqDeleted) && <button onClick={() => navigate(practiceIdsHref(visible.filter((f) => !f.mcqDeleted).map((f) => f.mcqId)) ?? '/practice?set=flagged&count=20')} className="rounded-xl bg-primary px-3.5 py-2 text-xs font-extrabold text-primary-foreground transition-transform active:scale-95" data-testid="button-practice-flagged">Practice {visible.filter((f) => !f.mcqDeleted).length > 50 ? 'first 50' : `these ${visible.filter((f) => !f.mcqDeleted).length}`}</button>}
     </div>}
     <div className="space-y-3">
-      {!!visible.length && !!tree.length && <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-muted-foreground">
-        <span data-testid="text-flag-count">{visible.length} question{visible.length === 1 ? '' : 's'} · {tree.length} block{tree.length === 1 ? '' : 's'} · {moduleCount} module{moduleCount === 1 ? '' : 's'}</span>
-        <span className="flex gap-3"><button onClick={() => setAll([])} className="text-primary underline-offset-2 hover:underline" data-testid="button-expand-all">Expand all</button><button onClick={() => setAll(allKeys)} className="text-primary underline-offset-2 hover:underline" data-testid="button-collapse-all">Collapse all</button></span>
-      </div>}
-      {tree.map((b) => { const bOpen = !isCollapsed(b.key); return <section key={b.key} className="overflow-hidden rounded-2xl border border-border bg-card" data-testid={`group-block-${b.key}`}>
-        <button onClick={() => toggle(b.key)} aria-expanded={bOpen} className="flex w-full items-center gap-2 bg-muted/40 px-4 py-3 text-left transition-colors hover:bg-muted/70">
-          <ChevronRight size={16} className={cn('shrink-0 text-primary transition-transform', bOpen && 'rotate-90')} />
-          <span className="min-w-0 flex-1 truncate text-sm font-extrabold">{b.block}</span>
-          <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-extrabold text-primary">{b.count}</span>
-        </button>
-        {bOpen && <div className="space-y-2 p-3">
-          {b.modules.map((g) => { const gOpen = !isCollapsed(g.key); return <div key={g.key} className="rounded-xl border border-border" data-testid={`group-module-${g.key}`}>
-            <button onClick={() => toggle(g.key)} aria-expanded={gOpen} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
-              <ChevronRight size={14} className={cn('shrink-0 text-primary transition-transform', gOpen && 'rotate-90')} />
-              <span className="min-w-0 flex-1 truncate text-[13px] font-extrabold">{g.module}</span>
-              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary">{g.count}</span>
-            </button>
-            {gOpen && <div className="space-y-2 border-t border-border p-3">
-              {g.subjects.map((sg) => { const sOpen = !isCollapsed(sg.key); return <div key={sg.key} className="rounded-lg border border-border" data-testid={`group-subject-${sg.key}`}>
-                <button onClick={() => toggle(sg.key)} aria-expanded={sOpen} className="flex w-full items-center gap-2 px-3 py-2 text-left">
-                  <ChevronRight size={13} className={cn('shrink-0 text-muted-foreground transition-transform', sOpen && 'rotate-90')} />
-                  <span className="min-w-0 flex-1 truncate text-xs font-extrabold">{sg.subject}</span>
-                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-extrabold text-muted-foreground">{sg.count}</span>
-                </button>
-                {sOpen && <div className="space-y-3 border-t border-border p-3">
-                  {sg.topics.map((tg) => <div key={tg.key} data-testid={`group-topic-${tg.key}`}>
-                    <p className="mb-2 flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-primary" />{tg.topic}<span className="font-bold normal-case">({tg.items.length})</span></p>
-                    <div className="space-y-3">{tg.items.map(renderFlag)}</div>
-                  </div>)}
-                </div>}
-              </div>; })}
-            </div>}
-          </div>; })}
-        </div>}
-      </section>; })}
+      <HierarchyTree<FlaggedMcq> items={visible} unit="question" testIdPrefix="flag-tree" expandAll={!!q} ungroupedLabel="Removed questions"
+        place={(f) => (f.mcqDeleted ? null : f)} mcqIds={(f) => (f.mcqDeleted ? [] : [f.mcqId])} renderItem={renderFlag} />
       {!flags.data?.length && <EmptyState icon={Flag} title="Nothing flagged" body="Flag a question from a practice session to come back to it later." />}
     </div>
   </div>;

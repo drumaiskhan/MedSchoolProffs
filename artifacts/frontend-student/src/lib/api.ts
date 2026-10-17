@@ -449,8 +449,10 @@ export const mcqImportApi = {
 };
 
 export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; displayOrder: number; mcqCount: number }
-export interface NotebookEntry { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
-export interface SavedSession { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }
+/** Curriculum placement, resolved server-side by walking up from the topic. All optional so an older API build still renders. */
+export interface Placement { blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null }
+export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
+export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
 export interface FeedbackEntry { id: number; userId: number | null; category: string; message: string; status: 'open' | 'replied' | 'reviewed'; rating: number | null; featured: boolean; createdAt: string; user: { name: string; email: string } | null }
 export interface FeedbackReply { id: number; feedbackId: number; authorId: number; authorRole: 'admin' | 'student'; message: string; createdAt: string }
@@ -662,6 +664,10 @@ export const savedSessionsApi = {
   list: () => request<SavedSession[]>('/saved-sessions'),
   create: (body: { name: string; config: Record<string, unknown> }) => request<SavedSession>('/saved-sessions', { method: 'POST', body: JSON.stringify(body) }),
   remove: (id: number) => request<{ ok: true }>(`/saved-sessions/${id}`, { method: 'DELETE' }),
+};
+
+export const mcqPlacementsApi = {
+  lookup: (ids: number[]) => request<Array<Placement & { id: number; found: boolean }>>('/mcq-placements', { method: 'POST', body: JSON.stringify({ ids }) }),
 };
 
 export const flaggedMcqsApi = {

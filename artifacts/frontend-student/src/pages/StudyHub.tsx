@@ -2,10 +2,12 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowRight, CalendarCheck, Check, Flame, Layers, Repeat2, Target, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarCheck, Check, Flame, Repeat2, Target, Trash2, Zap } from 'lucide-react';
 import { analyticsApi, type ProgressTopic } from '@/lib/api';
 import { TiltDiv, SegToggle, vars } from '@/lib/tilt';
 import { EmptyState, ErrorState, SectionHeader, SkeletonPage, cn } from '@/lib/shared';
+import { HierarchyTree } from '@/components/study/HierarchyTree';
+import { mcqPlacementsApi } from '@/lib/api';
 import { clearLedger, openMistakes, repeatedMistakes, type Miss } from '@/lib/study';
 
 type Tab = 'plan' | 'mistakes' | 'weak';
@@ -45,6 +47,9 @@ export default function StudyHub() {
   const topicName = useMemo(() => { const map = new Map<number, string>(); const i = overview.data?.improvement; for (const t of [...(i?.needsWork ?? []), ...(i?.strongest ?? []), ...(i?.improvedTopics ?? [])]) map.set(t.id, t.name); return map; }, [overview.data]);
   const open = useMemo(() => openMistakes(), [tick]);
   const repeated = useMemo(() => repeatedMistakes(), [tick]);
+  // v91: the on-device ledger only stores ids, so ask the server where each missed question sits in Block > Module > Subject > Topic.
+  const placements = useQuery({ queryKey: ['mcq-placements', open.map((m) => m.id).join(',')], queryFn: () => mcqPlacementsApi.lookup(open.map((m) => m.id)), enabled: tab === 'mistakes' && sub === 'topic' && open.length > 0, staleTime: 5 * 60_000 });
+  const placeById = useMemo(() => new Map((placements.data ?? []).filter((p) => p.found).map((p) => [p.id, p])), [placements.data]);
   if (overview.isLoading) return <SkeletonPage />;
   if (overview.isError || !overview.data) return <ErrorState retry={() => overview.refetch()} />;
 
@@ -60,8 +65,6 @@ export default function StudyHub() {
   const pct = Math.round((doneCount / tasks.length) * 100);
   const C = 2 * Math.PI * 30;
 
-  const byTopic = new Map<string, Miss[]>();
-  for (const m of open) { const k = m.topicId ? topicName.get(m.topicId) ?? `Topic #${m.topicId}` : 'Other questions'; byTopic.set(k, [...(byTopic.get(k) ?? []), m]); }
   const shown = sub === 'repeated' ? repeated : open;
 
   return <div className="max-w-4xl" data-testid="page-study-hub">
@@ -85,7 +88,7 @@ export default function StudyHub() {
           <Link href={`/practice?set=mistakes&count=${open.length > 10 ? 20 : 10}`} className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-extrabold text-primary-foreground" data-testid="button-retry-mistakes"><Repeat2 size={13} /> Retry mistakes</Link>
           <button onClick={() => { if (confirm('Clear the mistake list on this device?')) { clearLedger(); setTick((x) => x + 1); } }} aria-label="Clear mistake list" className="grid size-9 place-items-center rounded-xl border border-border bg-card text-muted-foreground hover:text-destructive"><Trash2 size={14} /></button>
         </div>
-        {sub === 'topic' ? [...byTopic.entries()].sort((a, b) => b[1].length - a[1].length).map(([name, list]) => <div key={name} className="grid gap-2"><div className="mt-2 flex items-center gap-2 text-xs font-extrabold"><Layers size={13} className="text-primary" />{name}<span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{list.length}</span></div>{list.slice(0, 6).map((m) => <MistakeRow key={m.id} m={m} />)}</div>)
+        {sub === 'topic' ? (placements.isLoading ? <SkeletonPage /> : <HierarchyTree<Miss> items={open} unit="mistake" testIdPrefix="mistake-tree" ungroupedLabel="Other questions" place={(m) => placeById.get(m.id) ?? null} mcqIds={(m) => [m.id]} renderItem={(m) => <MistakeRow m={m} />} />)
           : !shown.length ? <EmptyState icon={Repeat2} title="Nothing repeated yet" body="Questions you miss twice or more will be pinned here." /> : shown.slice(0, 40).map((m) => <MistakeRow key={m.id} m={m} topic={m.topicId ? topicName.get(m.topicId) : undefined} />)}
         <p className="text-center text-[10px] text-muted-foreground">Tracked on this device from your practice sessions.</p></>}
     </div>}

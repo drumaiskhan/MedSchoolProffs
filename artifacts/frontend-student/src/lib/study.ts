@@ -35,8 +35,13 @@ export async function weakTopicIds(limit = 6): Promise<number[]> {
   const o = await analyticsApi.overview();
   return o.improvement.needsWork.slice(0, limit).map((t) => t.id);
 }
-export async function buildStudySet(kind: string, count: number): Promise<Mcq[]> {
+export async function buildStudySet(kind: string, count: number, ids: number[] = []): Promise<Mcq[]> {
   let pool: Mcq[] = [];
+  // v91: ?set=ids&ids=1,2,3 — attempt exactly these questions (a group's Practice button on Flagged / Notes / Mistakes).
+  if (kind === 'ids') {
+    const lists = await Promise.all([...new Set(ids)].slice(0, 50).map((id) => listMcqs({ mcqId: id }).catch(() => [] as Mcq[])));
+    return lists.flat();
+  }
   if (kind === 'mistakes') {
     const open = openMistakes(); const want = new Set(open.map((e) => e.id));
     const topics = [...new Set(open.map((e) => e.topicId).filter((x): x is number => !!x))].slice(0, 8);

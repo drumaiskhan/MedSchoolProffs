@@ -51,6 +51,7 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // queries that didn't specify anything.
 import { EmptyState, SectionHeader } from '@/lib/shared';
 import { ReviewTabs } from '@/components/study/ReviewTabs';
+import { HierarchyTree } from '@/components/study/HierarchyTree';
 import { queryClient } from '@/lib/query-client';
 
 function SavedSessions() {
@@ -64,7 +65,7 @@ function SavedSessions() {
     const q = qs.toString();
     return q ? `/practice?${q}` : '/practice';
   };
-  return <div><SectionHeader eyebrow="Your tools" title="Saved Sessions" description="Practice sessions you paused — pick one up where you left off." /><ReviewTabs /><div className="space-y-3">{(sessions.data || []).map((session: SavedSession) => <div key={session.id} className="flex items-center justify-between rounded-2xl border border-border bg-card p-4" data-testid={`card-session-${session.id}`}><div><div className="text-sm font-extrabold">{session.name}</div><div className="text-[11px] text-muted-foreground">Saved {new Date(session.createdAt).toLocaleDateString()}</div></div><div className="flex gap-2"><Link href={resumeHref(session)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold" data-testid={`button-resume-session-${session.id}`}>Resume</Link><button onClick={() => remove.mutate(session.id)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive" data-testid={`button-delete-session-${session.id}`}>Delete</button></div></div>)}{!sessions.data?.length && <EmptyState icon={Bookmark} title="No saved sessions" body="Save a practice filter set from the Practice page to quickly resume it later." />}</div></div>;
+  return <div><SectionHeader eyebrow="Your tools" title="Saved Sessions" description="Practice sessions you paused — pick one up where you left off." /><ReviewTabs /><div className="space-y-3"><HierarchyTree<SavedSession> items={sessions.data || []} unit="session" testIdPrefix="session-tree" ungroupedLabel="Other sessions" place={(session) => (session.topicName || session.subjectName || session.moduleName || session.blockName ? session : null)} renderItem={(session) => <div className="flex items-center justify-between rounded-2xl border border-border bg-card p-4" data-testid={`card-session-${session.id}`}><div><div className="text-sm font-extrabold">{session.name}</div><div className="text-[11px] text-muted-foreground">Saved {new Date(session.createdAt).toLocaleDateString()}</div></div><div className="flex gap-2"><Link href={resumeHref(session)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold" data-testid={`button-resume-session-${session.id}`}>Resume</Link><button onClick={() => remove.mutate(session.id)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive" data-testid={`button-delete-session-${session.id}`}>Delete</button></div></div>} />{!sessions.data?.length && <EmptyState icon={Bookmark} title="No saved sessions" body="Save a practice filter set from the Practice page to quickly resume it later." />}</div></div>;
 }
 
 export default SavedSessions;
