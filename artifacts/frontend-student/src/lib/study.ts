@@ -60,8 +60,8 @@ export async function buildStudySet(kind: string, count: number, ids: number[] =
     const lists = await Promise.all(open.map((f) => listMcqs({ mcqId: f.mcqId }).catch(() => [] as Mcq[])));
     return lists.flat();
   }
-  const ids = await weakTopicIds(8);
-  const lists = await Promise.all(ids.map((topicId) => listMcqs({ topicId }).catch(() => [] as Mcq[])));
+  const weakIds = await weakTopicIds(8);
+  const lists = await Promise.all(weakIds.map((topicId) => listMcqs({ topicId }).catch(() => [] as Mcq[])));
   // Round-robin across weak topics so one big topic can't crowd the set out.
   const shuffled = lists.map(shuffle); const out: Mcq[] = [];
   for (let i = 0; out.length < count; i++) { let added = false; for (const l of shuffled) if (l[i]) { out.push(l[i]); added = true; } if (!added) break; }
