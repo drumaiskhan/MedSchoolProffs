@@ -1,5 +1,9 @@
 import { createRoot } from 'react-dom/client';
-import { setBaseUrl } from '@workspace/api-client-react';
+import { setBaseUrl, setErrorResponseHandler } from '@workspace/api-client-react';
+import { markMembershipLocked } from '@/lib/membership-lock';
+
+// Generated-client calls: a 403 MEMBERSHIP_REQUIRED shows the "Activate your account to load data" card (see lib/membership-lock.ts).
+setErrorResponseHandler((status, body) => { if (status === 403 && (body as { code?: string } | null)?.code === 'MEMBERSHIP_REQUIRED') markMembershipLocked(); });
 
 import App from './App';
 import { ErrorBoundary } from '@/components/error-boundary';

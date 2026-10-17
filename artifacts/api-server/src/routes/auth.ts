@@ -38,7 +38,7 @@ import { sendEmail, otpEmailHtml, resetPasswordEmailHtml, welcomeEmailHtml } fro
 import { logger } from "../lib/logger";
 import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middlewares/auth";
-import { banIfTrialExpired } from "../lib/trial";
+import { expireIfLapsed, releaseLegacyTrialBan } from "../lib/trial";
 import { getSetting } from "../lib/settings";
 import { getPublicAppUrl } from "../lib/publicAppUrl";
 import { resolveFileUrl } from "../lib/storage";
@@ -408,7 +408,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
+  let [user] = await db.select().from(usersTable).where(eq(usersTable.email, email));
   if (!user) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
@@ -433,14 +433,16 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
-  // A student whose ACTIVE status came from an admin-granted trial
-  // (POST /students/:id/trial) that has since expired gets banned right
-  // here, before they can even sign back in — see banIfTrialExpired for
-  // why this can't just trust `user.status`. Falls through to the
-  // SUSPENDED check right below once it has.
-  if (user.role === "student" && user.status === "ACTIVE" && (await banIfTrialExpired(user.id))) {
-    res.status(403).json({ error: "Your trial period has ended. Contact support or ask about a membership to regain access." });
-    return;
+  // A student whose paid plan or admin-granted trial has run out is moved to EXPIRED
+  // here (see expireIfLapsed). They may still sign in — to see their account and renew —
+  // but gated content is denied exactly as for a student who was never activated.
+  if (user.role === "student" && user.status === "ACTIVE" && (await expireIfLapsed(user.id))) {
+    user = { ...user, status: "EXPIRED" };
+  }
+  // Students auto-banned by the old rule when their trial ended (SUSPENDED + trial message) are
+  // moved to EXPIRED too, so they can sign in and renew like any other expired student.
+  if (user.role === "student" && user.status === "SUSPENDED" && (await releaseLegacyTrialBan(user.id))) {
+    user = { ...user, status: "EXPIRED" };
   }
 
   // Bug fix: a soft-deleted student (DELETE /students/:id sets status

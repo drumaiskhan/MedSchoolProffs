@@ -2,7 +2,6 @@ import { and, desc, eq, gt, gte, ne, sql } from "drizzle-orm";
 import { db, membershipsTable, practiceAttemptsTable, usersTable } from "@workspace/db";
 import { getSetting } from "./settings";
 import { getStudentTargeting } from "./contentVisibility";
-import { revokeAllForUser } from "./deviceSessions";
 
 /**
  * General Trial Mode — one place that owns how the platform-wide trial is
@@ -252,31 +251,46 @@ export async function trialDailyMcqCapError(userId: number, count: number): Prom
 // Strict trial-expiry enforcement (per-student trial, POST /students/:id/trial)
 // ---------------------------------------------------------------------------
 
-/** Nothing flips a per-student trial's membership row or the account's
- * `status` back automatically once its `expiresAt` passes — the same lazy
- * pattern GET /admin/dashboard already relies on for accurate counts (see
- * that route's comment). This is the one place that acts on it, called from
- * hasActiveMembership (middlewares/auth.ts) on every membership-gated
- * request. Once an admin-granted trial has expired, the account is banned
- * outright — status SUSPENDED, every signed-in session revoked — rather
- * than just quietly losing feature access, so an expired trial can never
- * keep browsing on whatever's left of a still-valid JWT. Mirrors DELETE
- * /students/:id/trial's manual "end trial early" path exactly, just
- * triggered by the clock instead of an admin click.
+/** Lapsed-membership check, run on every membership-gated request and at sign-in.
  *
- * Returns true if this call just banned the account (so the caller should
- * treat the current request as denied immediately). */
-export async function banIfTrialExpired(userId: number): Promise<boolean> {
-  const [trial] = await db
-    .select()
-    .from(membershipsTable)
-    .where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.status, "ACTIVE"), eq(membershipsTable.isTrial, true)))
-    .orderBy(desc(membershipsTable.expiresAt))
-    .limit(1);
-  if (!trial || trial.expiresAt.getTime() > Date.now()) return false;
+ * `users.status` is never flipped by the clock, so an account can still read
+ * "ACTIVE" after its paid plan OR its admin-granted trial has run out. This is
+ * the one place that acts on it: if the student has membership history but no
+ * membership that is both ACTIVE and unexpired, the account is moved to EXPIRED
+ * (lapsed rows are marked EXPIRED for history) — exactly the state of a student
+ * who has no active plan. They can still sign in and see their account, plans and
+ * renewal options, but gated content/data is denied just like for a student who
+ * was never activated. Renewing (payment approval, admin status change, or a new
+ * trial grant) sets them back to ACTIVE.
+ *
+ * Accounts with no membership rows at all (activated by hand) are left alone.
+ * Returns true if this call just expired the account (caller denies the request). */
+export async function expireIfLapsed(userId: number): Promise<boolean> {
+  const rows = await db.select().from(membershipsTable).where(eq(membershipsTable.userId, userId));
+  if (!rows.length) return false;
+  const now = Date.now();
+  if (rows.some((m) => m.status === "ACTIVE" && m.expiresAt.getTime() > now)) return false;
+  const lapsedTrial = rows.some((m) => m.status === "ACTIVE" && m.isTrial && m.expiresAt.getTime() <= now);
+  await db.update(membershipsTable).set({ status: "EXPIRED" }).where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.status, "ACTIVE")));
+  await db.update(usersTable).set({
+    status: "EXPIRED",
+    statusMessage: lapsedTrial ? "Your trial period ended. Choose a membership plan to regain access." : "Your membership has expired. Renew your plan to regain access.",
+  }).where(and(eq(usersTable.id, userId), eq(usersTable.status, "ACTIVE")));
+  return true;
+}
 
-  await db.update(membershipsTable).set({ status: "SUSPENDED", suspendedReason: "Trial period ended" }).where(eq(membershipsTable.id, trial.id));
-  await db.update(usersTable).set({ status: "SUSPENDED", statusMessage: "Your trial period ended. Contact support or ask about a membership to regain access." }).where(eq(usersTable.id, userId));
-  await revokeAllForUser(userId).catch(() => {});
+/** @deprecated kept so older imports compile; expired trials are now EXPIRED, not banned. */
+export const banIfTrialExpired = expireIfLapsed;
+
+/** One-off migration-on-touch: accounts the previous rule banned when a trial ended (users.status
+ * SUSPENDED with the trial-ended message, membership suspendedReason "Trial period ended") become
+ * EXPIRED. Admin-made suspensions carry no such message/reason and are never touched. */
+export async function releaseLegacyTrialBan(userId: number): Promise<boolean> {
+  const [u] = await db.select({ status: usersTable.status, statusMessage: usersTable.statusMessage }).from(usersTable).where(eq(usersTable.id, userId));
+  if (!u || u.status !== "SUSPENDED" || !(u.statusMessage ?? "").startsWith("Your trial period ended")) return false;
+  const [m] = await db.select({ id: membershipsTable.id }).from(membershipsTable).where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.suspendedReason, "Trial period ended"))).limit(1);
+  if (!m) return false;
+  await db.update(membershipsTable).set({ status: "EXPIRED" }).where(and(eq(membershipsTable.userId, userId), eq(membershipsTable.suspendedReason, "Trial period ended")));
+  await db.update(usersTable).set({ status: "EXPIRED", statusMessage: "Your trial period ended. Choose a membership plan to regain access." }).where(eq(usersTable.id, userId));
   return true;
 }

@@ -316,6 +316,7 @@ router.get("/admin/dashboard", requireAdmin, async (_req, res): Promise<void> =>
   // as a defensive guarantee this can never exceed totalStudents even if a
   // future bug reintroduces duplicate ACTIVE rows (see section 10 fix notes).
   const distinctActiveUserIds = new Set(activeMemberships.map((m) => m.userId));
+  const effectiveForDash = await effectiveStatuses(users);
   res.json(GetAdminDashboardResponse.parse({
     totalStudents: users.length,
     activeMembers: distinctActiveUserIds.size,
@@ -323,7 +324,8 @@ router.get("/admin/dashboard", requireAdmin, async (_req, res): Promise<void> =>
     monthlyRevenue: revenue,
     recentPayments: await Promise.all(recent.map(paymentView)),
     studentsByStatus: users.reduce<Record<string, number>>((result, user) => {
-      result[user.status] = (result[user.status] ?? 0) + 1;
+      const st = effectiveForDash.get(user.id) ?? user.status;
+      result[st] = (result[st] ?? 0) + 1;
       return result;
     }, {}),
   }));
@@ -448,7 +450,7 @@ router.post("/payments/:id/approve", requireAdmin, async (req, res): Promise<voi
   // the root cause of "subscribed students" over-counting).
   await db.update(membershipsTable).set({ status: "SUPERSEDED" }).where(and(eq(membershipsTable.userId, payment.userId), eq(membershipsTable.status, "ACTIVE")));
   await db.insert(membershipsTable).values({ userId: payment.userId, paymentId: payment.id, planId: payment.planId, status: "ACTIVE", startsAt, expiresAt });
-  await db.update(usersTable).set({ status: "ACTIVE" }).where(eq(usersTable.id, payment.userId));
+  await db.update(usersTable).set({ status: "ACTIVE", statusMessage: null }).where(eq(usersTable.id, payment.userId));
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "PAYMENT_APPROVED", entity: "payment", entityId: payment.id });
   await db.insert(notificationsTable).values({ userId: payment.userId, title: "Membership activated", body: "Your payment was verified. Your study access is now active.", type: "success" });
 
@@ -1415,15 +1417,51 @@ async function computeStudentProgress(students: { id: number; programKind: strin
   return progressByStudent;
 }
 
+// ---------------------------------------------------------------------------
+// Effective student status for the ADMIN views (list, detail, dashboard counts).
+// users.status is only ever changed by explicit actions, never by the clock:
+//  - a paid plan whose expiresAt has passed leaves status = "ACTIVE" forever, and
+//  - an expired trial stays "ACTIVE" until that student next makes a gated
+//    request (banIfTrialExpired then flips them to SUSPENDED).
+// So filtering the roster on the raw column never found expired students. This
+// derives what the admin actually means: an ACTIVE account with membership
+// history but no still-valid ACTIVE membership is EXPIRED, and an account that
+// was auto-suspended because its trial ended is shown as EXPIRED too (it is an
+// expiry, not a ban). Accounts with no membership rows at all (manually
+// activated) are left as they are. Read-only: nothing is written here.
+// ---------------------------------------------------------------------------
+async function effectiveStatuses(users: Array<{ id: number; status: string; statusMessage?: string | null }>): Promise<Map<number, string>> {
+  const out = new Map<number, string>(users.map((u) => [u.id, u.status]));
+  const candidates = users.filter((u) => u.status === "ACTIVE" || u.status === "SUSPENDED");
+  if (!candidates.length) return out;
+  const rows = await db.select({ userId: membershipsTable.userId, status: membershipsTable.status, expiresAt: membershipsTable.expiresAt, isTrial: membershipsTable.isTrial, suspendedReason: membershipsTable.suspendedReason })
+    .from(membershipsTable).where(inArray(membershipsTable.userId, candidates.map((u) => u.id)));
+  const byUser = new Map<number, typeof rows>();
+  for (const r of rows) byUser.set(r.userId, [...(byUser.get(r.userId) ?? []), r]);
+  const now = Date.now();
+  for (const u of candidates) {
+    const ms = byUser.get(u.id) ?? [];
+    if (!ms.length) continue;
+    const stillValid = ms.some((m) => m.status === "ACTIVE" && m.expiresAt.getTime() > now);
+    if (u.status === "ACTIVE" && !stillValid) out.set(u.id, "EXPIRED");
+    else if (u.status === "SUSPENDED" && !stillValid && (u.statusMessage ?? "").startsWith("Your trial period ended") && ms.some((m) => m.isTrial && m.suspendedReason === "Trial period ended")) out.set(u.id, "EXPIRED");
+  }
+  return out;
+}
+
 router.get("/students", requireAdmin, async (req, res): Promise<void> => {
   const params = ListStudentsQueryParams.safeParse(req.query);
   if (!params.success) { res.status(400).json({ error: params.error.message }); return; }
   const statusFilter = typeof req.query.status === "string" ? req.query.status : undefined;
-  const rows = await db.select().from(usersTable).where(and(
+  // The status filter is applied AFTER the effective (expiry-aware) status is worked out below,
+  // so "EXPIRED" also finds ACTIVE-in-the-database students whose plan/trial has run out.
+  const rawRows = await db.select().from(usersTable).where(and(
     eq(usersTable.role, "student"),
     params.data.search ? or(ilike(usersTable.name, `%${params.data.search}%`), ilike(usersTable.email, `%${params.data.search}%`), ilike(usersTable.rollNumber, `%${params.data.search}%`)) : undefined,
-    statusFilter ? eq(usersTable.status, statusFilter) : ne(usersTable.status, "DELETED"),
+    statusFilter === "DELETED" ? undefined : ne(usersTable.status, "DELETED"),
   )).orderBy(desc(usersTable.createdAt));
+  const effective = await effectiveStatuses(rawRows);
+  const rows = statusFilter ? rawRows.filter((r) => (effective.get(r.id) ?? r.status) === statusFilter) : rawRows;
 
   // Bug fix: this only ever read the legacy free-text `program` column,
   // never the real programId/academicYearId a student actually registered
@@ -1468,7 +1506,7 @@ router.get("/students", requireAdmin, async (req, res): Promise<void> => {
       programKind: program?.kind || null,
       yearNumber: academicYear?.yearNumber ?? null,
       academicYearLabel: academicYear?.label ?? null,
-      status: row.status, joinedAt: row.createdAt.toISOString(), progress: progressByStudent.get(row.id) ?? 0,
+      status: effective.get(row.id) ?? row.status, joinedAt: row.createdAt.toISOString(), progress: progressByStudent.get(row.id) ?? 0,
     };
   })));
 });
@@ -1485,7 +1523,7 @@ router.get("/students/:id", requireAdmin, async (req, res): Promise<void> => {
   const progress = (await computeStudentProgress([{ id, programKind: programRow?.kind?.trim().toUpperCase() ?? null, yearNumber: academicYear?.yearNumber ?? null }])).get(id) ?? 0;
   res.json({
     id: student.id, name: student.name, email: student.email, phone: student.phone, rollNumber: student.rollNumber,
-    status: student.status, statusMessage: student.statusMessage, emailVerified: student.emailVerified,
+    status: (await effectiveStatuses([student])).get(student.id) ?? student.status, statusMessage: student.statusMessage, emailVerified: student.emailVerified,
     institution: student.institution, program: student.program, academicYear: academicYear?.label ?? null, batch: batch?.label ?? null,
     institutionId: student.institutionId ?? null, programKind: programRow?.kind ?? null, yearNumber: academicYear?.yearNumber ?? null,
     progress,
@@ -1740,7 +1778,7 @@ router.post("/students/:id/trial", requireAdmin, async (req, res): Promise<void>
   // membership or an earlier trial replaces it rather than stacking.
   await db.update(membershipsTable).set({ status: "SUPERSEDED" }).where(and(eq(membershipsTable.userId, id), eq(membershipsTable.status, "ACTIVE")));
   await db.insert(membershipsTable).values({ userId: id, planId: null, status: "ACTIVE", startsAt, expiresAt, isTrial: true });
-  await db.update(usersTable).set({ status: "ACTIVE", emailVerified: true }).where(eq(usersTable.id, id));
+  await db.update(usersTable).set({ status: "ACTIVE", statusMessage: null, emailVerified: true }).where(eq(usersTable.id, id));
 
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "STUDENT_TRIAL_STARTED", entity: "user", entityId: id, metadata: JSON.stringify({ durationDays: parsed.data.durationDays, expiresAt }) });
   void sendEmail(row.email, "Your MedschoolProffs trial has started", trialActivatedEmailHtml(row.name, expiresAt)).catch(() => {});

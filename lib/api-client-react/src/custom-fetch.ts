@@ -25,6 +25,13 @@ let _authTokenGetter: AuthTokenGetter | null = null;
  * Useful for Expo bundles that need to call a remote API server.
  * Pass `null` to clear the base URL.
  */
+/** Optional hook: called with the parsed error body of every non-OK response (before it is thrown),
+ * so an app can react to a specific server code (e.g. MEMBERSHIP_REQUIRED) in one place. */
+let _errorResponseHandler: ((status: number, body: unknown) => void) | null = null;
+export function setErrorResponseHandler(handler: ((status: number, body: unknown) => void) | null): void {
+  _errorResponseHandler = handler;
+}
+
 export function setBaseUrl(url: string | null): void {
   _baseUrl = url ? url.replace(/\/+$/, "") : null;
 }
@@ -396,6 +403,7 @@ export async function customFetch<T = unknown>(
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
+    try { _errorResponseHandler?.(response.status, errorData); } catch { /* a handler must never break error reporting */ }
     throw new ApiError(response, errorData, requestInfo);
   }
 

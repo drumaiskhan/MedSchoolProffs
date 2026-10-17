@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { eq } from "drizzle-orm";
 import { db, usersTable } from "@workspace/db";
 import { readSessionCookie, verifySession } from "../lib/auth";
-import { banIfTrialExpired, trialGrantsAccess, type TrialFeature } from "../lib/trial";
+import { expireIfLapsed, trialGrantsAccess, type TrialFeature } from "../lib/trial";
 import { isSessionActive } from "../lib/deviceSessions";
 
 export interface AuthedUser {
@@ -141,7 +141,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 export async function hasActiveMembership(user: AuthedUser, feature?: TrialFeature | readonly TrialFeature[]): Promise<boolean> {
   if (isAdminRole(user.role)) return true;
   if (user.status === "ACTIVE") {
-    if (await banIfTrialExpired(user.id)) return false;
+    if (await expireIfLapsed(user.id)) return trialGrantsAccess(user.id, feature);
     return true;
   }
   return trialGrantsAccess(user.id, feature);
@@ -162,7 +162,7 @@ export function requireMembershipFor(feature?: FeatureResolver) {
     }
     const resolved = typeof feature === "function" ? feature(req) : feature;
     if (await hasActiveMembership(req.user, resolved)) { next(); return; }
-    res.status(403).json({ error: "An active membership is required to access this content." });
+    res.status(403).json({ error: "Activate your account to load data.", code: "MEMBERSHIP_REQUIRED" });
   };
 }
 

@@ -9,6 +9,7 @@
 // to the backend's origin (e.g. https://your-api.up.railway.app — no /api
 // suffix; it's added automatically, matching setBaseUrl() in main.tsx).
 import { isNativeApp, getNativeAuthToken, peekNativeAuthToken } from '@/lib/native-auth';
+import { markMembershipLocked } from './membership-lock';
 
 const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
 const API_BASE = `${API_ORIGIN}/api`;
@@ -101,6 +102,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         ? 'This is taking longer than expected. Try again — if it keeps happening, try a shorter or simpler request.'
         : null;
 
+    if (res.status === 403 && data?.code === 'MEMBERSHIP_REQUIRED') markMembershipLocked();
     throw new ApiRequestError(
       res.status,
       (data && (data.error || data.message)) ||
