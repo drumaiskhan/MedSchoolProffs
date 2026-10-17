@@ -1,3 +1,4 @@
+
 name: Deploy API to cPanel
 
 on:
@@ -19,7 +20,6 @@ jobs:
     timeout-minutes: 20
 
     steps:
-
       # 1. CHECKOUT
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,7 +39,6 @@ jobs:
       - name: Build API
         run: |
           set -euo pipefail
-
           pnpm install --no-frozen-lockfile
           pnpm run build:api
 
@@ -101,15 +100,12 @@ jobs:
           set -euo pipefail
 
           test -s artifacts/api-server/dist/index.mjs
-
           ls -lh artifacts/api-server/dist/index.mjs
 
           if grep -q "__DEPLOY_COMMIT__" \
             artifacts/api-server/dist/index.mjs; then
-
             echo "::error::Deployment version was not embedded."
             exit 1
-
           fi
 
           echo "API build verified."
@@ -129,19 +125,32 @@ jobs:
         run: |
           set -euo pipefail
 
+          FTP_HOST="business300.mypowerfulserver.com"
+          FTP_IP="5.181.190.187"
+          FTP_USER="github-deploy@site.medschoolproffs.live"
+
+          if [ -z "$FTP_PASSWORD" ]; then
+            echo "::error::CPANEL_FTP_PASSWORD is missing."
+            exit 1
+          fi
+
           echo "Uploading API build..."
+          echo "Connecting to cPanel FTP server IP..."
 
           curl \
             --fail \
             --show-error \
             --silent \
             --ssl-reqd \
+            --ftp-pasv \
+            --resolve "${FTP_HOST}:21:${FTP_IP}" \
             --retry 3 \
             --retry-delay 5 \
             --connect-timeout 20 \
-            --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
+            --max-time 180 \
+            --user "${FTP_USER}:${FTP_PASSWORD}" \
             --upload-file artifacts/api-server/dist/index.mjs \
-            "ftp://ftp.site.medschoolproffs.live/index.mjs"
+            "ftp://${FTP_HOST}/index.mjs"
 
           echo "API uploaded successfully."
 
@@ -152,22 +161,31 @@ jobs:
         run: |
           set -euo pipefail
 
+          FTP_HOST="business300.mypowerfulserver.com"
+          FTP_IP="5.181.190.187"
+          FTP_USER="github-deploy@site.medschoolproffs.live"
+
           echo "Deployment: ${GITHUB_SHA}" > restart.txt
           echo "Run: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> restart.txt
           echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> restart.txt
+
+          echo "Uploading Passenger restart signal..."
 
           curl \
             --fail \
             --show-error \
             --silent \
             --ssl-reqd \
+            --ftp-pasv \
             --ftp-create-dirs \
+            --resolve "${FTP_HOST}:21:${FTP_IP}" \
             --retry 3 \
             --retry-delay 5 \
             --connect-timeout 20 \
-            --user "github-deploy@site.medschoolproffs.live:${FTP_PASSWORD}" \
+            --max-time 60 \
+            --user "${FTP_USER}:${FTP_PASSWORD}" \
             --upload-file restart.txt \
-            "ftp://ftp.site.medschoolproffs.live/tmp/restart.txt"
+            "ftp://${FTP_HOST}/tmp/restart.txt"
 
           echo "cPanel restart requested."
 
