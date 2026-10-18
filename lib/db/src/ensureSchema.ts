@@ -578,6 +578,17 @@ CREATE TABLE IF NOT EXISTS med_flagged_mcqs (
 CREATE UNIQUE INDEX IF NOT EXISTS med_flagged_user_mcq_idx
   ON med_flagged_mcqs (user_id, mcq_id);
 
+CREATE TABLE IF NOT EXISTS med_saved_mcqs (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  mcq_id INTEGER NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS med_saved_mcqs_user_mcq_idx
+  ON med_saved_mcqs (user_id, mcq_id);
+
 CREATE TABLE IF NOT EXISTS med_feedback (
   id SERIAL PRIMARY KEY,
   user_id INTEGER,
@@ -1043,7 +1054,28 @@ export function isSchemaHealthy(): boolean {
 
 export async function ensureSchema(): Promise<void> {
   try {
+    // One-time import: before the Saved MCQs list existed, the practice "Save"
+    // button stored a Notebook entry linked to the question (mcq_id set). When
+    // the saved-MCQs table is created for the first time, carry those over so
+    // students' earlier saves show up there. Only runs on first creation, so a
+    // question a student later removes is never re-added on restart.
+    const existed = await pool.query(`SELECT to_regclass('public.med_saved_mcqs') AS t`);
+    const firstTime = !existed.rows[0]?.t;
     await pool.query(ENSURE_SCHEMA_SQL);
+    if (firstTime) {
+      try {
+        await pool.query(`
+          INSERT INTO med_saved_mcqs (user_id, mcq_id, created_at, updated_at)
+          SELECT n.user_id, n.mcq_id, MIN(n.created_at), MIN(n.created_at)
+          FROM med_notebook_entries n
+          JOIN med_mcqs m ON m.id = n.mcq_id
+          WHERE n.mcq_id IS NOT NULL
+          GROUP BY n.user_id, n.mcq_id
+          ON CONFLICT (user_id, mcq_id) DO NOTHING`);
+      } catch (err) {
+        console.error("[ensureSchema] saved-MCQs backfill skipped:", err);
+      }
+    }
     lastEnsureSchemaSucceeded = true;
   } catch (err) {
     lastEnsureSchemaSucceeded = false;

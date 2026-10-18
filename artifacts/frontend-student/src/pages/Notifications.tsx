@@ -51,6 +51,45 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // queries that didn't specify anything.
 import { ConfirmDialog, EmptyState, SectionHeader, cn } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
+import { Megaphone, Swords, BellOff, Info } from 'lucide-react';
+
+type NotifKind = 'success' | 'warning' | 'payment' | 'milestone' | 'challenge' | 'announcement' | 'info';
+const KIND: Record<NotifKind, { icon: typeof Bell; label: string; tone: string; ring: string }> = {
+  success: { icon: CheckCircle2, label: 'Success', tone: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', ring: 'bg-emerald-500' },
+  warning: { icon: AlertTriangle, label: 'Needs attention', tone: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', ring: 'bg-amber-500' },
+  payment: { icon: CreditCard, label: 'Payment', tone: 'bg-orange-500/15 text-orange-600 dark:text-orange-400', ring: 'bg-orange-500' },
+  milestone: { icon: Trophy, label: 'Milestone', tone: 'bg-violet-500/15 text-violet-600 dark:text-violet-400', ring: 'bg-violet-500' },
+  challenge: { icon: Swords, label: 'Challenge', tone: 'bg-rose-500/15 text-rose-600 dark:text-rose-400', ring: 'bg-rose-500' },
+  announcement: { icon: Megaphone, label: 'Announcement', tone: 'bg-sky-500/15 text-sky-600 dark:text-sky-400', ring: 'bg-sky-500' },
+  info: { icon: Info, label: 'Update', tone: 'bg-primary/15 text-primary', ring: 'bg-primary' },
+};
+const kindOf = (n: Notification): NotifKind => {
+  const t = (n.type || '').toLowerCase();
+  if (t in KIND) return t as NotifKind;
+  if (/challenge/.test(t) || /challenge/i.test(n.title)) return 'challenge';
+  if (/announce|broadcast/.test(t)) return 'announcement';
+  return 'info';
+};
+const parseDate = (v: string) => { const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d; };
+const timeAgo = (v: string) => {
+  const d = parseDate(v); if (!d) return v;
+  const sec = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (sec < 60) return 'Just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+};
+const bucketOf = (v: string) => {
+  const d = parseDate(v); if (!d) return 'Earlier';
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const day = Math.floor((start.getTime() - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  if (day <= 0) return 'Today';
+  if (day === 1) return 'Yesterday';
+  if (day < 7) return 'This week';
+  return 'Earlier';
+};
+const BUCKETS = ['Today', 'Yesterday', 'This week', 'Earlier'];
 
 function Notifications() {
   const q = useListNotifications();
@@ -58,6 +97,9 @@ function Notifications() {
   const markRead = useMutation({ mutationFn: notificationsApi.markRead, onSuccess: () => queryClient.invalidateQueries({ queryKey: getListNotificationsQueryKey() }) });
   const unread = ns.filter((n) => !n.read);
   const markAll = () => unread.forEach((n) => markRead.mutate(n.id));
+  const [tab, setTab] = useState<'all' | 'unread' | NotifKind>('all');
+  const [term, setTerm] = useState('');
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   // "Clear all" here only affects this student's own view — their personal
   // notifications are deleted, and any broadcast announcements are hidden
@@ -69,7 +111,90 @@ function Notifications() {
     onError: (err: unknown) => toast({ title: 'Could not clear notifications', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
   });
 
-  return <div className="max-w-3xl"><SectionHeader eyebrow="Stay oriented" title="Notifications" action={<div className="flex items-center gap-4">{unread.length > 0 && <button onClick={markAll} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary" data-testid="button-mark-all-read"><CheckCheck size={14} /> Mark all as read</button>}{ns.length > 0 && <button onClick={() => setConfirmingClearAll(true)} className="inline-flex items-center gap-1.5 text-xs font-bold text-destructive" data-testid="button-clear-all-notifications"><Trash2 size={14} /> Clear all</button>}</div>} /><div className="overflow-hidden rounded-2xl border border-border bg-card">{ns.map((n) => <div key={n.id} className={cn('flex gap-4 border-b border-border p-5 transition-colors last:border-0', !n.read && 'bg-[#f3f8f3]')} data-testid={`row-notification-${n.id}`}><div className={cn('grid size-10 shrink-0 place-items-center rounded-xl', n.type === 'payment' ? 'bg-[#fff0cb] text-[#94651c]' : n.type === 'milestone' ? 'bg-[#d7eee4] text-[#287058]' : 'bg-[#dceaf1] text-[#32647b]')}><Bell size={17} /></div><div className="flex-1"><div className="flex items-center gap-2 text-sm font-bold">{n.title}{!n.read && <span className="size-1.5 rounded-full bg-[#dc815e]" />}</div><p className="mt-1 text-xs leading-5 text-muted-foreground">{n.body}</p><div className="mt-2 font-mono-app text-[10px] text-muted-foreground">{n.createdAt}</div></div>{!n.read && <button onClick={() => markRead.mutate(n.id)} className="self-start rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-muted-foreground hover:bg-muted hover:text-foreground" data-testid={`button-mark-read-${n.id}`}>Mark read</button>}</div>)}{!ns.length && <EmptyState icon={Bell} title="All caught up" body="Nothing new right now." />}</div>
+  const kinds = (Object.keys(KIND) as NotifKind[]).filter((k) => ns.some((n) => kindOf(n) === k));
+  const needle = term.trim().toLowerCase();
+  const visible = ns.filter((n) => (tab === 'all' || (tab === 'unread' ? !n.read : kindOf(n) === tab)) && (!needle || `${n.title} ${n.body}`.toLowerCase().includes(needle)));
+  const groups = BUCKETS.map((b) => ({ b, items: visible.filter((n) => bucketOf(n.createdAt) === b) })).filter((g) => g.items.length);
+  const open = (n: Notification) => {
+    setExpanded((prev) => { const x = new Set(prev); if (x.has(n.id)) x.delete(n.id); else x.add(n.id); return x; });
+    if (!n.read) markRead.mutate(n.id);
+  };
+
+  const pills: Array<{ key: 'all' | 'unread' | NotifKind; label: string; n?: number }> = [
+    { key: 'all', label: 'All', n: ns.length },
+    { key: 'unread', label: 'Unread', n: unread.length },
+    ...kinds.map((k) => ({ key: k, label: KIND[k].label, n: ns.filter((x) => kindOf(x) === k).length })),
+  ];
+
+  return <div className="max-w-3xl">
+    {/* Hero summary */}
+    <div className="relative mb-5 overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/15 via-card to-card p-5 sm:p-6" data-testid="notifications-hero">
+      <div className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-primary/15 blur-3xl" />
+      <div className="relative flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="relative grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
+            <Bell size={24} />
+            {unread.length > 0 && <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full border-2 border-card bg-destructive px-1 text-[10px] font-extrabold leading-5 text-white" data-testid="badge-unread-count">{unread.length > 99 ? '99+' : unread.length}</span>}
+          </div>
+          <div>
+            <p className="text-[11px] font-extrabold uppercase tracking-widest text-primary">Stay oriented</p>
+            <h1 className="text-2xl font-extrabold tracking-tight">Notifications</h1>
+            <p className="text-xs text-muted-foreground" data-testid="text-notification-summary">{unread.length ? `${unread.length} unread of ${ns.length}` : ns.length ? `You're all caught up · ${ns.length} total` : 'Nothing here yet'}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {unread.length > 0 && <button onClick={markAll} className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-extrabold text-primary-foreground transition-transform active:scale-95" data-testid="button-mark-all-read"><CheckCheck size={14} /> Mark all read</button>}
+          {ns.length > 0 && <button onClick={() => setConfirmingClearAll(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card/70 px-3.5 py-2 text-xs font-extrabold text-destructive backdrop-blur transition-colors hover:bg-destructive/10" data-testid="button-clear-all-notifications"><Trash2 size={14} /> Clear all</button>}
+        </div>
+      </div>
+    </div>
+
+    {/* Filters + search */}
+    {ns.length > 0 && <div className="sticky top-0 z-10 -mx-1 mb-4 space-y-2 bg-background/85 px-1 py-2 backdrop-blur" data-testid="notification-toolbar">
+      <div className="relative">
+        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Search notifications…" className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-xs outline-none focus:border-primary" data-testid="input-search-notifications" />
+      </div>
+      <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+        {pills.map((p) => <button key={p.key} onClick={() => setTab(p.key)} className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-extrabold transition-all active:scale-95', tab === p.key ? 'border-primary bg-primary text-primary-foreground shadow-sm' : 'border-border bg-card text-muted-foreground hover:text-foreground')} data-testid={`filter-notifications-${p.key}`}>{p.label}{!!p.n && <span className={cn('rounded-full px-1.5 text-[10px]', tab === p.key ? 'bg-white/25' : 'bg-muted')}>{p.n}</span>}</button>)}
+      </div>
+    </div>}
+
+    {/* Timeline */}
+    <div className="space-y-6">
+      {groups.map((g) => <section key={g.b} data-testid={`notification-group-${g.b}`}>
+        <h2 className="mb-2 px-1 text-[11px] font-extrabold uppercase tracking-widest text-muted-foreground">{g.b}</h2>
+        <div className="space-y-2.5">
+          {g.items.map((n) => {
+            const k = KIND[kindOf(n)]; const Icon = k.icon; const isOpen = expanded.has(n.id);
+            return <article key={n.id} onClick={() => open(n)} className={cn('group relative flex cursor-pointer gap-3.5 overflow-hidden rounded-2xl border p-4 pl-5 transition-all hover:-translate-y-0.5 hover:shadow-md', n.read ? 'border-border bg-card' : 'border-primary/30 bg-primary/[0.06] shadow-sm')} data-testid={`row-notification-${n.id}`}>
+              <span className={cn('absolute inset-y-0 left-0 w-1', n.read ? 'bg-transparent' : k.ring)} />
+              <div className={cn('grid size-11 shrink-0 place-items-center rounded-2xl', k.tone)}><Icon size={19} /></div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className={cn('text-sm leading-snug', n.read ? 'font-bold' : 'font-extrabold')}>{n.title}</h3>
+                  <span className="mt-0.5 shrink-0 text-[10px] font-bold text-muted-foreground" title={n.createdAt}>{timeAgo(n.createdAt)}</span>
+                </div>
+                <p className={cn('mt-1 text-xs leading-5 text-muted-foreground', !isOpen && 'line-clamp-2')}>{n.body}</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-extrabold', k.tone)}>{k.label}</span>
+                  {!n.read && <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-primary"><span className="size-1.5 animate-pulse rounded-full bg-primary" />New</span>}
+                  {!n.read && <button onClick={(e) => { e.stopPropagation(); markRead.mutate(n.id); }} className="ml-auto rounded-lg border border-border px-2.5 py-1 text-[10px] font-bold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground" data-testid={`button-mark-read-${n.id}`}>Mark read</button>}
+                </div>
+              </div>
+            </article>;
+          })}
+        </div>
+      </section>)}
+
+      {ns.length > 0 && !visible.length && <div className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground" data-testid="notifications-no-match">No notifications match this filter. <button onClick={() => { setTab('all'); setTerm(''); }} className="font-extrabold text-primary">Reset filters</button></div>}
+      {!ns.length && !q.isLoading && <div className="rounded-3xl border border-border bg-card p-10 text-center" data-testid="notifications-empty">
+        <div className="mx-auto mb-4 grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary"><BellOff size={28} /></div>
+        <h3 className="text-base font-extrabold">All caught up</h3>
+        <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-muted-foreground">Nothing new right now. Payment updates, challenges, milestones and announcements will show up here.</p>
+      </div>}
+      {q.isLoading && <div className="space-y-2.5">{[0, 1, 2].map((i) => <div key={i} className="h-24 animate-pulse rounded-2xl bg-muted" />)}</div>}
+    </div>
     {confirmingClearAll && <ConfirmDialog title="Clear all notifications?" body="This clears every notification from your list. Announcements are just hidden from you — other students still see them. There is no undo." confirmLabel="Clear all" onCancel={() => setConfirmingClearAll(false)} onConfirm={() => clearAll.mutate()} pending={clearAll.isPending} />}
   </div>;
 }

@@ -67,6 +67,7 @@ import {
   notebookEntriesTable,
   savedSessionsTable,
   flaggedMcqsTable,
+  savedMcqsTable,
   feedbackTable,
   practiceAnswersTable,
   examAnswersTable,
@@ -155,6 +156,7 @@ async function hardDeleteMcqs(ids: number[]): Promise<void> {
     await tx.delete(examAnswersTable).where(inArray(examAnswersTable.mcqId, ids));
     await tx.delete(examQuestionsTable).where(inArray(examQuestionsTable.mcqId, ids));
     await tx.delete(flaggedMcqsTable).where(inArray(flaggedMcqsTable.mcqId, ids));
+    await tx.delete(savedMcqsTable).where(inArray(savedMcqsTable.mcqId, ids));
     await tx.update(notebookEntriesTable).set({ mcqId: null }).where(inArray(notebookEntriesTable.mcqId, ids));
     await tx.delete(mcqsTable).where(inArray(mcqsTable.id, ids));
   });
@@ -1903,6 +1905,7 @@ router.delete("/students/:id/permanent", requireAdmin, async (req, res): Promise
   await db.delete(notebookEntriesTable).where(eq(notebookEntriesTable.userId, id));
   await db.delete(savedSessionsTable).where(eq(savedSessionsTable.userId, id));
   await db.delete(flaggedMcqsTable).where(eq(flaggedMcqsTable.userId, id));
+  await db.delete(savedMcqsTable).where(eq(savedMcqsTable.userId, id));
   await db.delete(feedbackTable).where(eq(feedbackTable.userId, id));
   await db.delete(notificationsTable).where(eq(notificationsTable.userId, id));
   await db.delete(membershipsTable).where(eq(membershipsTable.userId, id));

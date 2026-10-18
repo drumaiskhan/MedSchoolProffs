@@ -818,6 +818,15 @@ export const flaggedMcqsTable = pgTable("med_flagged_mcqs", {
   ...timestamps,
 }, (table) => ({ userMcqIdx: uniqueIndex("med_flagged_user_mcq_idx").on(table.userId, table.mcqId) }));
 
+// Questions a student pressed "Save" on during practice — their own "come back
+// to this later" list (separate from flags, which mean "this question is wrong").
+export const savedMcqsTable = pgTable("med_saved_mcqs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  mcqId: integer("mcq_id").notNull(),
+  ...timestamps,
+}, (table) => ({ userMcqIdx: uniqueIndex("med_saved_mcqs_user_mcq_idx").on(table.userId, table.mcqId) }));
+
 export const feedbackTable = pgTable("med_feedback", {
   id: serial("id").primaryKey(),
   userId: integer("user_id"),

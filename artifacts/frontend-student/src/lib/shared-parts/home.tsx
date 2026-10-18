@@ -52,7 +52,7 @@ export const QUICK_LINK_TILES: Array<{ href: string; label: string; sub: string;
   { href: '/practice', label: 'Practice MCQs', sub: 'Test your knowledge', icon: Target, bg: 'bg-[#d7eee4]', fg: 'text-[#1f7a5c]', hue: 158 },
   { href: '/flashcards', label: 'Flashcards', sub: 'Revise smarter', icon: Sparkles, bg: 'bg-[#e6dcf5]', fg: 'text-[#6b3fa0]', hue: 268 },
   { href: '/past-papers', label: 'Past Papers', sub: 'Previous exam papers', icon: FileStack, bg: 'bg-[#fbdada]', fg: 'text-[#b8493f]', hue: 4 },
-  { href: '/flagged-mcqs', label: 'Bookmarks', sub: 'Saved content', icon: Bookmark, bg: 'bg-[#fff0cb]', fg: 'text-[#94651c]', hue: 38 },
+  { href: '/saved-mcqs', label: 'Saved MCQs', sub: 'Attempt them later', icon: Bookmark, bg: 'bg-[#fff0cb]', fg: 'text-[#94651c]', hue: 38 },
   { href: '/progress', label: 'My Progress', sub: 'Track your growth', icon: TrendingUp, bg: 'bg-[#dde4f7]', fg: 'text-[#3b4f8f]', hue: 228 },
   // Special-cased in the render below (href === OPEN_SEARCH_HREF) to open
   // the QuickJump overlay via a custom event instead of navigating — the

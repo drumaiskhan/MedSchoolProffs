@@ -1,21 +1,23 @@
 // v61 — one connected "review" area: Flagged · Notes · Saved sessions · Mistakes, with live counts.
 import { Link, useLocation } from 'wouter';
 import { useQuery } from '@tanstack/react-query';
-import { Bookmark, CalendarCheck, Flag, NotebookPen } from 'lucide-react';
-import { flaggedMcqsApi, notebookApi, savedSessionsApi } from '@/lib/api';
+import { Bookmark, CalendarCheck, Flag, NotebookPen, Star } from 'lucide-react';
+import { flaggedMcqsApi, notebookApi, savedMcqsApi, savedSessionsApi } from '@/lib/api';
 import { cn } from '@/lib/shared';
 import { openMistakes } from '@/lib/study';
 
 export function ReviewTabs() {
   const [loc] = useLocation();
   const flags = useQuery({ queryKey: ['flagged-mcqs'], queryFn: flaggedMcqsApi.list });
+  const savedMcqs = useQuery({ queryKey: ['saved-mcqs'], queryFn: savedMcqsApi.list });
   const notes = useQuery({ queryKey: ['notebook'], queryFn: notebookApi.list });
   const sessions = useQuery({ queryKey: ['saved-sessions'], queryFn: savedSessionsApi.list });
   const openFlags = (flags.data ?? []).filter((f) => f.status === 'open').length;
   const tabs = [
+    { href: '/saved-mcqs', label: 'Saved MCQs', icon: Star, n: savedMcqs.data?.length ?? 0 },
     { href: '/flagged-mcqs', label: 'Flagged', icon: Flag, n: openFlags },
     { href: '/notebook', label: 'Notes', icon: NotebookPen, n: notes.data?.length ?? 0 },
-    { href: '/saved-sessions', label: 'Saved', icon: Bookmark, n: sessions.data?.length ?? 0 },
+    { href: '/saved-sessions', label: 'Sessions', icon: Bookmark, n: sessions.data?.length ?? 0 },
     { href: '/study?tab=mistakes', label: 'Mistakes', icon: CalendarCheck, n: openMistakes().length },
   ];
   return <nav aria-label="Review tools" className="-mx-1 mb-5 flex gap-1.5 overflow-x-auto px-1 pb-1" data-testid="review-tabs">

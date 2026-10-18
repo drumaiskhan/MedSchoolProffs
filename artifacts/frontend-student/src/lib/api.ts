@@ -456,6 +456,7 @@ export interface Placement { blockName?: string | null; moduleName?: string | nu
 export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
 export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
+export interface SavedMcq extends Placement { id: number; userId: number; mcqId: number; createdAt: string; question: string | null; path: string | null; mcqDeleted: boolean }
 export interface FeedbackEntry { id: number; userId: number | null; category: string; message: string; status: 'open' | 'replied' | 'reviewed'; rating: number | null; featured: boolean; createdAt: string; user: { name: string; email: string } | null }
 export interface FeedbackReply { id: number; feedbackId: number; authorId: number; authorRole: 'admin' | 'student'; message: string; createdAt: string }
 export interface MyFeedbackEntry extends FeedbackEntry { replies: FeedbackReply[] }
@@ -670,6 +671,13 @@ export const savedSessionsApi = {
 
 export const mcqPlacementsApi = {
   lookup: (ids: number[]) => request<Array<Placement & { id: number; found: boolean }>>('/mcq-placements', { method: 'POST', body: JSON.stringify({ ids }) }),
+};
+
+export const savedMcqsApi = {
+  list: () => request<SavedMcq[]>('/saved-mcqs'),
+  create: (mcqId: number) => request<{ id: number; mcqId: number }>('/saved-mcqs', { method: 'POST', body: JSON.stringify({ mcqId }) }),
+  remove: (id: number) => request<{ ok: true }>(`/saved-mcqs/${id}`, { method: 'DELETE' }),
+  removeByMcq: (mcqId: number) => request<{ ok: true }>(`/saved-mcqs/by-mcq/${mcqId}`, { method: 'DELETE' }),
 };
 
 export const flaggedMcqsApi = {

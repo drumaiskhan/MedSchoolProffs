@@ -2,7 +2,7 @@ import { z } from "zod";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   db, pastPapersTable, mcqsTable, institutionsTable, programsTable, academicYearsTable, modulesTable, subjectsTable, topicsTable,
-  practiceAnswersTable, examAnswersTable, examQuestionsTable, notebookEntriesTable, flaggedMcqsTable,
+  practiceAnswersTable, examAnswersTable, examQuestionsTable, notebookEntriesTable, flaggedMcqsTable, savedMcqsTable,
 } from "@workspace/db";
 import { APPLICATION_NAME, CONTENT_TABLES, ensureSchemaIfMissing } from "./fullBackup";
 import { BackupMcqSchema } from "./mcqBackup";
@@ -166,6 +166,7 @@ export async function restorePastPaperBackup(data: ParsedPastPaperBackup, mode: 
           await tx.delete(examQuestionsTable).where(inArray(examQuestionsTable.mcqId, chunk));
           await tx.delete(notebookEntriesTable).where(inArray(notebookEntriesTable.mcqId, chunk));
           await tx.delete(flaggedMcqsTable).where(inArray(flaggedMcqsTable.mcqId, chunk));
+          await tx.delete(savedMcqsTable).where(inArray(savedMcqsTable.mcqId, chunk));
           await tx.delete(mcqsTable).where(inArray(mcqsTable.id, chunk));
         }
         await tx.delete(pastPapersTable).where(inArray(pastPapersTable.id, victims));

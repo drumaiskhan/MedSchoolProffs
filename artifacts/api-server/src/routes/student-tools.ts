@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, notebookEntriesTable, savedSessionsTable, flaggedMcqsTable, feedbackTable, feedbackRepliesTable, notificationsTable, usersTable, mcqsTable, topicsTable, subjectsTable, modulesTable, blocksTable } from "@workspace/db";
+import { db, notebookEntriesTable, savedSessionsTable, flaggedMcqsTable, savedMcqsTable, feedbackTable, feedbackRepliesTable, notificationsTable, usersTable, mcqsTable, topicsTable, subjectsTable, modulesTable, blocksTable } from "@workspace/db";
 import { requireAuth, requireAdmin, isAdminRole } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -117,6 +117,62 @@ router.post("/saved-sessions", requireAuth, async (req, res): Promise<void> => {
 
 router.delete("/saved-sessions/:id", requireAuth, async (req, res): Promise<void> => {
   await db.delete(savedSessionsTable).where(and(eq(savedSessionsTable.id, Number(req.params.id)), eq(savedSessionsTable.userId, req.user!.id)));
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Saved MCQs (the practice "Save" button) — filed under Block > Module >
+// Subject > Topic so students can re-attempt them later.
+// ---------------------------------------------------------------------------
+
+router.get("/saved-mcqs", requireAuth, async (req, res): Promise<void> => {
+  const rows = await db.select({
+    saved: savedMcqsTable,
+    question: mcqsTable.question,
+    topicName: topicsTable.name, subjectName: subjectsTable.name, moduleName: modulesTable.name, blockName: blocksTable.name,
+    topicOrder: topicsTable.displayOrder, subjectOrder: subjectsTable.displayOrder, moduleOrder: modulesTable.displayOrder, blockOrder: blocksTable.displayOrder,
+  }).from(savedMcqsTable)
+    .leftJoin(mcqsTable, eq(savedMcqsTable.mcqId, mcqsTable.id))
+    .leftJoin(topicsTable, eq(mcqsTable.topicId, topicsTable.id))
+    .leftJoin(subjectsTable, eq(subjectsTable.id, sql`coalesce(${topicsTable.subjectId}, ${mcqsTable.subjectId})`))
+    .leftJoin(modulesTable, eq(modulesTable.id, sql`coalesce(${subjectsTable.moduleId}, ${mcqsTable.moduleId})`))
+    .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
+    .where(eq(savedMcqsTable.userId, req.user!.id))
+    .orderBy(desc(savedMcqsTable.createdAt));
+  res.json(rows.map((r) => ({
+    ...r.saved,
+    question: r.question,
+    path: [r.blockName, r.moduleName, r.subjectName, r.topicName].filter(Boolean).join(" \u203a ") || null,
+    blockName: r.blockName ?? null, moduleName: r.moduleName ?? null, subjectName: r.subjectName ?? null, topicName: r.topicName ?? null,
+    blockOrder: r.blockOrder ?? null, moduleOrder: r.moduleOrder ?? null, subjectOrder: r.subjectOrder ?? null, topicOrder: r.topicOrder ?? null,
+    mcqDeleted: r.question === null,
+  })));
+});
+
+router.post("/saved-mcqs", requireAuth, async (req, res): Promise<void> => {
+  const parsed = z.object({ mcqId: z.number().int().positive() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "mcqId is required" }); return; }
+  const [exists] = await db.select({ id: mcqsTable.id }).from(mcqsTable).where(eq(mcqsTable.id, parsed.data.mcqId)).limit(1);
+  if (!exists) { res.status(404).json({ error: "Question not found" }); return; }
+  const [row] = await db.insert(savedMcqsTable).values({ userId: req.user!.id, mcqId: parsed.data.mcqId })
+    .onConflictDoUpdate({ target: [savedMcqsTable.userId, savedMcqsTable.mcqId], set: { updatedAt: new Date() } }).returning();
+  res.status(201).json(row);
+});
+
+// Delete by saved-row id (from the Saved MCQs page)
+router.delete("/saved-mcqs/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+  const deleted = await db.delete(savedMcqsTable).where(and(eq(savedMcqsTable.id, id), eq(savedMcqsTable.userId, req.user!.id))).returning({ id: savedMcqsTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "Saved question not found" }); return; }
+  res.json({ ok: true });
+});
+
+// Un-save by question id (from the practice screen's Saved toggle)
+router.delete("/saved-mcqs/by-mcq/:mcqId", requireAuth, async (req, res): Promise<void> => {
+  const mcqId = Number(req.params.mcqId);
+  if (!Number.isInteger(mcqId) || mcqId <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+  await db.delete(savedMcqsTable).where(and(eq(savedMcqsTable.mcqId, mcqId), eq(savedMcqsTable.userId, req.user!.id)));
   res.json({ ok: true });
 });
 

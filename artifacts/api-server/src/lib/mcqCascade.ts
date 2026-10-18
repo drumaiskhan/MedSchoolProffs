@@ -1,7 +1,7 @@
 import { inArray } from "drizzle-orm";
 import {
   db, mcqsTable, practiceAnswersTable, examQuestionsTable, examAnswersTable,
-  notebookEntriesTable, flaggedMcqsTable,
+  notebookEntriesTable, flaggedMcqsTable, savedMcqsTable,
 } from "@workspace/db";
 
 // Hard-deletes a set of MCQs and every row anywhere else in the app that
@@ -26,6 +26,7 @@ export async function deleteMcqsEverywhere(mcqIds: number[], exec: Pick<typeof d
     await exec.delete(examQuestionsTable).where(inArray(examQuestionsTable.mcqId, ids));
     await exec.delete(notebookEntriesTable).where(inArray(notebookEntriesTable.mcqId, ids));
     await exec.delete(flaggedMcqsTable).where(inArray(flaggedMcqsTable.mcqId, ids));
+    await exec.delete(savedMcqsTable).where(inArray(savedMcqsTable.mcqId, ids));
     await exec.delete(mcqsTable).where(inArray(mcqsTable.id, ids));
   }
 }

@@ -33,7 +33,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
+import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, savedMcqsApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
 
 // Round 3, item 10 (performance) — this was `new QueryClient()` with no
 // options, meaning every query defaulted to `staleTime: 0` and refetched
@@ -81,7 +81,8 @@ function Practice() {
   // strictly-linear drill.
   const [answers, setAnswers] = useState<Record<number, string | null>>({});
   const [flaggedIds, setFlaggedIds] = useState<Set<number>>(new Set());
-  const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
+  // Optimistic overrides on top of the server's saved list (true = saved, false = un-saved).
+  const [savedOverride, setSavedOverride] = useState<Record<number, boolean>>({});
   const [panel, setPanel] = useState<'hint' | 'explain' | 'references' | null>(null);
   const [paused, setPaused] = useState(false);
   const [finished, setFinished] = useState(false);
@@ -142,7 +143,16 @@ function Practice() {
     onSuccess: invalidatePracticeQueries,
     onError: (err: unknown) => toast({ title: 'Session not saved', description: err instanceof ApiRequestError ? err.message : "Couldn't reach the server to record this session — check your connection. Your answers below are still visible; tap Finish again after reconnecting.", variant: 'destructive' }),
   });
-  const saveNote = useMutation({ mutationFn: notebookApi.create });
+  // "Save" = file this question under Saved MCQs (Block › Module › Subject › Topic) to re-attempt later.
+  const savedQ = useQuery({ queryKey: ['saved-mcqs'], queryFn: savedMcqsApi.list });
+  const saveMcq = useMutation({
+    mutationFn: ({ mcqId, save }: { mcqId: number; save: boolean }) => save ? savedMcqsApi.create(mcqId) : savedMcqsApi.removeByMcq(mcqId),
+    onSuccess: (_d, v) => { queryClient.invalidateQueries({ queryKey: ['saved-mcqs'] }); toast({ title: v.save ? 'Saved to Saved MCQs' : 'Removed from Saved MCQs' }); },
+    onError: (err: unknown, v) => {
+      setSavedOverride((prev) => { const n = { ...prev }; delete n[v.mcqId]; return n; });
+      toast({ title: 'Could not update saved question', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' });
+    },
+  });
   const reportFlag = useMutation({
     mutationFn: flaggedMcqsApi.create,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['flagged-mcqs'] }),
@@ -200,7 +210,7 @@ function Practice() {
     finishSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trialRemainingNow, trialLimited, finished, mode, answeredCount]);
-  const restartSession = () => { setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setSavedIds(new Set()); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); askAi.reset(); };
+  const restartSession = () => { setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); askAi.reset(); };
   // Starting a session from the (long) setup screen used to leave the page scrolled down to the
   // question navigator. Land on the first question instead.
   useEffect(() => {
@@ -211,7 +221,7 @@ function Practice() {
   // Redo only the questions missed this session: same screen, same questions, fresh answers, no timer.
   const redoWrong = (wrong: Mcq[]) => {
     if (!wrong.length) return;
-    setOrderedMcqs(wrong); setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setSavedIds(new Set()); setPanel(null); setPaused(false);
+    setOrderedMcqs(wrong); setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setPanel(null); setPaused(false);
     setFinished(false); setMode('untimed'); setRemainingSeconds(0); sessionStartRef.current = Date.now(); askAi.reset();
     window.scrollTo?.({ top: 0 });
   };
@@ -481,7 +491,12 @@ function Practice() {
     else { next.add(current.id); reportFlag.mutate({ mcqId: current.id, reason: 'Flagged during practice session' }); }
     return next;
   });
-  const saveQuestion = () => { if (savedIds.has(current.id)) return; saveNote.mutate({ content: current.question, mcqId: current.id }); setSavedIds((prev) => new Set(prev).add(current.id)); };
+  const isSaved = (id: number) => id in savedOverride ? savedOverride[id] : !!savedQ.data?.some((x) => x.mcqId === id);
+  const saveQuestion = () => {
+    const id = current.id; const save = !isSaved(id);
+    setSavedOverride((prev) => ({ ...prev, [id]: save }));
+    saveMcq.mutate({ mcqId: id, save });
+  };
   const stateForIndex = (i: number): 'current' | 'answered' | 'flagged' | 'new' => {
     if (i === index) return 'current';
     const id = activeMcqs[i].id;
@@ -495,7 +510,7 @@ function Practice() {
       <div className="flex items-center justify-between text-xs font-bold"><span className="flex items-center gap-1.5"><Clock3 size={13} /> {mode === 'timed' ? 'Timer' : 'Untimed'}</span>{mode === 'timed' && <CountdownBadge store={countdown} className="font-mono-app rounded-full px-2.5 py-1 text-[11px]" warnClass="bg-[#fff1ed] text-[#a34c3e]" okClass="bg-[#d7eee4] text-[#287058]" />}</div>
       <div className="mt-2.5 flex gap-1.5">
         <button onClick={() => setPaused((p) => !p)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#32647b] px-2 py-2 text-[11px] font-bold text-white" data-testid="button-pause-session">{paused ? <><Zap size={12} /> Resume</> : <><Clock3 size={12} /> Pause</>}</button>
-        <button onClick={saveQuestion} disabled={savedIds.has(current.id)} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-bold', savedIds.has(current.id) ? 'bg-[#e6dcf3] text-[#6a4c93]' : 'bg-gradient-to-r from-[#6a4c93] to-[#815276] text-white')} data-testid="button-save-question"><Bookmark size={12} /> {savedIds.has(current.id) ? 'Saved' : 'Save'}</button>
+        <button onClick={saveQuestion} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-bold', isSaved(current.id) ? 'bg-[#e6dcf3] text-[#6a4c93]' : 'bg-gradient-to-r from-[#6a4c93] to-[#815276] text-white')} data-testid="button-save-question"><Bookmark size={12} className={isSaved(current.id) ? 'fill-current' : ''} /> {isSaved(current.id) ? 'Saved' : 'Save'}</button>
       </div>
       <button onClick={finishSession} className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#c0503f]/30 px-2 py-2 text-[11px] font-bold text-[#c0503f] hover:bg-[#fff1ed]" data-testid="button-exit-session"><X size={12} /> Exit &amp; submit</button>
     </div>
