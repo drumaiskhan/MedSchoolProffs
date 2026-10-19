@@ -115,6 +115,47 @@ router.post("/saved-sessions", requireAuth, async (req, res): Promise<void> => {
   res.status(201).json({ ...row, config: parsed.data.config });
 });
 
+// In-progress practice sessions ("start where I left off"). One per student per
+// topic / past paper: saving again replaces the previous snapshot, so the list
+// never fills up with duplicates. Registered before /saved-sessions/:id.
+const progressKey = (c: Record<string, unknown>) => (Number(c.topicId) > 0 ? `t${Number(c.topicId)}` : Number(c.pastPaperId) > 0 ? `p${Number(c.pastPaperId)}` : null);
+const parseConfig = (raw: string): Record<string, unknown> => { try { return JSON.parse(raw); } catch { return {}; } };
+
+router.put("/saved-sessions/progress", requireAuth, async (req, res): Promise<void> => {
+  const parsed = z.object({
+    name: z.string().min(1).max(120),
+    config: z.object({
+      topicId: z.number().int().positive().optional(), pastPaperId: z.number().int().positive().optional(),
+      mcqIds: z.array(z.number().int().positive()).min(1).max(1000),
+      answers: z.record(z.string(), z.string().nullable()),
+      index: z.number().int().min(0), mode: z.enum(["timed", "untimed"]), remainingSeconds: z.number().int().min(0).optional(),
+    }).passthrough(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid progress payload" }); return; }
+  const config = { ...parsed.data.config, kind: "progress" };
+  const key = progressKey(config);
+  if (!key) { res.status(400).json({ error: "Progress can only be saved for a topic or past paper" }); return; }
+  const mine = await db.select().from(savedSessionsTable).where(eq(savedSessionsTable.userId, req.user!.id));
+  const existing = mine.filter((r) => { const c = parseConfig(r.config); return c.kind === "progress" && progressKey(c) === key; });
+  const body = { name: parsed.data.name, config: JSON.stringify(config) };
+  let row;
+  if (existing.length) {
+    [row] = await db.update(savedSessionsTable).set(body).where(eq(savedSessionsTable.id, existing[0].id)).returning();
+    for (const extra of existing.slice(1)) await db.delete(savedSessionsTable).where(eq(savedSessionsTable.id, extra.id));
+  } else {
+    [row] = await db.insert(savedSessionsTable).values({ userId: req.user!.id, ...body }).returning();
+  }
+  res.json({ ...row, config });
+});
+
+router.delete("/saved-sessions/progress", requireAuth, async (req, res): Promise<void> => {
+  const key = progressKey({ topicId: req.query.topicId, pastPaperId: req.query.pastPaperId });
+  if (!key) { res.json({ ok: true }); return; }
+  const mine = await db.select().from(savedSessionsTable).where(eq(savedSessionsTable.userId, req.user!.id));
+  for (const r of mine) { const c = parseConfig(r.config); if (c.kind === "progress" && progressKey(c) === key) await db.delete(savedSessionsTable).where(eq(savedSessionsTable.id, r.id)); }
+  res.json({ ok: true });
+});
+
 router.delete("/saved-sessions/:id", requireAuth, async (req, res): Promise<void> => {
   await db.delete(savedSessionsTable).where(and(eq(savedSessionsTable.id, Number(req.params.id)), eq(savedSessionsTable.userId, req.user!.id)));
   res.json({ ok: true });

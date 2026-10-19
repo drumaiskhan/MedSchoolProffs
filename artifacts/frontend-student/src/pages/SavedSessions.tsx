@@ -54,18 +54,24 @@ import { ReviewTabs } from '@/components/study/ReviewTabs';
 import { HierarchyTree } from '@/components/study/HierarchyTree';
 import { queryClient } from '@/lib/query-client';
 
+const progressLabel = (s: SavedSession) => {
+  const c = (s.config ?? {}) as { kind?: string; answered?: number; total?: number };
+  return c.kind === 'progress' ? `In progress · ${c.answered ?? 0}/${c.total ?? 0} answered · ` : '';
+};
+
 function SavedSessions() {
   const sessions = useQuery({ queryKey: ['saved-sessions'], queryFn: savedSessionsApi.list });
   const remove = useMutation({ mutationFn: savedSessionsApi.remove, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['saved-sessions'] }), onError: (err: unknown) => toast({ title: 'Could not delete session', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }) });
   const resumeHref = (session: SavedSession) => {
-    const config = (session.config ?? {}) as { topicId?: number; pastPaperId?: number };
+    const config = (session.config ?? {}) as { topicId?: number; pastPaperId?: number; kind?: string };
     const qs = new URLSearchParams();
     if (config.topicId) qs.set('topic', String(config.topicId));
     if (config.pastPaperId) qs.set('pastPaperId', String(config.pastPaperId));
+    if (config.kind === 'progress') qs.set('resume', String(session.id));
     const q = qs.toString();
     return q ? `/practice?${q}` : '/practice';
   };
-  return <div><SectionHeader eyebrow="Your tools" title="Saved Sessions" description="Practice sessions you paused — pick one up where you left off." /><ReviewTabs /><div className="space-y-3"><HierarchyTree<SavedSession> items={sessions.data || []} unit="session" testIdPrefix="session-tree" ungroupedLabel="Other sessions" place={(session) => (session.topicName || session.subjectName || session.moduleName || session.blockName ? session : null)} renderItem={(session) => <div className="flex items-center justify-between rounded-2xl border border-border bg-card p-4" data-testid={`card-session-${session.id}`}><div><div className="text-sm font-extrabold">{session.name}</div><div className="text-[11px] text-muted-foreground">Saved {new Date(session.createdAt).toLocaleDateString()}</div></div><div className="flex gap-2"><Link href={resumeHref(session)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold" data-testid={`button-resume-session-${session.id}`}>Resume</Link><button onClick={() => remove.mutate(session.id)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive" data-testid={`button-delete-session-${session.id}`}>Delete</button></div></div>} />{!sessions.data?.length && <EmptyState icon={Bookmark} title="No saved sessions" body="Save a practice filter set from the Practice page to quickly resume it later." />}</div></div>;
+  return <div><SectionHeader eyebrow="Your tools" title="Saved Sessions" description="Practice you started but haven't finished is saved here automatically — pick it up exactly where you left off." /><ReviewTabs /><div className="space-y-3"><HierarchyTree<SavedSession> items={sessions.data || []} unit="session" testIdPrefix="session-tree" ungroupedLabel="Other sessions" place={(session) => (session.topicName || session.subjectName || session.moduleName || session.blockName ? session : null)} renderItem={(session) => <div className="flex items-center justify-between rounded-2xl border border-border bg-card p-4" data-testid={`card-session-${session.id}`}><div><div className="text-sm font-extrabold">{session.name}</div><div className="text-[11px] text-muted-foreground">{progressLabel(session)}Saved {new Date(session.updatedAt ?? session.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</div></div><div className="flex gap-2"><Link href={resumeHref(session)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold" data-testid={`button-resume-session-${session.id}`}>Resume</Link><button onClick={() => remove.mutate(session.id)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive" data-testid={`button-delete-session-${session.id}`}>Delete</button></div></div>} />{!sessions.data?.length && <EmptyState icon={Bookmark} title="No saved sessions" body="Start a practice session and leave part-way — your progress will appear here so you can resume it." />}</div></div>;
 }
 
 export default SavedSessions;

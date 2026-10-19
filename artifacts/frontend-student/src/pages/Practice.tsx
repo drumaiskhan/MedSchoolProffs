@@ -33,7 +33,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, savedMcqsApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
+import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, savedMcqsApi, type SessionProgress, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
 
 // Round 3, item 10 (performance) — this was `new QueryClient()` with no
 // options, meaning every query defaulted to `staleTime: 0` and refetched
@@ -53,7 +53,8 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 import { buildStudySet, recordSession } from '@/lib/study';
 import { Badge, EmptyState, PracticeResultCard, Progress, SectionHeader, SkeletonPage, cn, difficultyTone, useFocusMode } from '@/lib/shared';
 import { queryClient, invalidatePracticeQueries } from '@/lib/query-client';
-import { CountdownBadge, useCountdownStore } from '@/lib/countdown';
+import { PracticeTimer, useCountdownStore } from '@/lib/countdown';
+import { useResumeProgress, type ResumeInfo } from '@/components/study/useResumeProgress';
 
 function Practice() {
   const search = useSearch();
@@ -61,6 +62,9 @@ function Practice() {
   const topicId = Number(params.get('topic')) || undefined;
   const pastPaperId = Number(params.get('pastPaperId')) || undefined;
   const mcqId = Number(params.get('mcqId')) || undefined;
+  // ?resume=<saved session id> re-opens an in-progress session exactly where it was left.
+  const resumeId = Number(params.get('resume')) || undefined;
+  const [, navigate] = useLocation();
   // v60: ?set=weak|mistakes&count=N builds a mixed set (weak topics / this device's mistakes).
   const studySet = ['weak', 'mistakes', 'flagged', 'ids'].includes(params.get('set') ?? '') ? (params.get('set') as string) : null;
   const studyIds = (params.get('ids') ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -81,6 +85,10 @@ function Practice() {
   // strictly-linear drill.
   const [answers, setAnswers] = useState<Record<number, string | null>>({});
   const [flaggedIds, setFlaggedIds] = useState<Set<number>>(new Set());
+  // Questions the student has opened and then moved away from — if still unanswered they show yellow (skipped) in the navigator.
+  const [visitedIds, setVisitedIds] = useState<Set<number>>(new Set());
+  // Full length of the countdown (seconds) so the timer ring can show how much is left.
+  const [timerTotal, setTimerTotal] = useState(0);
   // Optimistic overrides on top of the server's saved list (true = saved, false = un-saved).
   const [savedOverride, setSavedOverride] = useState<Record<number, boolean>>({});
   const [panel, setPanel] = useState<'hint' | 'explain' | 'references' | null>(null);
@@ -114,7 +122,9 @@ function Practice() {
   // raw number so it stays meaningful if the difficulty filter shrinks the
   // available pool below 10/20 — 'all' always means "every question left
   // after the difficulty filter", and '10'/'20' are clamped at use-time.
-  const [countMode, setCountMode] = useState<'10' | '20' | 'all'>('20');
+  const [countMode, setCountMode] = useState<'10' | '20' | 'all' | 'custom'>('20');
+  // Student-typed question count (used when countMode === 'custom'); kept as text so the box can be empty while typing.
+  const [customCount, setCustomCount] = useState('');
   // The order actually being played this session, locked in once Start is
   // pressed (see the setup screen below) so the question navigator grid
   // stays stable across answers/prev/next even if shuffle is on. null before
@@ -188,7 +198,53 @@ function Practice() {
   // server figure.
   const trialRemainingNow = trialLimited ? Math.max(0, (trialUsage!.remaining ?? 0) - answeredCount) : null;
 
+  // ---- "Start where I left off": progress is auto-saved into Saved Sessions ----
+  const resumeData = useResumeProgress();
+  const progressOn = useRef(false);            // true only while a resumable session is being played
+  const progressChain = useRef<Promise<unknown>>(Promise.resolve()); // serialises PUT/DELETE so a late save can't resurrect a finished session
+  const resumeHydrated = useRef(false);
+  const canResume = !!(topicId || pastPaperId) && !studySet && !mcqId;
+  const buildProgress = (): SessionProgress | null => {
+    if (!canResume || !orderedMcqs?.length || !mode) return null;
+    const ans: Record<string, string | null> = {};
+    for (const m of orderedMcqs) if (answers[m.id] != null) ans[String(m.id)] = answers[m.id] as string;
+    return { kind: 'progress', topicId, pastPaperId, mcqIds: orderedMcqs.map((m) => m.id), answers: ans, index, mode, remainingSeconds: mode === 'timed' ? Math.max(0, Math.round(countdown.get())) : undefined, answered: Object.keys(ans).length, total: orderedMcqs.length };
+  };
+  const persistProgress = (force = false): Promise<unknown> => {
+    const cfg = buildProgress();
+    if (!cfg || !progressOn.current || (!force && !cfg.answered)) return Promise.resolve();
+    const label = mcqs[0]?.topic || mcqs[0]?.subject || (pastPaperId ? 'Past paper' : 'Practice');
+    progressChain.current = progressChain.current
+      .then(() => savedSessionsApi.saveProgress({ name: `${label} — ${cfg.answered}/${cfg.total} answered`, config: cfg }))
+      .then(() => queryClient.invalidateQueries({ queryKey: ['saved-sessions'] }))
+      .catch(() => { /* best-effort: never interrupt the student's practice */ });
+    return progressChain.current;
+  };
+  const clearProgress = () => {
+    progressOn.current = false;
+    if (!canResume) return;
+    progressChain.current = progressChain.current
+      .then(() => savedSessionsApi.clearProgress({ topicId, pastPaperId }))
+      .then(() => queryClient.invalidateQueries({ queryKey: ['saved-sessions'] }))
+      .catch(() => {});
+  };
+  const resumeFrom = (info: ResumeInfo) => {
+    const byId = new Map(mcqs.map((m) => [m.id, m]));
+    const list = info.progress.mcqIds.map((id) => byId.get(id)).filter((m): m is Mcq => !!m);
+    if (!list.length) return false;
+    const ans: Record<number, string | null> = {};
+    for (const [k, v] of Object.entries(info.progress.answers)) if (byId.has(Number(k)) && v != null) ans[Number(k)] = v;
+    const left = info.progress.remainingSeconds ?? 0;
+    const m: 'timed' | 'untimed' = info.progress.mode === 'timed' && left > 0 ? 'timed' : 'untimed';
+    progressOn.current = true;
+    setOrderedMcqs(list); setAnswers(ans); setIndex(Math.min(info.progress.index, list.length - 1));
+    setPendingMode(m); setMode(m); setRemainingSeconds(m === 'timed' ? left : 0); setTimerTotal(m === 'timed' ? left : 0);
+    sessionStartRef.current = Date.now();
+    return true;
+  };
+
   const finishSession = () => {
+    clearProgress();
     const sessionAnswers = activeMcqs.map((m) => ({ mcqId: m.id, selectedAnswer: answers[m.id] ?? null })).filter((a) => a.selectedAnswer != null);
     const durationSeconds = Math.max(0, Math.round((Date.now() - sessionStartRef.current) / 1000));
     try { recordSession(activeMcqs, answers, topicId); } catch { /* ledger is best-effort */ }
@@ -210,7 +266,7 @@ function Practice() {
     finishSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trialRemainingNow, trialLimited, finished, mode, answeredCount]);
-  const restartSession = () => { setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); askAi.reset(); };
+  const restartSession = () => { progressOn.current = false; setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setVisitedIds(new Set()); setTimerTotal(0); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); setCustomCount(''); askAi.reset(); };
   // Starting a session from the (long) setup screen used to leave the page scrolled down to the
   // question navigator. Land on the first question instead.
   useEffect(() => {
@@ -221,10 +277,27 @@ function Practice() {
   // Redo only the questions missed this session: same screen, same questions, fresh answers, no timer.
   const redoWrong = (wrong: Mcq[]) => {
     if (!wrong.length) return;
-    setOrderedMcqs(wrong); setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setPanel(null); setPaused(false);
+    progressOn.current = false; setOrderedMcqs(wrong); setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setVisitedIds(new Set()); setTimerTotal(0); setPanel(null); setPaused(false);
     setFinished(false); setMode('untimed'); setRemainingSeconds(0); sessionStartRef.current = Date.now(); askAi.reset();
     window.scrollTo?.({ top: 0 });
   };
+
+  // Re-open a saved in-progress session once its questions have loaded (?resume=<id>).
+  useEffect(() => {
+    if (!resumeId || resumeHydrated.current || mode || finished || !mcqs.length || resumeData.isLoading) return;
+    resumeHydrated.current = true;
+    const info = resumeData.bySession.get(resumeId);
+    if (!info || !resumeFrom(info)) toast({ title: "Couldn't restore that session", description: 'It may have been finished or removed. Starting fresh.' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeId, mcqs.length, resumeData.isLoading, mode, finished]);
+  // Auto-save progress shortly after every answer / question change.
+  const answeredNow = Object.values(answers).filter((v) => v != null).length;
+  useEffect(() => {
+    if (!mode || finished || !orderedMcqs || answeredNow === 0) return;
+    const t = setTimeout(() => { void persistProgress(); }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, index, mode, finished, orderedMcqs]);
 
   useEffect(() => {
     if (mode !== 'timed' || finished || paused) return;
@@ -266,7 +339,11 @@ function Practice() {
     // question-count cap and the Test Summary below both work off of.
     const difficultyFilteredMcqs = selectedDifficulty === 'all' ? mcqs : mcqs.filter((m) => (m.difficulty || 'moderate').toLowerCase() === selectedDifficulty);
     const availableCount = difficultyFilteredMcqs.length;
-    const rawEffectiveCount = countMode === 'all' ? availableCount : Math.min(Number(countMode), availableCount);
+    const customN = Math.floor(Number(customCount));
+    const customValid = Number.isFinite(customN) && customN >= 1;
+    const rawEffectiveCount = countMode === 'all' ? availableCount
+      : countMode === 'custom' ? (customValid ? Math.min(customN, availableCount) : 0)
+      : Math.min(Number(countMode), availableCount);
     // Trial-only students can't start a set bigger than what's left of their
     // daily MCQ cap (see lib/trial.ts on the server) — clamp the planned
     // test size down to that, same as the live session force-submits once
@@ -291,7 +368,9 @@ function Practice() {
       setOrderedMcqs(shuffleQuestions ? shuffleArray(picked) : picked);
       setMode(pendingMode);
       setRemainingSeconds(pendingMode === 'timed' ? effectiveMinutes * 60 : 0);
+      setTimerTotal(pendingMode === 'timed' ? effectiveMinutes * 60 : 0);
       sessionStartRef.current = Date.now();
+      progressOn.current = true;
     };
     return <div className="mx-auto max-w-xl">
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-[var(--shadow-md)]">
@@ -347,6 +426,15 @@ function Practice() {
               </div>
             </div>
           </div>}
+          {(() => {
+            const info = (topicId && resumeData.byTopic.get(topicId)) || (pastPaperId && resumeData.byPaper.get(pastPaperId)) || null;
+            if (!info) return null;
+            return <div className="mb-5 flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/[0.07] p-3.5" data-testid="banner-resume-session">
+              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground"><Play size={15} fill="currentColor" /></div>
+              <div className="min-w-0 flex-1"><div className="text-xs font-extrabold">Pick up where you left off</div><div className="text-[11px] text-muted-foreground">{info.answered} of {info.total} answered · starting a new test replaces this</div></div>
+              <button onClick={() => resumeFrom(info)} className="rounded-xl bg-primary px-3.5 py-2 text-xs font-extrabold text-primary-foreground" data-testid="button-resume-session">Resume</button>
+            </div>;
+          })()}
           <h3 className="mb-5 text-sm font-extrabold text-foreground">Configure Your Practice Test</h3>
 
           {difficultyEntries.length > 0 && <div className="mb-5">
@@ -379,6 +467,15 @@ function Practice() {
                 <div className="text-[10px] text-muted-foreground">{opt.sub}</div>
               </button>)}
             </div>
+            <label className={cn('mt-2 flex items-center gap-3 rounded-xl border p-2.5 transition-all', countMode === 'custom' ? 'border-2 border-blue-500 bg-blue-50 dark:bg-blue-500/10' : 'border-border bg-card')}>
+              <span className="text-[11px] font-bold text-muted-foreground">Or enter your own number</span>
+              <input type="number" inputMode="numeric" min={1} max={availableCount} value={customCount}
+                onFocus={() => setCountMode('custom')}
+                onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setCustomCount(v && Number(v) > availableCount ? String(availableCount) : v); setCountMode('custom'); }}
+                placeholder={`1–${availableCount}`}
+                className="ml-auto h-9 w-24 rounded-lg border border-border bg-background px-2 text-center text-sm font-extrabold outline-none focus:border-blue-500" data-testid="input-custom-question-count" />
+            </label>
+            {countMode === 'custom' && !customValid && <p className="mt-1.5 text-[10px] font-bold text-destructive" data-testid="text-custom-count-hint">Enter how many questions you want (1–{availableCount}).</p>}
           </div>
 
           <div className="mb-5">
@@ -477,7 +574,7 @@ function Practice() {
     if (answers[current.id] != null) return;
     setAnswers((prev) => ({ ...prev, [current.id]: option }));
   };
-  const goTo = (i: number) => { setIndex(i); setPanel(null); askAi.reset(); };
+  const goTo = (i: number) => { if (current) setVisitedIds((prev) => prev.has(current.id) ? prev : new Set(prev).add(current.id)); setIndex(i); setPanel(null); askAi.reset(); };
   // Flag icon does double duty: it drives the session-local "flag for
   // review" highlight in the number grid (like a real exam engine), AND —
   // when turning a flag ON — persists a report via flaggedMcqsApi so it
@@ -497,27 +594,52 @@ function Practice() {
     setSavedOverride((prev) => ({ ...prev, [id]: save }));
     saveMcq.mutate({ mcqId: id, save });
   };
-  const stateForIndex = (i: number): 'current' | 'answered' | 'flagged' | 'new' => {
-    if (i === index) return 'current';
+  type NavState = 'current' | 'correct' | 'wrong' | 'answered' | 'skipped' | 'new';
+  // Green = correct, red = wrong, yellow = skipped (opened but left unanswered), grey = not seen yet.
+  const stateForIndex = (i: number): NavState => {
     const id = activeMcqs[i].id;
-    if (flaggedIds.has(id)) return 'flagged';
-    if (answers[id] != null) return 'answered';
-    return 'new';
+    const picked = answers[id];
+    if (i === index) return 'current';
+    if (picked != null) {
+      const correct = activeMcqs[i].correctAnswer;
+      if (correct == null) return 'answered';
+      return picked === correct ? 'correct' : 'wrong';
+    }
+    return visitedIds.has(id) ? 'skipped' : 'new';
+  };
+  // The current question keeps its result colour (so you still see green/red after answering) plus a ring.
+  const currentResult = (): NavState => {
+    const picked = answers[current.id];
+    if (picked == null) return 'new';
+    if (current.correctAnswer == null) return 'answered';
+    return picked === current.correctAnswer ? 'correct' : 'wrong';
+  };
+  const navBubbleClass = (st: NavState, i: number) => {
+    const res: NavState = st === 'current' ? currentResult() : st;
+    return cn('relative grid aspect-square place-items-center rounded-xl text-[12px] font-extrabold tabular-nums transition-all active:scale-90',
+      res === 'correct' && 'bg-[#2f9e6e] text-white shadow-[0_2px_6px_-1px_rgba(47,158,110,.55)]',
+      res === 'wrong' && 'bg-[#e0584a] text-white shadow-[0_2px_6px_-1px_rgba(224,88,74,.55)]',
+      res === 'skipped' && 'bg-[#f2b93b] text-[#5b3d00] shadow-[0_2px_6px_-1px_rgba(242,185,59,.55)]',
+      res === 'answered' && 'bg-[#32647b] text-white',
+      res === 'new' && 'bg-muted text-muted-foreground',
+      st === 'current' && 'ring-2 ring-primary ring-offset-2 ring-offset-card scale-105');
   };
 
   const controlPanel = <div className="space-y-3">
     <div className="rounded-2xl border border-border bg-card p-3.5">
-      <div className="flex items-center justify-between text-xs font-bold"><span className="flex items-center gap-1.5"><Clock3 size={13} /> {mode === 'timed' ? 'Timer' : 'Untimed'}</span>{mode === 'timed' && <CountdownBadge store={countdown} className="font-mono-app rounded-full px-2.5 py-1 text-[11px]" warnClass="bg-[#fff1ed] text-[#a34c3e]" okClass="bg-[#d7eee4] text-[#287058]" />}</div>
+      {mode === 'timed' ? <PracticeTimer store={countdown} total={timerTotal} paused={paused} /> : <div className="flex items-center gap-2 text-xs font-bold"><span className="grid size-8 place-items-center rounded-full bg-muted"><Clock3 size={14} /></span> Untimed practice</div>}
       <div className="mt-2.5 flex gap-1.5">
         <button onClick={() => setPaused((p) => !p)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#32647b] px-2 py-2 text-[11px] font-bold text-white" data-testid="button-pause-session">{paused ? <><Zap size={12} /> Resume</> : <><Clock3 size={12} /> Pause</>}</button>
         <button onClick={saveQuestion} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-bold', isSaved(current.id) ? 'bg-[#e6dcf3] text-[#6a4c93]' : 'bg-gradient-to-r from-[#6a4c93] to-[#815276] text-white')} data-testid="button-save-question"><Bookmark size={12} className={isSaved(current.id) ? 'fill-current' : ''} /> {isSaved(current.id) ? 'Saved' : 'Save'}</button>
       </div>
+      {canResume && <button onClick={() => { void persistProgress(true).then(() => { progressOn.current = false; navigate('/saved-sessions'); }); }} className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-border px-2 py-2 text-[11px] font-bold text-foreground hover:bg-muted" data-testid="button-save-exit-session"><Bookmark size={12} /> Save &amp; continue later</button>}
       <button onClick={finishSession} className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#c0503f]/30 px-2 py-2 text-[11px] font-bold text-[#c0503f] hover:bg-[#fff1ed]" data-testid="button-exit-session"><X size={12} /> Exit &amp; submit</button>
     </div>
     <div className="rounded-2xl border border-border bg-card p-3.5">
       <div className="mb-2.5 text-[11px] font-bold text-muted-foreground">Question Navigator</div>
-      <div className="grid grid-cols-5 gap-1.5">{activeMcqs.map((m, i) => { const st = stateForIndex(i); return <button key={m.id} onClick={() => goTo(i)} className={cn('grid aspect-square place-items-center rounded-lg text-[11px] font-bold transition-colors', st === 'current' && 'border-2 border-primary bg-card text-primary', st === 'answered' && 'bg-[#32647b] text-white', st === 'flagged' && 'bg-[#e5a952] text-white', st === 'new' && 'bg-muted text-muted-foreground')} data-testid={`button-goto-question-${i}`}>{i + 1}</button>; })}</div>
-      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground"><span className="flex items-center gap-1"><span className="size-2 rounded-full bg-[#32647b]" /> Answered</span><span className="flex items-center gap-1"><span className="size-2 rounded-full border-2 border-primary" /> Current</span><span className="flex items-center gap-1"><span className="size-2 rounded-full bg-muted" /> Not Answered</span><span className="flex items-center gap-1"><span className="size-2 rounded-full bg-[#e5a952]" /> Bookmarked</span></div>
+      <div className="grid grid-cols-6 gap-2 sm:grid-cols-8 lg:grid-cols-5 lg:gap-1.5">{activeMcqs.map((m, i) => { const st = stateForIndex(i); return <button key={m.id} onClick={() => goTo(i)} className={navBubbleClass(st, i)} aria-label={`Question ${i + 1}: ${st}`} data-testid={`button-goto-question-${i}`}>{i + 1}{flaggedIds.has(m.id) && <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-[#8b5cf6]" />}</button>; })}</div>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 text-[10px] font-semibold text-muted-foreground"><span className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-[#2f9e6e]" /> Correct</span><span className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-[#e0584a]" /> Wrong</span><span className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-[#f2b93b]" /> Skipped</span><span className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-muted ring-1 ring-border" /> Not seen</span><span className="flex items-center gap-1"><span className="size-2.5 rounded-full ring-2 ring-primary" /> Current</span><span className="flex items-center gap-1"><span className="size-2.5 rounded-full bg-[#8b5cf6]" /> Flagged</span></div>
+
     </div>
   </div>;
 
@@ -536,7 +658,7 @@ function Practice() {
   // page doesn't need a second exit affordance duplicating it — "Exit &
   // submit" in the side panel is the one deliberate way to leave mid-set.
   const breadcrumbParts = [current.module, current.subject, current.topic].filter(Boolean);
-  return <div className="max-w-6xl">
+  return <div className="-mx-5 -my-6 min-h-[calc(100dvh-3.5rem)] px-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2.5 md:-mx-10 md:-my-8 md:px-8 md:pb-8 md:pt-6 lg:mx-auto lg:my-0 lg:max-w-none lg:px-6" data-testid="practice-live">
     {breadcrumbParts.length > 0 && <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground" data-testid="text-practice-breadcrumb">{breadcrumbParts.map((part, i) => <span key={i} className="flex items-center gap-1.5">{i > 0 && <ChevronRight size={11} />}<span>{part}</span></span>)}</div>}
     <div className="flex flex-wrap items-center justify-between gap-2"><h1 className="font-display text-2xl">Practice MCQs</h1><span className="font-mono-app text-[11px] text-muted-foreground">{index + 1} / {activeMcqs.length}</span></div>
     {/* Top progress bar — the single biggest whitespace cut vs. before: this
@@ -544,13 +666,13 @@ function Practice() {
         question, pushing everything down a full card's height before you
         even reached the question text. */}
     <div className="mt-2.5 mb-4 flex items-center gap-3"><div className="flex-1"><Progress value={percentAnswered} /></div><span className="shrink-0 text-[10px] font-bold text-muted-foreground">{percentAnswered}% answered</span>{trialLimited && <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-extrabold text-white shadow-[0_2px_6px_-1px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.35)]', trialRemainingNow === 0 ? 'bg-gradient-to-br from-[#e0654f] to-[#a3402f]' : 'bg-gradient-to-br from-[#f5b25a] to-[#c17f2a]')} data-testid="badge-trial-mcqs-left"><Zap size={10} className="fill-white/90" /> {trialRemainingNow} left today</span>}</div>
-    <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
-      <div className="order-1 overflow-hidden rounded-3xl border border-border bg-card shadow-[var(--shadow-2xs)]">
-        <div className="bg-gradient-to-br from-indigo-50 via-card to-card px-5 pt-5 sm:px-6 sm:pt-6">
+    <div className="grid gap-3 sm:gap-6 lg:grid-cols-[1fr_300px]">
+      <div className="order-1 overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-2xs)] sm:rounded-3xl">
+        <div className="bg-gradient-to-br from-indigo-50 via-card to-card px-3.5 pt-4 sm:px-6 sm:pt-6">
         <div className="flex items-center justify-between"><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge><button onClick={toggleFlag} className={cn('rounded-lg p-1.5 transition-transform hover:scale-110', flaggedIds.has(current.id) ? 'text-[#e5a952]' : 'text-muted-foreground hover:text-foreground')} data-testid="button-flag-question"><Flag size={17} fill={flaggedIds.has(current.id) ? 'currentColor' : 'none'} /></button></div>
-        <h2 className="mt-4 max-w-2xl pb-5 text-base font-extrabold leading-6 tracking-[-.025em] sm:text-lg sm:leading-7">{current.question}</h2>
+        <h2 className="mt-3 max-w-none pb-4 text-base font-extrabold leading-6 tracking-[-.025em] sm:text-lg sm:leading-7">{current.question}</h2>
         </div>
-        <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+        <div className="px-3.5 pb-4 sm:px-6 sm:pb-6">
         {/* Compact option rows (py-2.5 instead of p-4, tighter gap) so a
             5-option question plus the hint/explain/references row and the
             prev/next buttons fit one viewport on a normal laptop screen

@@ -454,7 +454,8 @@ export interface PastPaper { id: number; title: string; examBoard: string; year:
 /** Curriculum placement, resolved server-side by walking up from the topic. All optional so an older API build still renders. */
 export interface Placement { blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null }
 export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
-export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }
+export interface SessionProgress { kind?: 'progress'; topicId?: number; pastPaperId?: number; mcqIds: number[]; answers: Record<string, string | null>; index: number; mode: 'timed' | 'untimed'; remainingSeconds?: number; answered?: number; total?: number }
+export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string; updatedAt?: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
 export interface SavedMcq extends Placement { id: number; userId: number; mcqId: number; createdAt: string; question: string | null; path: string | null; mcqDeleted: boolean }
 export interface FeedbackEntry { id: number; userId: number | null; category: string; message: string; status: 'open' | 'replied' | 'reviewed'; rating: number | null; featured: boolean; createdAt: string; user: { name: string; email: string } | null }
@@ -667,6 +668,9 @@ export const savedSessionsApi = {
   list: () => request<SavedSession[]>('/saved-sessions'),
   create: (body: { name: string; config: Record<string, unknown> }) => request<SavedSession>('/saved-sessions', { method: 'POST', body: JSON.stringify(body) }),
   remove: (id: number) => request<{ ok: true }>(`/saved-sessions/${id}`, { method: 'DELETE' }),
+  // "Start where I left off": one snapshot per topic / past paper, replaced on every save.
+  saveProgress: (body: { name: string; config: SessionProgress }) => request<SavedSession>('/saved-sessions/progress', { method: 'PUT', body: JSON.stringify(body) }),
+  clearProgress: (key: { topicId?: number; pastPaperId?: number }) => request<{ ok: true }>(`/saved-sessions/progress?${new URLSearchParams(Object.entries(key).filter(([, v]) => v).map(([k, v]) => [k, String(v)]))}`, { method: 'DELETE' }),
 };
 
 export const mcqPlacementsApi = {

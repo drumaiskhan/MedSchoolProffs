@@ -198,20 +198,20 @@ function TakeExam() {
     setQueue(rest); setSkipped(sk); persist(rest, sk, answers);
   };
 
-  return <div className="mx-auto max-w-4xl select-none px-1 sm:px-0" onCopy={(e) => e.preventDefault()}>
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5">
+  return <div className="-mx-5 -my-6 min-h-[calc(100dvh-3.5rem)] select-none px-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2.5 md:-mx-10 md:-my-8 md:px-8 md:pb-8 md:pt-6 lg:mx-auto lg:my-0 lg:max-w-4xl lg:px-0" data-testid="exam-live" onCopy={(e) => e.preventDefault()}>
+    <div className="mb-3 flex items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3.5 py-2.5 sm:mb-5 sm:px-5">
       <div className="min-w-0"><div className="truncate text-xs font-extrabold" data-testid="text-exam-title">{examTitle}</div>
         <div className="text-[11px] text-muted-foreground" data-testid="text-exam-progress">{revisit ? `Skipped question ${revisitNumber} of ${skippedLeft + (revisitNumber - 1)}` : `Question ${Math.min(doneCount + 1, total)} of ${total}`} · {answeredCount} answered{skippedLeft > 0 ? ` · ${skippedLeft} skipped` : ''}</div></div>
-      <ExamClock store={clock} />
+      <ExamClock store={clock} total={(load.data?.durationMinutes ?? 0) * 60} />
     </div>
-    <div className="mb-4 flex gap-0.5" aria-hidden="true">{session.questions.map((q) => {
+    <div className="mb-4 flex items-center gap-0.5" aria-hidden="true">{session.questions.map((q) => {
       const finished = !queue.includes(q.id);
       const isCurrent = q.id === current.id;
-      return <span key={q.id} className={cn('h-1.5 flex-1 rounded-full', isCurrent ? 'bg-primary' : finished ? (answers[q.id] != null ? 'bg-primary/45' : 'bg-muted-foreground/30') : skipped.includes(q.id) ? 'bg-amber-400/80' : 'bg-muted')} />;
+      return <span key={q.id} className={cn('h-1.5 flex-1 rounded-full', isCurrent ? 'h-2 bg-primary ring-2 ring-primary/30' : finished ? (answers[q.id] != null ? 'bg-[#32647b]' : 'bg-muted-foreground/30') : skipped.includes(q.id) ? 'bg-[#f2b93b]' : 'bg-muted')} />;
     })}</div>
     {revisit && <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-xs" data-testid="banner-exam-skipped-round"><SkipForward size={15} className="mt-0.5 shrink-0 text-amber-500" /><div><div className="font-extrabold">Skipped question — final attempt</div><div className="mt-0.5 text-muted-foreground">This can't be skipped again. Answer it or leave it blank, then press Next. The exam submits automatically after the last question.</div></div></div>}
-    <div className="rounded-3xl border border-border bg-card p-6 md:p-9" key={current.id}><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge><h2 className="mt-6 text-xl font-extrabold leading-8">{current.question}</h2>
-      <div className="mt-7 space-y-3">{current.options.map((opt, i) => <button key={opt} disabled={saving} onClick={() => selectAnswer(opt)} className={cn('flex w-full items-center gap-3 rounded-xl border p-4 text-left text-sm transition-colors', selected === opt ? 'border-primary bg-[#e6f3ed]' : 'border-border hover:bg-muted')} data-testid={`button-exam-answer-${i}`}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted font-mono-app text-[11px]">{String.fromCharCode(65 + i)}</span>{opt}</button>)}</div></div>
+    <div className="rounded-2xl border border-border bg-card p-4 sm:rounded-3xl sm:p-6 md:p-9" key={current.id}><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge><h2 className="mt-4 text-lg font-extrabold leading-7 sm:mt-6 sm:text-xl sm:leading-8">{current.question}</h2>
+      <div className="mt-5 space-y-2.5 sm:mt-7 sm:space-y-3">{current.options.map((opt, i) => <button key={opt} disabled={saving} onClick={() => selectAnswer(opt)} className={cn('flex w-full items-center gap-3 rounded-xl border p-4 text-left text-sm transition-colors', selected === opt ? 'border-primary bg-[#e6f3ed]' : 'border-border hover:bg-muted')} data-testid={`button-exam-answer-${i}`}><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-muted font-mono-app text-[11px]">{String.fromCharCode(65 + i)}</span>{opt}</button>)}</div></div>
     <div className="mt-5 flex items-center justify-between gap-3">
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><LockKeyhole size={12} /><span>Forward only — you can't go back.</span></div>
       <div className="flex gap-2">

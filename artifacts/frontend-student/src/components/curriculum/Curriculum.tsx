@@ -14,6 +14,7 @@ import { useEffect, useId, useState, type CSSProperties, type ReactNode } from '
 import { Link } from 'wouter';
 import { ArrowRight, Check, ChevronRight, Play, Search, X } from 'lucide-react';
 import { useTilt } from '@/lib/fx';
+import { useResumeProgress } from '@/components/study/useResumeProgress';
 import { Count, SegTabs } from '@/lib/fx3d';
 import { SubjectIcon, resolveSubjectIcon } from '@/lib/subject-icons';
 
@@ -66,18 +67,23 @@ export function SubjectCard({ subject, index }: { subject: SubjectRow; index: nu
 // ---------------------------------------------------------------------------
 export function TopicRow({ topic, index, isNext }: { topic: TopicItem; index: number; isNext: boolean }) {
   const done = topic.completed;
+  // A paused / auto-saved session for this topic → the row becomes "Resume 7/20".
+  const resume = useResumeProgress().byTopic.get(topic.id);
+  const href = resume ? `/practice?topic=${topic.id}&resume=${resume.sessionId}` : `/practice?topic=${topic.id}`;
   return <li className={cx('cu-topic', done && 'is-done', isNext && 'is-next')} style={vars({ '--i': Math.min(index, 14) })}>
     <span className="cu-node" aria-hidden="true">
       {done ? <Check size={14} strokeWidth={3.2} /> : isNext ? <Play size={11} fill="currentColor" strokeWidth={0} /> : <i />}
     </span>
-    <TiltLink href={`/practice?topic=${topic.id}`} testId={`row-topic-${topic.id}`} className="cu-plate" style={vars({ '--tilt': 2.4 })}>
+    <TiltLink href={href} testId={`row-topic-${topic.id}`} className="cu-plate" style={vars({ '--tilt': 2.4 })}>
       <span className="cu-plate__text">
         <span className="cu-plate__name">{topic.name}</span>
-        <span className="cu-plate__meta">{topic.questionCount} practice questions</span>
+        <span className="cu-plate__meta">{resume ? `${resume.answered}/${resume.total} answered · pick up where you left off` : `${topic.questionCount} practice questions`}</span>
       </span>
-      {isNext && <span className="cu-chip">Up next</span>}
-      <span className="cu-go">{done ? 'Review' : 'Start'}<ArrowRight size={13} /></span>
+      {isNext && !resume && <span className="cu-chip">Up next</span>}
+      {resume && <span className="cu-chip" data-testid={`chip-resume-${topic.id}`}>In progress</span>}
+      <span className="cu-go">{resume ? 'Resume' : done ? 'Review' : 'Start'}<ArrowRight size={13} /></span>
     </TiltLink>
+    {resume && <Link href={`/practice?topic=${topic.id}`} className="ml-2 shrink-0 self-center text-[10px] font-bold text-muted-foreground underline-offset-2 hover:underline" data-testid={`link-restart-topic-${topic.id}`}>Start over</Link>}
   </li>;
 }
 

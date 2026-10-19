@@ -156,13 +156,13 @@ function TakeOspeExam() {
 
   const imgUrl = current.imagePath ? (current.imageUrl ?? resolveUploadUrl(current.imagePath)) : null;
 
-  return <div className="mx-auto max-w-4xl px-1 sm:px-0">
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5">
+  return <div className="-mx-5 -my-6 min-h-[calc(100dvh-3.5rem)] px-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2.5 md:-mx-10 md:-my-8 md:px-8 md:pb-8 md:pt-6 lg:mx-auto lg:my-0 lg:max-w-4xl lg:px-0" data-testid="ospe-live">
+    <div className="mb-3 flex items-center justify-between gap-2 rounded-2xl border border-border bg-card px-3.5 py-2.5 sm:mb-5 sm:px-5">
       <div className="min-w-0"><div className="truncate text-xs font-extrabold" data-testid="text-ospe-exam-title">{session.examTitle}</div><div className="text-[11px] text-muted-foreground">Station {index + 1} / {session.stations.length} · {answeredCount} answered</div></div>
-      <ExamClock store={clock} />
+      <ExamClock store={clock} total={(load.data?.durationMinutes ?? 0) * 60} />
     </div>
 
-    <div className="rounded-3xl border border-border bg-card p-6 md:p-9">
+    <div className="rounded-2xl border border-border bg-card p-4 sm:rounded-3xl sm:p-6 md:p-9">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><Badge tone="blue">{current.answerType === 'MCQ' ? 'Select the correct answer' : current.answerType === 'LABELING' ? 'Identify each labelled point' : 'Written answer · AI graded'}</Badge>
           {current.marks != null && <span className="ml-2 text-[11px] font-bold text-muted-foreground">{current.marks} mark{current.marks === 1 ? '' : 's'}{current.timeLimitSeconds ? ` · suggested ${Math.round(current.timeLimitSeconds / 60)} min` : ''}</span>}
