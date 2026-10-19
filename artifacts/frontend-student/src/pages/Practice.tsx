@@ -51,7 +51,7 @@ import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiReq
 // override these defaults per-query — this only changes the fallback for
 // queries that didn't specify anything.
 import { buildStudySet, recordSession } from '@/lib/study';
-import { Badge, EmptyState, PracticeResultCard, Progress, SectionHeader, SkeletonPage, cn, difficultyTone, useFocusMode } from '@/lib/shared';
+import { Badge, EmptyState, PracticeResultCard, SectionHeader, SkeletonPage, cn, difficultyTone, useFocusMode } from '@/lib/shared';
 import { queryClient, invalidatePracticeQueries } from '@/lib/query-client';
 import { PracticeTimer, useCountdownStore } from '@/lib/countdown';
 import { useResumeProgress, type ResumeInfo } from '@/components/study/useResumeProgress';
@@ -627,7 +627,11 @@ function Practice() {
 
   const controlPanel = <div className="space-y-3">
     <div className="rounded-2xl border border-border bg-card p-3.5">
-      {mode === 'timed' ? <PracticeTimer store={countdown} total={timerTotal} paused={paused} /> : <div className="flex items-center gap-2 text-xs font-bold"><span className="grid size-8 place-items-center rounded-full bg-muted"><Clock3 size={14} /></span> Untimed practice</div>}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">{mode === 'timed' ? <PracticeTimer store={countdown} total={timerTotal} paused={paused} /> : <div className="flex items-center gap-2 text-xs font-bold"><span className="grid size-8 place-items-center rounded-full bg-muted"><Clock3 size={14} /></span> Untimed practice</div>}</div>
+        <div className="shrink-0 text-right" data-testid="text-practice-count"><div className="font-mono-app text-sm font-extrabold tabular-nums">{index + 1} / {activeMcqs.length}</div><div className="text-[10px] font-bold text-muted-foreground">{percentAnswered}% answered</div></div>
+      </div>
+      {trialLimited && <div className="mt-2"><span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-extrabold text-white shadow-[0_2px_6px_-1px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.35)]', trialRemainingNow === 0 ? 'bg-gradient-to-br from-[#e0654f] to-[#a3402f]' : 'bg-gradient-to-br from-[#f5b25a] to-[#c17f2a]')} data-testid="badge-trial-mcqs-left"><Zap size={10} className="fill-white/90" /> {trialRemainingNow} left today</span></div>}
       <div className="mt-2.5 flex gap-1.5">
         <button onClick={() => setPaused((p) => !p)} className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#32647b] px-2 py-2 text-[11px] font-bold text-white" data-testid="button-pause-session">{paused ? <><Zap size={12} /> Resume</> : <><Clock3 size={12} /> Pause</>}</button>
         <button onClick={saveQuestion} className={cn('flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[11px] font-bold', isSaved(current.id) ? 'bg-[#e6dcf3] text-[#6a4c93]' : 'bg-gradient-to-r from-[#6a4c93] to-[#815276] text-white')} data-testid="button-save-question"><Bookmark size={12} className={isSaved(current.id) ? 'fill-current' : ''} /> {isSaved(current.id) ? 'Saved' : 'Save'}</button>
@@ -658,18 +662,11 @@ function Practice() {
   // page doesn't need a second exit affordance duplicating it — "Exit &
   // submit" in the side panel is the one deliberate way to leave mid-set.
   const breadcrumbParts = [current.module, current.subject, current.topic].filter(Boolean);
-  return <div className="-mx-5 -my-6 min-h-[calc(100dvh-3.5rem)] px-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2.5 md:-mx-10 md:-my-8 md:px-8 md:pb-8 md:pt-6 lg:mx-auto lg:my-0 lg:max-w-none lg:px-6" data-testid="practice-live">
-    {breadcrumbParts.length > 0 && <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground" data-testid="text-practice-breadcrumb">{breadcrumbParts.map((part, i) => <span key={i} className="flex items-center gap-1.5">{i > 0 && <ChevronRight size={11} />}<span>{part}</span></span>)}</div>}
-    <div className="flex flex-wrap items-center justify-between gap-2"><h1 className="font-display text-2xl">Practice MCQs</h1><span className="font-mono-app text-[11px] text-muted-foreground">{index + 1} / {activeMcqs.length}</span></div>
-    {/* Top progress bar — the single biggest whitespace cut vs. before: this
-        replaces a whole separate "Timer" card that used to sit above the
-        question, pushing everything down a full card's height before you
-        even reached the question text. */}
-    <div className="mt-2.5 mb-4 flex items-center gap-3"><div className="flex-1"><Progress value={percentAnswered} /></div><span className="shrink-0 text-[10px] font-bold text-muted-foreground">{percentAnswered}% answered</span>{trialLimited && <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-extrabold text-white shadow-[0_2px_6px_-1px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.35)]', trialRemainingNow === 0 ? 'bg-gradient-to-br from-[#e0654f] to-[#a3402f]' : 'bg-gradient-to-br from-[#f5b25a] to-[#c17f2a]')} data-testid="badge-trial-mcqs-left"><Zap size={10} className="fill-white/90" /> {trialRemainingNow} left today</span>}</div>
+  return <div className="-mx-5 -my-6 min-h-[calc(100dvh-3.5rem)] px-2.5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-0 md:-mx-10 md:-my-8 md:px-8 md:pb-8 md:pt-0 lg:mx-auto lg:my-0 lg:max-w-none lg:px-6" data-testid="practice-live">
     <div className="grid gap-3 sm:gap-6 lg:grid-cols-[1fr_300px]">
       <div className="order-1 overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-2xs)] sm:rounded-3xl">
         <div className="bg-gradient-to-br from-indigo-50 via-card to-card px-3.5 pt-4 sm:px-6 sm:pt-6">
-        <div className="flex items-center justify-between"><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge><button onClick={toggleFlag} className={cn('rounded-lg p-1.5 transition-transform hover:scale-110', flaggedIds.has(current.id) ? 'text-[#e5a952]' : 'text-muted-foreground hover:text-foreground')} data-testid="button-flag-question"><Flag size={17} fill={flaggedIds.has(current.id) ? 'currentColor' : 'none'} /></button></div>
+        <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 flex-wrap items-center gap-2"><Badge tone={difficultyTone(current.difficulty)}>{current.difficulty}</Badge>{breadcrumbParts.length > 0 && <div className="flex min-w-0 flex-wrap items-center gap-1 text-[11px] font-semibold text-muted-foreground" data-testid="text-practice-breadcrumb">{breadcrumbParts.map((part, i) => <span key={i} className="flex items-center gap-1">{i > 0 && <ChevronRight size={11} />}<span>{part}</span></span>)}</div>}</div><button onClick={toggleFlag} className={cn('rounded-lg p-1.5 transition-transform hover:scale-110', flaggedIds.has(current.id) ? 'text-[#e5a952]' : 'text-muted-foreground hover:text-foreground')} data-testid="button-flag-question"><Flag size={17} fill={flaggedIds.has(current.id) ? 'currentColor' : 'none'} /></button></div>
         <h2 className="mt-3 max-w-none pb-4 text-base font-extrabold leading-6 tracking-[-.025em] sm:text-lg sm:leading-7">{current.question}</h2>
         </div>
         <div className="px-3.5 pb-4 sm:px-6 sm:pb-6">
