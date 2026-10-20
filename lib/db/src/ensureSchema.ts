@@ -505,6 +505,8 @@ CREATE TABLE IF NOT EXISTS med_notebook_entries (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE med_notebook_entries ADD COLUMN IF NOT EXISTS ink TEXT;
+
 CREATE TABLE IF NOT EXISTS med_book_highlights (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL,

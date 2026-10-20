@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, notebookEntriesTable, savedSessionsTable, flaggedMcqsTable, savedMcqsTable, feedbackTable, feedbackRepliesTable, notificationsTable, usersTable, mcqsTable, topicsTable, subjectsTable, modulesTable, blocksTable } from "@workspace/db";
 import { requireAuth, requireAdmin, isAdminRole } from "../middlewares/auth";
@@ -66,8 +66,22 @@ router.post("/mcq-placements", requireAuth, async (req, res): Promise<void> => {
   res.json(parsed.data.ids.map((id) => ({ id, ...(map.get(id) ?? NO_PLACEMENT), found: map.has(id) })));
 });
 
+// The list never carries the (potentially large) handwriting JSON — only `hasInk`. A note's ink is fetched on demand
+// from GET /notebook/:id (previews load lazily). POST/PATCH likewise answer without echoing the ink back.
+const { ink: _inkCol, ...NOTE_COLS } = getTableColumns(notebookEntriesTable);
+const withoutInk = <T extends { ink?: string | null }>(row: T): Omit<T, "ink"> & { hasInk: boolean } => {
+  const { ink, ...rest } = row;
+  return { ...rest, hasInk: !!ink };
+};
+
+router.get("/notebook/:id", requireAuth, async (req, res): Promise<void> => {
+  const [row] = await db.select().from(notebookEntriesTable).where(and(eq(notebookEntriesTable.id, Number(req.params.id)), eq(notebookEntriesTable.userId, req.user!.id)));
+  if (!row) { res.status(404).json({ error: "Note not found" }); return; }
+  res.json({ ...row, hasInk: !!row.ink });
+});
+
 router.get("/notebook", requireAuth, async (req, res): Promise<void> => {
-  const rows = await db.select().from(notebookEntriesTable).where(eq(notebookEntriesTable.userId, req.user!.id)).orderBy(desc(notebookEntriesTable.updatedAt));
+  const rows = await db.select({ ...NOTE_COLS, hasInk: sql<boolean>`(${notebookEntriesTable.ink} is not null)` }).from(notebookEntriesTable).where(eq(notebookEntriesTable.userId, req.user!.id)).orderBy(desc(notebookEntriesTable.updatedAt));
   // Notes linked to a question are filed under that question's Block > Module > Subject > Topic (additive fields).
   const linkedIds = [...new Set(rows.map((r) => r.mcqId).filter((x): x is number => x !== null))];
   const places = await placementsForMcqs(linkedIds);
@@ -77,21 +91,37 @@ router.get("/notebook", requireAuth, async (req, res): Promise<void> => {
   res.json(rows.map((r) => ({ ...r, ...(r.mcqId !== null ? (places.get(r.mcqId) ?? NO_PLACEMENT) : NO_PLACEMENT), question: r.mcqId !== null ? (questions.get(r.mcqId) ?? null) : null, mcqDeleted: r.mcqId !== null && !questions.has(r.mcqId) })));
 });
 
-const NotebookBody = z.object({ title: z.string().max(160).optional(), content: z.string().min(1).max(10000), mcqId: z.number().int().positive().optional() });
+// v89: a note is typed text, handwriting (`ink` = JSON from the frontend ink engine), or both. Handwritten-only notes
+// have empty `content`. `ink: null` on PATCH clears the handwriting.
+const INK_MAX = 3_000_000;
+const NotebookBody = z.object({
+  title: z.string().max(160).optional(),
+  content: z.string().max(10000).optional(),
+  ink: z.string().max(INK_MAX).nullable().optional(),
+  mcqId: z.number().int().positive().optional(),
+});
+const validInk = (raw: string): boolean => {
+  try { const o = JSON.parse(raw); return !!o && o.v === 1 && Array.isArray(o.strokes); } catch { return false; }
+};
 
 router.post("/notebook", requireAuth, async (req, res): Promise<void> => {
   const parsed = NotebookBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
-  const [row] = await db.insert(notebookEntriesTable).values({ userId: req.user!.id, title: parsed.data.title ?? "", content: parsed.data.content, mcqId: parsed.data.mcqId }).returning();
-  res.status(201).json(row);
+  const content = parsed.data.content ?? "";
+  const ink = parsed.data.ink ?? null;
+  if (!content.trim() && !ink) { res.status(400).json({ error: "Write or type something first" }); return; }
+  if (ink && !validInk(ink)) { res.status(400).json({ error: "Invalid handwriting data" }); return; }
+  const [row] = await db.insert(notebookEntriesTable).values({ userId: req.user!.id, title: parsed.data.title ?? "", content, ink, mcqId: parsed.data.mcqId }).returning();
+  res.status(201).json(withoutInk(row));
 });
 
 router.patch("/notebook/:id", requireAuth, async (req, res): Promise<void> => {
   const parsed = NotebookBody.partial().safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message }); return; }
+  if (parsed.data.ink && !validInk(parsed.data.ink)) { res.status(400).json({ error: "Invalid handwriting data" }); return; }
   const [row] = await db.update(notebookEntriesTable).set(parsed.data).where(and(eq(notebookEntriesTable.id, Number(req.params.id)), eq(notebookEntriesTable.userId, req.user!.id))).returning();
   if (!row) { res.status(404).json({ error: "Note not found" }); return; }
-  res.json(row);
+  res.json(withoutInk(row));
 });
 
 router.delete("/notebook/:id", requireAuth, async (req, res): Promise<void> => {

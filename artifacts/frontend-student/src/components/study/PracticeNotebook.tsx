@@ -6,7 +6,8 @@
 // questions: the text switches to that question's note.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Check, ChevronDown, Loader2, Minus, NotebookPen, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Minus, NotebookPen, PenLine, Plus, Trash2, X } from 'lucide-react';
+import { InkNoteSheet, InkPreview } from '@/components/study/InkNote';
 import { notebookApi, type NotebookEntry } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 import { cn } from '@/lib/shared';
@@ -22,6 +23,7 @@ export function PracticeNotebook({ mcqId, questionText, questionNumber }: { mcqI
   const [status, setStatus] = useState<Status>('idle');
   const [pickedId, setPickedId] = useState<number | null>(null); // which of this question's notes is being edited (null = newest/new)
   const [creatingNew, setCreatingNew] = useState(false);
+  const [inkOpen, setInkOpen] = useState(false);   // v89: full-screen handwriting page for this question's note
 
   const entries = useQuery({ queryKey: ['notebook'], queryFn: notebookApi.list, staleTime: 60_000 });
   const mine = useMemo(
@@ -130,6 +132,9 @@ export function PracticeNotebook({ mcqId, questionText, questionNumber }: { mcqI
     } catch { setStatus('error'); }
   };
 
+  // Handwrite: flush any typed text first, then open the Journal-style page on the same note (created on the first stroke).
+  const handwrite = async () => { await flush(); setInkOpen(true); };
+
   const startNew = async () => { await flush(); createdId.current.delete(mcqId); setCreatingNew(true); setPickedId(null); setText(''); savedText.current = ''; setStatus('idle'); };
   const close = async () => { await flush(); setView('closed'); };
 
@@ -159,7 +164,9 @@ export function PracticeNotebook({ mcqId, questionText, questionNumber }: { mcqI
   }
 
   // ---- open: panel -------------------------------------------------------------------------------------------
-  return <div className="fixed inset-x-2 bottom-[max(0.5rem,env(safe-area-inset-bottom))] z-40 flex max-h-[62dvh] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[380px]" role="dialog" aria-label="Practice notebook" data-testid="panel-practice-notebook">
+  return <>
+    {inkOpen && <InkNoteSheet noteId={active?.id ?? createdId.current.get(mcqId) ?? null} mcqId={mcqId} questionText={questionText} onCreated={(id) => { createdId.current.set(mcqId, id); }} onClose={() => { setInkOpen(false); void queryClient.invalidateQueries({ queryKey: ['notebook'] }); }} />}
+    <div className="fixed inset-x-2 bottom-[max(0.5rem,env(safe-area-inset-bottom))] z-40 flex max-h-[62dvh] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[0_20px_50px_-12px_rgba(0,0,0,0.5)] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[380px]" role="dialog" aria-label="Practice notebook" data-testid="panel-practice-notebook">
     <div className="flex items-center gap-2 bg-gradient-to-br from-[#32647b] to-[#264c5e] px-3.5 py-2.5 text-white">
       <NotebookPen size={15} /><div className="text-xs font-extrabold">My Notebook</div>
       <div className="ml-auto flex items-center gap-1">
@@ -176,7 +183,9 @@ export function PracticeNotebook({ mcqId, questionText, questionNumber }: { mcqI
         {mine.map((n, i) => <button key={n.id} onClick={async () => { await flush(); setCreatingNew(false); setPickedId(n.id); }} className={cn('rounded-full px-2.5 py-1 text-[10px] font-bold', !creatingNew && active?.id === n.id ? 'bg-[#32647b] text-white' : 'border border-border text-muted-foreground')}>Note {mine.length - i}</button>)}
         {creatingNew && <span className="rounded-full bg-[#32647b] px-2.5 py-1 text-[10px] font-bold text-white">New note</span>}
       </div>}
-      <textarea value={text} onChange={(e) => onChange(e.target.value)} autoFocus placeholder="Write what you want to remember about this question…" className="mt-2.5 min-h-[130px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm leading-6 outline-none focus:border-[#32647b]" data-testid="input-practice-note" />
+      <textarea value={text} onChange={(e) => onChange(e.target.value)} autoFocus placeholder="Write what you want to remember about this question…" className="mt-2.5 min-h-[110px] w-full resize-y rounded-xl border border-border bg-background p-3 text-sm leading-6 outline-none focus:border-[#32647b]" data-testid="input-practice-note" />
+      {active?.hasInk && <button onClick={() => void handwrite()} className="mt-2 block w-full text-left" aria-label="Open handwritten page" data-testid="button-open-practice-ink"><InkPreview noteId={active.id} maxHeight={200} /></button>}
+      <button onClick={() => void handwrite()} className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-[#32647b]/40 bg-[#eef2fb] px-3 py-2 text-xs font-bold text-[#32647b]" data-testid="button-handwrite-note"><PenLine size={14} /> {active?.hasInk ? 'Open handwritten page' : 'Write by hand (pen · pencil · highlighter)'}</button>
     </div>
     <div className="flex items-center justify-between gap-2 border-t border-border px-3.5 py-2 text-[10px] font-semibold text-muted-foreground">
       <div className="min-w-0 truncate" aria-live="polite" data-testid="text-notebook-status">{statusEl}</div>
@@ -185,5 +194,6 @@ export function PracticeNotebook({ mcqId, questionText, questionNumber }: { mcqI
         {!creatingNew && (active || text.trim()) && <button onClick={() => void startNew()} className="inline-flex items-center gap-1 font-bold text-[#32647b]" data-testid="button-new-practice-note"><Plus size={11} /> New note</button>}
       </div>
     </div>
-  </div>;
+  </div>
+  </>;
 }

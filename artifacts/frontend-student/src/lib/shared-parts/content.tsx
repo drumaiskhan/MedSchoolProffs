@@ -41,6 +41,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
+import { InkNoteSheet, InkPreview } from '@/components/study/InkNote';
 import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, type MyFeedbackEntry, analyticsApi, type ProgressTrend, mcqImportApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blocksApi, type Block, examsAdminApi, examsApi, explanationsApi, booksApi, type AdminBookStudent, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type AdminModule, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type PaymentDetails, type PaymentMethodConfig, aiVisualizerApi, type VisualizationSpec, LeaderboardRow } from '@/lib/api';
 
 import { Badge, cn, initials } from './ui';
@@ -65,6 +66,7 @@ export function NotebookCard({ note, onLinkedClick }: { note: NotebookEntry; onL
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
+  const [inkOpen, setInkOpen] = useState(false);   // v89: handwritten page editor
   const update = useMutation({
     mutationFn: () => notebookApi.update(note.id, { title: title.trim(), content: content.trim() }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['notebook'] }); setEditing(false); toast({ title: 'Note updated' }); },
@@ -76,18 +78,21 @@ export function NotebookCard({ note, onLinkedClick }: { note: NotebookEntry; onL
     return <div className="rounded-2xl border border-primary/30 bg-[#eef7f1] p-4" data-testid={`card-note-edit-${note.id}`}>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional)" className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm" data-testid={`input-edit-note-title-${note.id}`} />
       <textarea value={content} onChange={(e) => setContent(e.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-border bg-card p-3 text-sm" data-testid={`input-edit-note-content-${note.id}`} />
-      <div className="mt-2 flex gap-2"><button disabled={update.isPending || !content.trim()} onClick={() => update.mutate()} className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid={`button-save-note-${note.id}`}>{update.isPending ? 'Saving…' : 'Save'}</button><button onClick={() => { setTitle(note.title); setContent(note.content); setEditing(false); }} className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-bold" data-testid={`button-cancel-note-${note.id}`}>Cancel</button></div>
+      <div className="mt-2 flex gap-2"><button disabled={update.isPending || (!content.trim() && !note.hasInk)} onClick={() => update.mutate()} className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid={`button-save-note-${note.id}`}>{update.isPending ? 'Saving…' : 'Save'}</button><button onClick={() => { setTitle(note.title); setContent(note.content); setEditing(false); }} className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-bold" data-testid={`button-cancel-note-${note.id}`}>Cancel</button></div>
     </div>;
   }
 
   return <div className="card-lift rounded-2xl border border-border bg-card p-4" data-testid={`card-note-${note.id}`}>
     {note.title && <div className="text-sm font-extrabold">{note.title}</div>}
-    <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{note.content}</p>
+    {note.content.trim() && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{note.content}</p>}
+    {note.hasInk && <button onClick={() => setInkOpen(true)} className="mt-2 block w-full text-left" aria-label="Open handwritten page" data-testid={`button-open-ink-${note.id}`}><InkPreview noteId={note.id} maxHeight={360} /></button>}
+    {!note.hasInk && !note.content.trim() && <p className="mt-1 text-sm italic text-muted-foreground">Empty note</p>}
     {note.mcqId != null && <button onClick={() => !note.mcqDeleted && onLinkedClick(note.mcqId!)} disabled={!!note.mcqDeleted} title={note.mcqDeleted ? 'This question no longer exists' : 'Open this question in Practice'} className="mt-2 block w-full rounded-xl border border-[#32647b]/20 bg-[#eef2fb] px-3 py-2 text-left disabled:opacity-60" data-testid={`button-linked-mcq-${note.id}`}><span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-[#32647b]"><LinkIcon size={10} /> Attached question</span>{note.question ? <span className="mt-0.5 line-clamp-2 block text-xs font-semibold leading-5 text-foreground">{note.question}</span> : <span className="mt-0.5 block text-xs text-muted-foreground">{note.mcqDeleted ? 'This question was deleted.' : 'Open question'}</span>}</button>}
     <div className="mt-3 flex items-center justify-between text-[10px] text-muted-foreground">
       <span>{new Date(note.updatedAt).toLocaleString()}</span>
-      <div className="flex items-center gap-3"><button onClick={() => setEditing(true)} className="font-bold text-primary" data-testid={`button-edit-note-${note.id}`}>Edit</button><button onClick={() => remove.mutate()} className="font-bold text-destructive" data-testid={`button-delete-note-${note.id}`}>Delete</button></div>
+      <div className="flex items-center gap-3">{note.hasInk && <button onClick={() => setInkOpen(true)} className="font-bold text-primary" data-testid={`button-open-page-${note.id}`}>Open page</button>}<button onClick={() => setEditing(true)} className="font-bold text-primary" data-testid={`button-edit-note-${note.id}`}>{note.hasInk ? 'Edit text' : 'Edit'}</button><button onClick={() => remove.mutate()} className="font-bold text-destructive" data-testid={`button-delete-note-${note.id}`}>Delete</button></div>
     </div>
+    {inkOpen && <InkNoteSheet noteId={note.id} initialTitle={note.title} questionText={note.question ?? undefined} onClose={() => setInkOpen(false)} />}
   </div>;
 }
 

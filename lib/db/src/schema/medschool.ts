@@ -738,6 +738,8 @@ export const notebookEntriesTable = pgTable("med_notebook_entries", {
   mcqId: integer("mcq_id"),
   title: text("title").notNull().default(""),
   content: text("content").notNull(),
+  // v89: handwritten (Journal-style) page, JSON text produced by the ink engine (frontend lib/ink.ts). NULL = typed note.
+  ink: text("ink"),
   ...timestamps,
 });
 

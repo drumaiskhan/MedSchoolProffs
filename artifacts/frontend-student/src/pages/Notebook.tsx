@@ -53,12 +53,14 @@ import { ReviewTabs } from '@/components/study/ReviewTabs';
 import { HierarchyTree } from '@/components/study/HierarchyTree';
 import { EmptyState, NotebookCard, SectionHeader, SkeletonPage, cn } from '@/lib/shared';
 import { queryClient } from '@/lib/query-client';
+import { InkNoteSheet } from '@/components/study/InkNote';
 
 function Notebook() {
   const [content, setContent] = useState('');
   const [title, setTitle] = useState('');
   const [search, setSearch] = useState('');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [writing, setWriting] = useState(false);   // v89: new handwritten (Journal-style) page
   const entries = useQuery({ queryKey: ['notebook'], queryFn: notebookApi.list });
   const create = useMutation({ mutationFn: notebookApi.create, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['notebook'] }); setContent(''); setTitle(''); } });
   const [, navigate] = useLocation();
@@ -69,9 +71,10 @@ function Notebook() {
     return (n.title || '').toLowerCase().includes(q) || n.content.toLowerCase().includes(q);
   }).sort((a, b) => sortOrder === 'newest' ? b.updatedAt.localeCompare(a.updatedAt) : a.updatedAt.localeCompare(b.updatedAt));
 
-  return <div><SectionHeader eyebrow="Your tools" title="My Notebook" description="Your personal notes on questions — private to you." />
+  return <div><SectionHeader eyebrow="Your tools" title="My Notebook" description="Type a note, or write it by hand with pen, pencil and highlighter — private to you." />
     <ReviewTabs />
-    <form onSubmit={(e) => { e.preventDefault(); if (content.trim()) create.mutate({ title: title.trim() || undefined, content: content.trim() }); }} className="rounded-2xl border border-border bg-card p-4"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional)" className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm" data-testid="input-note-title" /><textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write a note…" className="mt-2 min-h-24 w-full rounded-xl border border-border bg-background p-3 text-sm" data-testid="input-note-content" /><button disabled={create.isPending} className="mt-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-add-note">{create.isPending ? 'Saving…' : 'Add note'}</button></form>
+    <form onSubmit={(e) => { e.preventDefault(); if (content.trim()) create.mutate({ title: title.trim() || undefined, content: content.trim() }); }} className="rounded-2xl border border-border bg-card p-4"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional)" className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm" data-testid="input-note-title" /><textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Write a note…" className="mt-2 min-h-24 w-full rounded-xl border border-border bg-background p-3 text-sm" data-testid="input-note-content" /><div className="mt-2 flex flex-wrap items-center gap-2"><button disabled={create.isPending} className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-add-note">{create.isPending ? 'Saving…' : 'Add note'}</button><button type="button" onClick={() => setWriting(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-4 py-2 text-xs font-bold text-primary" data-testid="button-write-by-hand"><Pencil size={13} /> Write by hand</button></div></form>
+    {writing && <InkNoteSheet noteId={null} onClose={() => { setWriting(false); queryClient.invalidateQueries({ queryKey: ['notebook'] }); }} />}
 
     {!!entries.data?.length && <div className="mt-4 flex flex-wrap items-center gap-2"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search notes…" className="h-9 min-w-0 flex-1 rounded-xl border border-border bg-card px-3 text-xs" data-testid="input-search-notes" /><div className="flex overflow-hidden rounded-xl border border-border text-[11px] font-bold"><button onClick={() => setSortOrder('newest')} className={cn('px-3 py-2', sortOrder === 'newest' ? 'bg-primary text-primary-foreground' : 'bg-card')} data-testid="button-sort-newest">Newest</button><button onClick={() => setSortOrder('oldest')} className={cn('px-3 py-2', sortOrder === 'oldest' ? 'bg-primary text-primary-foreground' : 'bg-card')} data-testid="button-sort-oldest">Oldest</button></div></div>}
 

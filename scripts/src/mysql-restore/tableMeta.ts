@@ -785,6 +785,7 @@ const notebookEntriesSpec: MysqlTableSpec = {
     { js: "mcqId", sql: "mcq_id", type: "int" },
     { js: "title", sql: "title", type: "text" },
     { js: "content", sql: "content", type: "text" },
+    { js: "ink", sql: "ink", type: "text" },
     { js: "createdAt", sql: "created_at", type: "timestamp" },
     { js: "updatedAt", sql: "updated_at", type: "timestamp" },
   ],

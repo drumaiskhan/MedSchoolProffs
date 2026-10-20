@@ -453,7 +453,8 @@ export const mcqImportApi = {
 export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; displayOrder: number; mcqCount: number }
 /** Curriculum placement, resolved server-side by walking up from the topic. All optional so an older API build still renders. */
 export interface Placement { blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null }
-export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string; question?: string | null; mcqDeleted?: boolean }
+export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string; question?: string | null; mcqDeleted?: boolean;
+  /** v89: true when the note has a handwritten (ink) page. The ink itself is only on GET /notebook/:id. */ hasInk?: boolean; ink?: string | null }
 export interface SessionProgress { kind?: 'progress'; topicId?: number; pastPaperId?: number; mcqIds: number[]; answers: Record<string, string | null>; index: number; mode: 'timed' | 'untimed'; remainingSeconds?: number; answered?: number; total?: number }
 export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string; updatedAt?: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
@@ -659,8 +660,9 @@ export const pastPapersApi = {
 
 export const notebookApi = {
   list: () => request<NotebookEntry[]>('/notebook'),
-  create: (body: { title?: string; content: string; mcqId?: number }) => request<NotebookEntry>('/notebook', { method: 'POST', body: JSON.stringify(body) }),
-  update: (id: number, body: Partial<{ title: string; content: string }>) => request<NotebookEntry>(`/notebook/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  get: (id: number) => request<NotebookEntry>(`/notebook/${id}`),
+  create: (body: { title?: string; content?: string; ink?: string | null; mcqId?: number }) => request<NotebookEntry>('/notebook', { method: 'POST', body: JSON.stringify(body) }),
+  update: (id: number, body: Partial<{ title: string; content: string; ink: string | null }>) => request<NotebookEntry>(`/notebook/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   remove: (id: number) => request<{ ok: true }>(`/notebook/${id}`, { method: 'DELETE' }),
 };
 
