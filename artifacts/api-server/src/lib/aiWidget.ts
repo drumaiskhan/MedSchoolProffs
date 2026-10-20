@@ -126,7 +126,7 @@ const WIDGET_CALL_TIMEOUT_MS = 100_000;
 
 async function attempt(prompt: string, maxTokens: number, deadlineAt: number) {
   const remaining = deadlineAt - Date.now();
-  if (remaining < 10_000) throw new InvalidVisualizationError("Response was too long to complete in time — try a simpler or more specific prompt.");
+  if (remaining < 10_000) throw new InvalidVisualizationError("The AI ran out of time on this attempt.");
   const raw = await runPrompt(prompt, maxTokens, false, undefined, { timeoutMs: Math.min(WIDGET_CALL_TIMEOUT_MS, remaining), deadlineAt });
   const cleaned = stripFences(raw);
   const problem = validate(cleaned);
@@ -139,18 +139,18 @@ function finish(cleaned: string, trimmed: string): WidgetSpecT {
   return { type: "widget", ...meta, html: embedFigures(meta.html) };
 }
 
-export async function generateWidget(userPrompt: string): Promise<WidgetSpecT> {
+async function generateWidgetOnce(userPrompt: string, compact: boolean): Promise<WidgetSpecT> {
   const trimmed = userPrompt.trim().slice(0, MAX_PROMPT_LENGTH);
   if (!trimmed) throw new InvalidVisualizationError("Prompt was empty");
   const startedAt = Date.now();
-  const base = buildWidgetPrompt(trimmed);
+  const base = buildWidgetPrompt(trimmed) + (compact ? COMPACT_HINT : "");
 
   const deadlineAt = startedAt + MAX_TOTAL_GENERATION_MS;
-  const first = await attempt(base, WIDGET_MAX_TOKENS, deadlineAt);
+  const first = await attempt(base, compact ? WIDGET_COMPACT_MAX_TOKENS : WIDGET_MAX_TOKENS, deadlineAt);
   if (!first.problem) return finish(first.cleaned, trimmed);
 
   if (Date.now() - startedAt > MAX_TOTAL_GENERATION_MS * 0.6) {
-    throw new InvalidVisualizationError(first.truncated ? "Response was too long to complete in time — try a simpler or more specific prompt." : first.problem, first.raw);
+    throw new InvalidVisualizationError(first.truncated ? "The AI ran out of time on this attempt." : first.problem, first.raw);
   }
   const retryPrompt = first.truncated
     ? `${base}\n\nIMPORTANT: Your previous response was cut off. Make the widget simpler: one diagram, at most 2 controls, under 100 lines and 8,000 characters, minimal text, and finish with </script>.`
@@ -158,4 +158,83 @@ export async function generateWidget(userPrompt: string): Promise<WidgetSpecT> {
   const second = await attempt(retryPrompt, first.truncated ? WIDGET_RETRY_MAX_TOKENS : WIDGET_MAX_TOKENS, deadlineAt);
   if (!second.problem) return finish(second.cleaned, trimmed);
   throw new InvalidVisualizationError(second.problem, second.raw);
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts are never shown to the student. A slow or cut-off AI response is retried automatically with a
+// progressively simpler (faster) widget; only after every attempt has run out of time does the caller get a
+// plain "busy" error (not a timeout message), and that one is not saved or counted as a bad visualization.
+// ---------------------------------------------------------------------------
+const COMPACT_HINT = "\n\nIMPORTANT: Keep this widget compact so it finishes quickly: one diagram, at most 2 controls, under 100 lines and 8,000 characters, minimal text, and finish with </script>.";
+const WIDGET_COMPACT_MAX_TOKENS = 4500;
+const MAX_TIMEOUT_RETRIES = 3;
+
+function isTimeoutError(err: unknown): boolean {
+  const msg = err instanceof InvalidVisualizationError ? err.issues : err instanceof Error ? err.message : "";
+  return /took too long|ran out of time|timed out|aborted|ETIMEDOUT|ECONNRESET|socket hang up|\b(502|503|504)\b/i.test(String(msg));
+}
+
+async function generateSequential(userPrompt: string): Promise<WidgetSpecT> {
+  let lastErr: unknown;
+  for (let i = 0; i < MAX_TIMEOUT_RETRIES; i++) {
+    try { return await generateWidgetOnce(userPrompt, i > 0); }
+    catch (err) {
+      if (!isTimeoutError(err)) throw err; // real problems (AI not configured, unusable output) keep their own message
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, 1200 * (i + 1)));
+    }
+  }
+  console.error("widget generation: every attempt ran out of time", lastErr);
+  throw new Error("The AI service is busy right now. Please try again in a moment.");
+}
+
+// ---------------------------------------------------------------------------
+// Faster for students: send several requests at once and use whichever finishes first.
+// Two full-quality requests plus one compact (smaller, quicker) request run in parallel. A full-quality
+// result wins immediately; if the compact one lands first it is held for a few seconds in case a full one
+// follows, so students get the quick answer without losing the richer one when it is almost ready.
+// Costs roughly `parallel` x the tokens of a single generation, so only the student-facing path uses it
+// (the admin bulk pre-generation stays at 1).
+// ---------------------------------------------------------------------------
+export interface GenerateWidgetOptions { parallel?: number }
+const COMPACT_GRACE_MS = 6_000;
+
+function pickError(errors: unknown[]): unknown {
+  return errors.find((e) => !isTimeoutError(e)) ?? errors[0]; // a real problem (e.g. AI not configured) beats a timeout
+}
+
+function generateRaced(userPrompt: string, n: number): Promise<WidgetSpecT> {
+  return new Promise<WidgetSpecT>((resolve, reject) => {
+    const fullCount = n - 1; // the last request is the compact one
+    let settled = false, fullFailures = 0, failures = 0;
+    let compactSpec: WidgetSpecT | null = null;
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    const errors: unknown[] = [];
+    const win = (spec: WidgetSpecT) => { if (settled) return; settled = true; if (grace) clearTimeout(grace); resolve(spec); };
+    for (let i = 0; i < n; i++) {
+      const compact = i === n - 1;
+      generateWidgetOnce(userPrompt, compact).then((spec) => {
+        if (settled) return;
+        if (!compact) { win(spec); return; }
+        compactSpec = spec;
+        if (fullFailures >= fullCount) win(spec); else grace = setTimeout(() => win(spec), COMPACT_GRACE_MS);
+      }).catch((err) => {
+        errors.push(err); failures++;
+        if (!compact) fullFailures++;
+        if (settled) return;
+        if (compactSpec && fullFailures >= fullCount) { win(compactSpec); return; }
+        if (failures >= n) { settled = true; if (grace) clearTimeout(grace); reject(pickError(errors)); }
+      });
+    }
+  });
+}
+
+export async function generateWidget(userPrompt: string, opts: GenerateWidgetOptions = {}): Promise<WidgetSpecT> {
+  const n = Math.max(1, Math.min(3, Math.floor(opts.parallel ?? 1)));
+  if (n === 1) return generateSequential(userPrompt);
+  try { return await generateRaced(userPrompt, n); }
+  catch (err) {
+    if (!isTimeoutError(err)) throw err;   // real problems keep their own message
+    return generateSequential(userPrompt); // every parallel request ran out of time: fall back to the patient retry loop
+  }
 }

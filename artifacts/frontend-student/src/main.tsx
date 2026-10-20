@@ -17,6 +17,7 @@ import './connect3d.css'; // v64: Profile → About → Connect with us
 import './redo3d.css'; // v65: practice results → Redo wrong answers
 import './smooth.css'; // leaderboard smoothness (cheaper rows, no per-frame layout)
 import './dash3d.css'; // dashboard depth layer (2.5D: gradients, edges, parallax — no real 3D transforms)
+import './dark-modern.css'; // v66: modern dark theme (ink-indigo surfaces, glow, tuned status colours)
 import './perf.css'; // must stay last: overrides the heavy effects on phones
 import { initFx } from '@/lib/fx';
 import { initThemePref } from '@/lib/theme';

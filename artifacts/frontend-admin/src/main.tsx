@@ -8,6 +8,7 @@ import { enableGlobalScreenshotGuard } from '@/lib/nativeScreenshotGuard';
 import './index.css';
 import './fx.css'; // sidebar puck / keycaps / tilt (same as the student panel)
 import './modern.css'; // shared surfaces, buttons, fields, tables
+import './dark-modern.css'; // modern dark theme (same as the student panel)
 import './perf.css'; // must stay last: lite mode on phones
 import { initFx } from '@/lib/fx';
 

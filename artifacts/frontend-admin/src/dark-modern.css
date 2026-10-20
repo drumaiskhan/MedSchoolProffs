@@ -1,0 +1,139 @@
+/* ===========================================================================
+   DARK MODE — MODERN LAYER (admin panel)
+   Imported after modern.css and before perf.css (main.tsx).
+
+   What changed vs. the old dark theme
+   • Neutrals are now a deep ink-indigo (hue 227) instead of flat slate, so the
+     page reads "midnight" rather than "grey". Cards are clearly lighter than
+     the page, inputs are clearly darker than cards -> real depth, no harsh black.
+   • Surfaces get a hairline cool-tinted border and a soft top highlight instead
+     of heavy black drop-shadows.
+   • Primary actions glow softly in the brand colour (still follows the admin
+     re-brand, because everything derives from --primary / --accent).
+   • An aurora backdrop (two static gradients) sits behind every page.
+   • Remaining pale fixed colours that dark-compat.css missed are tuned.
+
+   Performance: static gradients + box-shadows only. No blur, no animation,
+   no backdrop-filter, so phones in "lite" mode stay smooth.
+   Unlayered on purpose so it beats the @layer rules in index.css.
+   Admin-chosen custom background/card/text colours are applied inline on
+   <html> by lib/theme.ts and still win over these defaults.
+   =========================================================================== */
+
+/* ---- 1. Neutral tokens ----------------------------------------------------- */
+:root.dark {
+  --background: 228 36% 7%;
+  --foreground: 220 30% 95%;
+  --card: 227 30% 11%;
+  --card-foreground: 220 30% 95%;
+  --card-border: 226 24% 19%;
+  --popover: 227 30% 13%;
+  --popover-foreground: 220 30% 95%;
+  --popover-border: 226 24% 22%;
+  --secondary: 227 24% 17%;
+  --secondary-foreground: 220 30% 95%;
+  --muted: 227 25% 14%;
+  --muted-foreground: 222 17% 71%;
+  --border: 226 22% 20%;
+  --input: 226 22% 23%;
+  --sidebar: 229 40% 5%;
+  --sidebar-border: 227 26% 14%;
+  --sidebar-accent: 227 26% 14%;
+
+  /* elevation, cool-tinted */
+  --sheen: hsl(0 0% 100% / .045);
+  --e1: 0 0 0 1px hsl(224 40% 80% / .07), 0 1px 2px hsl(230 60% 2% / .5), 0 6px 14px -6px hsl(230 60% 2% / .55);
+  --e2: 0 0 0 1px hsl(var(--primary) / .32), 0 2px 4px hsl(230 60% 2% / .5), 0 14px 26px -10px hsl(230 60% 2% / .7), 0 0 28px -12px hsl(var(--primary) / .35);
+  --e3: 0 0 0 1px hsl(224 40% 80% / .1), 0 10px 20px -6px hsl(230 60% 2% / .6), 0 30px 50px -18px hsl(230 60% 2% / .8);
+  --raise-1: var(--e1);
+  --raise-2: var(--e2);
+  --well: inset 0 2px 6px hsl(230 60% 2% / .55), inset 0 0 0 1px hsl(224 40% 80% / .05);
+  --glow: 0 8px 22px -8px hsl(var(--primary) / .55);
+}
+
+/* ---- 2. Aurora backdrop + page chrome ---------------------------------------- */
+.dark .admin-shell {
+  background-image:
+    radial-gradient(720px 420px at 94% -8%, hsl(var(--primary) / .15), transparent 66%),
+    radial-gradient(640px 400px at -6% 4%, hsl(252 80% 66% / .12), transparent 64%),
+    radial-gradient(900px 500px at 50% 112%, hsl(var(--primary) / .07), transparent 70%);
+  background-repeat: no-repeat;
+}
+.dark .admin-header {
+  background-color: hsl(var(--background) / .86);
+  border-bottom-color: hsl(224 40% 80% / .09);
+  box-shadow: 0 1px 0 hsl(230 60% 2% / .6), 0 10px 24px -16px hsl(230 60% 2% / .9);
+}
+.dark .tabbar-dock {
+  background-color: hsl(228 32% 10% / .97);
+  border: 1px solid hsl(224 40% 80% / .1);
+  box-shadow: var(--e3), 0 -1px 0 hsl(0 0% 100% / .05) inset;
+}
+.dark .tab-key { background: hsl(var(--primary) / .18); box-shadow: inset 0 0 0 1px hsl(var(--primary) / .35), 0 0 18px -6px hsl(var(--primary) / .55); }
+.dark ::selection { background: hsl(var(--primary) / .35); color: hsl(0 0% 100%); }
+.dark { scrollbar-color: hsl(226 22% 28%) transparent; }
+.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dark ::-webkit-scrollbar-thumb { background: hsl(226 22% 26%); border-radius: 999px; border: 2px solid hsl(var(--background)); }
+.dark ::-webkit-scrollbar-thumb:hover { background: hsl(226 22% 34%); }
+.dark :focus-visible { outline-color: hsl(var(--primary) / .75); }
+
+/* ---- 3. Cards, tiles, wells --------------------------------------------------- */
+.dark .admin-shell :is(.rounded-2xl, .rounded-3xl).border.bg-card:not(.border-dashed):not(.no-3d) {
+  border-color: hsl(224 40% 80% / .09);
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / .05), hsl(0 0% 100% / 0) 42%);
+  box-shadow: var(--e1);
+}
+.dark .admin-shell :is(a, button).rounded-2xl.border.bg-card:not(.no-3d):hover { box-shadow: var(--e2); border-color: hsl(var(--primary) / .4); }
+.dark .card-lift:hover { border-color: hsl(var(--primary) / .45); box-shadow: var(--e2); }
+.dark .d3-card { border-color: hsl(224 40% 80% / .09); }
+.dark .bg-muted { background-color: hsl(var(--muted)); }
+.dark .bg-muted\/60, .dark .bg-muted\/70 { background-color: hsl(227 25% 16% / .8); }
+.dark .border-dashed { border-color: hsl(224 40% 80% / .16); }
+
+/* ---- 4. Buttons & fields --------------------------------------------------------- */
+.dark .admin-shell :is(button, a).bg-primary:not(:disabled):not([aria-disabled="true"]):not(.no-3d) {
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / .18), hsl(0 0% 100% / 0) 62%);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / .55), 0 10px 24px -10px hsl(var(--primary) / .7), inset 0 1px 0 hsl(0 0% 100% / .3);
+  transform: none;
+}
+.dark .admin-shell :is(button, a).bg-primary:not(:disabled):not([aria-disabled="true"]):not(.no-3d):hover {
+  box-shadow: 0 0 0 1px hsl(var(--primary) / .7), 0 14px 30px -10px hsl(var(--primary) / .8), inset 0 1px 0 hsl(0 0% 100% / .36);
+  transform: translateY(-1px);
+}
+.dark .admin-shell :is(button, a).bg-primary:not(:disabled):not([aria-disabled="true"]):not(.no-3d):active {
+  transform: translateY(1px) scale(.99);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / .5), 0 4px 12px -6px hsl(var(--primary) / .6), inset 0 1px 0 hsl(0 0% 100% / .2);
+}
+.dark .admin-shell :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea) {
+  background-color: hsl(228 34% 8.5%);
+  border-color: hsl(226 22% 23%);
+  box-shadow: inset 0 1px 3px hsl(230 60% 2% / .55);
+}
+.dark .admin-shell :where(input, select, textarea):focus-visible {
+  border-color: hsl(var(--primary) / .75);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / .22), inset 0 1px 3px hsl(230 60% 2% / .4);
+  outline: none;
+}
+.dark .admin-shell :where(input, textarea)::placeholder { color: hsl(222 14% 52%); }
+
+/* ---- 5. Overlays: dialogs, menus, popovers ------------------------------------------ */
+.dark :is([role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]) {
+  border-color: hsl(224 40% 80% / .12);
+  box-shadow: 0 0 0 1px hsl(224 40% 80% / .06), 0 30px 70px -20px hsl(230 70% 1% / .9), 0 0 60px -30px hsl(var(--primary) / .4);
+}
+.dark [data-state="open"][data-radix-dialog-overlay], .dark [data-radix-dialog-overlay] { background-color: hsl(230 60% 2% / .72); }
+
+/* ---- 6. Admin-specific light colours ------------------------------------------------ */
+.dark .bg-\[\#cdebf0\] { background-color: hsl(189 50% 24%); }
+.dark .text-\[\#0d5267\] { color: hsl(194 70% 76%); }
+.dark .bg-amber-50 { background-color: hsl(40 48% 15%); }
+.dark .border-amber-300 { border-color: hsl(40 40% 32%); }
+.dark .text-amber-800 { color: hsl(40 92% 72%); }
+.dark .text-amber-600 { color: hsl(40 95% 66%); }
+.dark .bg-gray-100 { background-color: hsl(227 25% 16%); }
+
+/* ---- 7. Admin tables: lighter header row, soft row dividers, primary-tinted hover --------- */
+.dark .admin-shell table thead th { background: hsl(227 26% 14% / .9); color: hsl(222 17% 74%); border-bottom: 1px solid hsl(224 40% 80% / .1); }
+.dark .admin-shell table tbody tr { border-color: hsl(224 40% 80% / .07); }
+.dark .admin-shell table tbody tr:hover { background-color: hsl(var(--primary) / .08); }
+.dark .admin-shell table tbody td { border-color: hsl(224 40% 80% / .07); }

@@ -69,8 +69,12 @@ router.post("/mcq-placements", requireAuth, async (req, res): Promise<void> => {
 router.get("/notebook", requireAuth, async (req, res): Promise<void> => {
   const rows = await db.select().from(notebookEntriesTable).where(eq(notebookEntriesTable.userId, req.user!.id)).orderBy(desc(notebookEntriesTable.updatedAt));
   // Notes linked to a question are filed under that question's Block > Module > Subject > Topic (additive fields).
-  const places = await placementsForMcqs(rows.map((r) => r.mcqId).filter((x): x is number => x !== null));
-  res.json(rows.map((r) => ({ ...r, ...(r.mcqId !== null ? (places.get(r.mcqId) ?? NO_PLACEMENT) : NO_PLACEMENT) })));
+  const linkedIds = [...new Set(rows.map((r) => r.mcqId).filter((x): x is number => x !== null))];
+  const places = await placementsForMcqs(linkedIds);
+  // The attached question's text, so a note shows WHICH MCQ it belongs to (null when the question was deleted).
+  const qRows = linkedIds.length ? await db.select({ id: mcqsTable.id, question: mcqsTable.question }).from(mcqsTable).where(inArray(mcqsTable.id, linkedIds.slice(0, 1000))) : [];
+  const questions = new Map(qRows.map((q) => [q.id, q.question]));
+  res.json(rows.map((r) => ({ ...r, ...(r.mcqId !== null ? (places.get(r.mcqId) ?? NO_PLACEMENT) : NO_PLACEMENT), question: r.mcqId !== null ? (questions.get(r.mcqId) ?? null) : null, mcqDeleted: r.mcqId !== null && !questions.has(r.mcqId) })));
 });
 
 const NotebookBody = z.object({ title: z.string().max(160).optional(), content: z.string().min(1).max(10000), mcqId: z.number().int().positive().optional() });

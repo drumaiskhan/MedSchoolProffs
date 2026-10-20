@@ -1123,7 +1123,18 @@ export interface AiVisualizerLibraryEntry { id: number; prompt: string; title: s
 export interface AiVisualizerLibraryPage { entries: AiVisualizerLibraryEntry[]; matched: number; offset: number; limit: number; count: number; totalReuses: number; catalogSaved: number; customSaved: number }
 export interface AiVisualizerLibraryParams { q?: string; sort?: 'hits' | 'recent' | 'size' | 'oldest'; source?: 'all' | 'catalog' | 'custom'; limit?: number; offset?: number }
 export interface AiVisualizerCatalogCoverage { total: number; saved: number; disciplines: Array<{ id: string; name: string; program: 'MBBS' | 'BDS' | 'Both'; total: number; saved: number; reuses: number; groups: Array<{ name: string; total: number; saved: number }> }> }
+export interface AiVisualizerPregenStatus {
+  running: boolean; stopping: boolean; startedAt: number | null; finishedAt: number | null;
+  scope: { discipline: string | null; group: string | null; limit: number | null; concurrency: number };
+  target: number; done: number; failed: number; active: string[]; consecutiveFailures: number;
+  stoppedReason: string | null; recentErrors: Array<{ prompt: string; error: string; at: number }>; etaSeconds: number | null;
+}
+export interface AiVisualizerPregenInfo { status: AiVisualizerPregenStatus; pending: number; total: number }
+export interface AiVisualizerPregenStart { discipline?: string; group?: string; limit?: number; concurrency?: number }
 export const aiVisualizerAdminApi = {
+  pregenStatus: (discipline?: string) => request<AiVisualizerPregenInfo>(`/admin/ai-visualizer-pregen${discipline ? `?discipline=${encodeURIComponent(discipline)}` : ''}`),
+  pregenStart: (body: AiVisualizerPregenStart) => request<{ ok: boolean; target: number }>('/admin/ai-visualizer-pregen/start', { method: 'POST', body: JSON.stringify(body) }),
+  pregenStop: () => request<{ ok: boolean }>('/admin/ai-visualizer-pregen/stop', { method: 'POST' }),
   list: (limit = 100) => request<AiVisualizerLogEntry[]>(`/admin/ai-visualizer-logs?limit=${limit}`),
   library: (params: AiVisualizerLibraryParams = {}) => {
     const qs = new URLSearchParams();

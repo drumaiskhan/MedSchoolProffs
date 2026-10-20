@@ -453,7 +453,7 @@ export const mcqImportApi = {
 export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; displayOrder: number; mcqCount: number }
 /** Curriculum placement, resolved server-side by walking up from the topic. All optional so an older API build still renders. */
 export interface Placement { blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null }
-export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
+export interface NotebookEntry extends Placement { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string; question?: string | null; mcqDeleted?: boolean }
 export interface SessionProgress { kind?: 'progress'; topicId?: number; pastPaperId?: number; mcqIds: number[]; answers: Record<string, string | null>; index: number; mode: 'timed' | 'untimed'; remainingSeconds?: number; answered?: number; total?: number }
 export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string; updatedAt?: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
@@ -833,7 +833,7 @@ export const aiVisualizerApi = {
   // limit): start it, then poll until it's done.
   generate: async (prompt: string, fresh = false, mode: VisualizerMode = 'widget'): Promise<{ visualization: AnyVisualization }> => {
     const { jobId } = await request<{ jobId: string }>('/ai/visualizer', { method: 'POST', body: JSON.stringify({ prompt, mode, fresh }) });
-    const deadline = Date.now() + 5 * 60 * 1000;
+    const deadline = Date.now() + 12 * 60 * 1000; // the server keeps retrying slow generations itself, so wait for it
     let failures = 0;
     let polls = 0;
     while (Date.now() < deadline) {
@@ -851,7 +851,7 @@ export const aiVisualizerApi = {
         if (final || ++failures >= 6) throw err;
       }
     }
-    throw new ApiRequestError(504, 'The visualization is taking too long. Please try again with a simpler prompt.', null);
+    throw new ApiRequestError(503, 'The AI service is busy right now. Please try again in a moment.', null);
   },
   explainStep: (overallTitle: string, stepTitle: string, stepDescription: string) =>
     request<{ explanation: string }>('/ai/visualizer/explain-step', { method: 'POST', body: JSON.stringify({ overallTitle, stepTitle, stepDescription }) }),

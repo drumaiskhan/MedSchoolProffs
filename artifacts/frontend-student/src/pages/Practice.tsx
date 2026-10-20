@@ -55,6 +55,7 @@ import { Badge, EmptyState, PracticeResultCard, SectionHeader, SkeletonPage, cn,
 import { queryClient, invalidatePracticeQueries } from '@/lib/query-client';
 import { PracticeTimer, useCountdownStore } from '@/lib/countdown';
 import { useResumeProgress, type ResumeInfo } from '@/components/study/useResumeProgress';
+import { PracticeNotebook } from '@/components/study/PracticeNotebook';
 
 function Practice() {
   const search = useSearch();
@@ -719,6 +720,7 @@ function Practice() {
       </div>
       <div className="order-2">{controlPanel}</div>
     </div>
+    <PracticeNotebook mcqId={current.id} questionText={current.question} questionNumber={index + 1} />
   </div>;
 }
 

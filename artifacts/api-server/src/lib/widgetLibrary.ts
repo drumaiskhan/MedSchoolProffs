@@ -11,7 +11,7 @@ import { FUZZY_THRESHOLD, MAX_KEY_LENGTH, jaccard, promptKey, promptTokens } fro
 import { catalogKeySet } from "./visualizerCatalog";
 
 // v2 (v82): figures became animated, so widgets saved with the old still figures are retired.
-export const LIBRARY_VERSION = 2;
+export const LIBRARY_VERSION = 3;
 const MAX_FUZZY_ROWS = 20000; // the library is meant to hold 5000+ topics, so the near-match scan must cover them all
 
 // Normalisation lives in promptKey.ts (pure, shared with the topic catalog).

@@ -1,7 +1,10 @@
 // Figure registry helpers — see data.ts for how the pieces fit together.
-import { FIGURES, SHARED_DEFS, type Figure } from "./data";
+import { FIGURES as BASE_FIGURES, SHARED_DEFS, type Figure } from "./data";
+import { EXTRA_FIGURES, EXTRA_DEFS } from "./extra";
 import { FIGURE_ANIM_CSS, ANIMATION_NOTES, animateFigure } from "./animate";
 
+// v84: the base set (data.ts) plus the male reproductive system and more organ systems (extra.ts).
+const FIGURES: Figure[] = [...BASE_FIGURES, ...EXTRA_FIGURES];
 const MAX_FIGURES_IN_PROMPT = 4;
 const BY_ID = new Map<string, Figure>(FIGURES.map((f) => [f.id, f]));
 
@@ -46,7 +49,7 @@ export function embedFigures(html: string): string {
   }
   if (!used.size) return html;
   const symbols = [...used].map((f) => `<symbol id="${f.id}" viewBox="0 0 ${f.w} ${f.h}">${animateFigure(f.id, f.svg)}</symbol>`).join("");
-  return `${FIGURE_ANIM_CSS}<svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false"><defs>${SHARED_DEFS}</defs>${symbols}</svg>\n${html}`;
+  return `${FIGURE_ANIM_CSS}<svg width="0" height="0" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false"><defs>${SHARED_DEFS}${EXTRA_DEFS}</defs>${symbols}</svg>\n${html}`;
 }
 
 export { FIGURES };

@@ -94,6 +94,15 @@ export interface ThemeSettings {
   THEME_MODE?: string;
 }
 
+// Lifts a too-dark brand colour so it stays readable as text / a button on a
+// dark surface.
+function ensureMinLightness(hsl: string, min: number): string {
+  const m = /^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)%\s+(-?\d+(?:\.\d+)?)%$/.exec(hsl.trim());
+  if (!m) return hsl;
+  const [, h, sat, l] = m;
+  return Number(l) >= min ? hsl : `${h} ${sat}% ${min}%`;
+}
+
 // Applies saved brand colors to the document root. Safe to call with
 // undefined/partial data (e.g. before the site-content fetch resolves) —
 // falls back to DEFAULT_THEME per-key rather than leaving a half-applied
@@ -116,41 +125,49 @@ export function applyThemeVars(settings: ThemeSettings | null | undefined): void
   const cardHsl = hexToHslTriple(card);
   const textHsl = hexToHslTriple(text);
 
+  // Dark mode: the shipped surface colours (background / card / text) are the
+  // LIGHT defaults, and inline styles beat the stylesheet's `.dark` block —
+  // applying them here would leave a "dark" admin with a light background and
+  // the new dark-modern.css tokens would never show. So in dark mode we only
+  // push surface colours the admin actually changed from the defaults;
+  // otherwise we clear them so `.dark` in the stylesheet takes over.
+  const dark = (settings?.THEME_MODE || 'light') === 'dark';
+  const custom = (key: ThemeKey) => !!settings?.[key] && String(settings[key]).trim().toLowerCase() !== DEFAULT_THEME[key].toLowerCase();
+  const setOrClear = (props: string[], value: string | null, apply: boolean) => {
+    for (const prop of props) { if (apply && value) root.style.setProperty(prop, value); else root.style.removeProperty(prop); }
+  };
+
   if (primaryHsl) {
-    root.style.setProperty('--primary', primaryHsl);
-    root.style.setProperty('--primary-foreground', readableForegroundHsl(primary));
-    root.style.setProperty('--ring', primaryHsl);
-    // The sidebar shares the primary brand color (matches the reference:
-    // the dark-navy "Primary" swatch is the same navy the sidebar uses).
-    root.style.setProperty('--sidebar', primaryHsl);
-    root.style.setProperty('--sidebar-foreground', shiftLightness(primaryHsl, 68));
-    root.style.setProperty('--sidebar-accent', shiftLightness(primaryHsl, 10));
-    root.style.setProperty('--sidebar-accent-foreground', readableForegroundHsl('#ffffff'));
-    root.style.setProperty('--sidebar-border', shiftLightness(primaryHsl, 14));
+    // In dark mode a navy primary is unreadable as text/buttons, so lift it.
+    const lifted = dark ? ensureMinLightness(primaryHsl, 58) : primaryHsl;
+    const liftedChanged = lifted !== primaryHsl;
+    root.style.setProperty('--primary', lifted);
+    root.style.setProperty('--primary-foreground', liftedChanged ? '213 35% 10%' : readableForegroundHsl(primary));
+    root.style.setProperty('--ring', lifted);
+    // The sidebar shares the primary brand colour in light mode; in dark mode
+    // the stylesheet's dark sidebar palette takes over instead.
+    setOrClear(['--sidebar'], primaryHsl, !dark);
+    setOrClear(['--sidebar-foreground'], shiftLightness(primaryHsl, 68), !dark);
+    setOrClear(['--sidebar-accent'], shiftLightness(primaryHsl, 10), !dark);
+    setOrClear(['--sidebar-accent-foreground'], readableForegroundHsl('#ffffff'), !dark);
+    setOrClear(['--sidebar-border'], shiftLightness(primaryHsl, 14), !dark);
   }
   if (accentHsl) {
-    root.style.setProperty('--accent', accentHsl);
-    root.style.setProperty('--accent-foreground', readableForegroundHsl(accent));
-    root.style.setProperty('--sidebar-primary', accentHsl);
-    root.style.setProperty('--sidebar-primary-foreground', readableForegroundHsl(accent));
-    root.style.setProperty('--sidebar-ring', accentHsl);
-    root.style.setProperty('--chart-1', accentHsl);
+    setOrClear(['--accent'], accentHsl, !dark);
+    setOrClear(['--accent-foreground'], readableForegroundHsl(accent), !dark);
+    setOrClear(['--sidebar-primary'], accentHsl, !dark);
+    setOrClear(['--sidebar-primary-foreground'], readableForegroundHsl(accent), !dark);
+    setOrClear(['--sidebar-ring'], accentHsl, !dark);
+    root.style.setProperty('--chart-1', dark ? ensureMinLightness(accentHsl, 55) : accentHsl);
   }
   if (secondaryHsl) {
-    root.style.setProperty('--secondary', secondaryHsl);
-    root.style.setProperty('--secondary-foreground', readableForegroundHsl(secondary));
-    root.style.setProperty('--chart-3', secondaryHsl);
+    setOrClear(['--secondary'], secondaryHsl, !dark || custom('THEME_SECONDARY'));
+    setOrClear(['--secondary-foreground'], readableForegroundHsl(secondary), !dark || custom('THEME_SECONDARY'));
+    root.style.setProperty('--chart-3', dark ? ensureMinLightness(secondaryHsl, 55) : secondaryHsl);
   }
-  if (backgroundHsl) root.style.setProperty('--background', backgroundHsl);
-  if (cardHsl) {
-    root.style.setProperty('--card', cardHsl);
-    root.style.setProperty('--popover', cardHsl);
-  }
-  if (textHsl) {
-    root.style.setProperty('--foreground', textHsl);
-    root.style.setProperty('--card-foreground', textHsl);
-    root.style.setProperty('--popover-foreground', textHsl);
-  }
+  setOrClear(['--background'], backgroundHsl, !dark || custom('THEME_BACKGROUND'));
+  setOrClear(['--card', '--popover'], cardHsl, !dark || custom('THEME_CARD'));
+  setOrClear(['--foreground', '--card-foreground', '--popover-foreground'], textHsl, !dark || custom('THEME_TEXT'));
 
-  root.classList.toggle('dark', (settings?.THEME_MODE || 'light') === 'dark');
+  root.classList.toggle('dark', dark);
 }

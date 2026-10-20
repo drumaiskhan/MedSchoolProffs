@@ -65,6 +65,10 @@ export const FIGURE_ANIM_CSS = `<style>
 .hs-a-rec{fill:#ffe27a;animation:hs-rec 2.4s ease-out infinite;animation-delay:var(--d,0s)}
 .hs-a-atp{animation:hs-atp 2.6s ease-out infinite;animation-delay:var(--d,0s)}
 .hs-a-scroll{animation:hs-scroll calc(6s / var(--hs-speed,1)) linear infinite}
+.hs-a-dots.sperm{stroke:#fff;stroke-width:3.4;--hs-flow:2.8s}
+.hs-a-dots.bile{stroke:#e3ff9a;stroke-width:3.2;--hs-flow:1.8s}
+.hs-a-dots.blue{stroke:#cfe6ff;stroke-width:3.2}
+.hs-a-dots.fat{stroke:#fff6c8;stroke-width:3}
 @media (prefers-reduced-motion:reduce){[class*="hs-a-"]{animation:none!important}}
 </style>`;
 
@@ -160,6 +164,28 @@ const dna = (svg: string) => {
     `</g></g>`;
 };
 
+// ---- v84: male reproductive tract, sperm, female tract, digestive organs, nephron, skin, villus -----
+// sperm are carried from the epididymis up the vas, over the bladder, to the ejaculatory duct and out the urethra
+const maleRepro = (svg: string) => svg + dots("M204,346 C228,338 232,302 228,274 C225,254 221,240 218,226 L218,40 C218,22 200,22 200,40 L200,100 C197,110 202,120 196,132 L194,136 C178,146 166,154 156,164 L152,190 C152,206 140,212 126,222 L116,236 L115,336", "sperm");
+const testis = (svg: string) => svg + dots("M150,150 C156,130 156,112 152,100 C176,88 206,124 208,196 C208,252 192,288 148,298 C190,318 218,268 216,196 C214,150 212,110 200,76 C196,60 194,30 194,0", "sperm");
+const sperm = (svg: string) => g("hs-a-swim", svg);
+const femaleRepro = (svg: string) => svg +
+  dots("M42,112 C46,92 58,80 76,78 C88,74 104,78 118,88 L140,100", "sperm") +
+  dots("M278,112 C274,92 262,80 244,78 C232,74 216,78 202,88 L180,100", "sperm");
+const stomach = (svg: string) => g("hs-a-breathe", svg + dots("M64,0 C66,24 80,48 92,70", "fat"), "animation-duration:5.5s;transform-origin:45% 55%");
+const hepatobiliary = (svg: string) => svg +
+  dots("M118,132 C136,126 150,130 160,144 L152,182 C154,206 166,226 190,246", "bile") +
+  dots("M206,128 C190,128 174,134 162,146 L160,144", "bile") +
+  dots("M236,232 C226,190 206,150 176,126", "blue");
+const nephron = (svg: string) => svg +
+  dots("M10,40 C26,46 40,52 52,56") +
+  dots("M92,64 C100,64 118,76 128,100 L128,300 C128,322 150,322 150,300 L150,150 C150,118 130,88 100,76 M104,36 C130,40 150,32 170,34 C196,40 204,60 204,90 L204,326", "urine");
+const skin = (svg: string) => svg + dots("M224,134 L224,4", "blue");
+const villus = (svg: string) => svg +
+  dots("M110,36 C108,70 112,120 110,178", "fat") +
+  dots("M84,52 C94,70 90,96 86,128 C84,150 92,166 98,176");
+const eye = (svg: string) => g("hs-a-breathe", svg, "animation-duration:6s;transform-origin:52% 50%");
+
 export const ANIMATIONS: Record<string, (svg: string) => string> = {
   "hs-heart": heart, "hs-lungs": lungs, "hs-rbc": rbc,
   "hs-neutrophil": wbc, "hs-lymphocyte": wbc, "hs-monocyte": wbc, "hs-eosinophil": wbc, "hs-basophil": wbc,
@@ -169,6 +195,8 @@ export const ANIMATIONS: Record<string, (svg: string) => string> = {
   "hs-virus": virus, "hs-phage": phage,
   "hs-neuron": neuron, "hs-synapse": synapse, "hs-kidney": kidney, "hs-alveolus": alveolus,
   "hs-artery-vein": arteryVein, "hs-animal-cell": animalCell, "hs-dna": dna,
+  "hs-male-repro": maleRepro, "hs-testis": testis, "hs-sperm": sperm, "hs-female-repro": femaleRepro, "hs-stomach": stomach,
+  "hs-hepatobiliary": hepatobiliary, "hs-nephron": nephron, "hs-skin": skin, "hs-villus": villus,
 };
 
 /** The figure's svg with its built-in motion added (unchanged if the figure has no animation). */
@@ -196,4 +224,17 @@ export const ANIMATION_NOTES: Record<string, string> = {
   "hs-artery-vein": "ALREADY ANIMATED: the artery pulses with each beat (--hs-beat:Xs), the vein stays calm.",
   "hs-animal-cell": "ALREADY ANIMATED: ATP sparks leave the mitochondria and vesicles travel ER to Golgi.",
   "hs-dna": "ALREADY ANIMATED: the helix keeps turning (scrolling); do not add your own motion. --hs-speed:2 doubles the speed.",
+  "hs-male-repro": "ALREADY ANIMATED: white sperm dots travel epididymis -> vas deferens -> over the bladder -> ejaculatory duct -> urethra (change the pace with --hs-flow:Xs on the <use>). Do not draw your own dots on that route.",
+  "hs-testis": "ALREADY ANIMATED: sperm dots move rete testis -> efferent ductules -> epididymis head/body/tail -> vas deferens (--hs-flow:Xs sets the pace).",
+  "hs-seminiferous": "Still picture (no built-in motion): add your own highlight/stage animation if useful, e.g. pulse the stage ring you are explaining.",
+  "hs-sperm": "ALREADY ANIMATED: the tail beats and the whole cell swims (--hs-speed:2 doubles the swimming speed); do not add msp-float.",
+  "hs-penis-section": "ALREADY ANIMATED: the corpora cavernosa swell and relax gently; to show erection vs flaccidity scale the <use> or add a CSS filter yourself.",
+  "hs-female-repro": "ALREADY ANIMATED: dots move along each uterine tube from the ovary toward the uterus (--hs-flow:Xs sets the pace).",
+  "hs-stomach": "ALREADY ANIMATED: slow churning of the whole stomach plus food moving down the oesophagus.",
+  "hs-hepatobiliary": "ALREADY ANIMATED: bile (green-yellow dots) flows hepatic ducts -> common bile duct -> duodenum and blood moves up the portal vein (--hs-flow:Xs).",
+  "hs-brain": "Still picture (no built-in motion): add your own pulses/arrows for the pathway you explain (use the landmark coordinates).",
+  "hs-eye": "ALREADY ANIMATED: a very slow breathing movement; add your own light rays or pupil size changes on top.",
+  "hs-nephron": "ALREADY ANIMATED: blood in the afferent arteriole and yellow filtrate flowing through the whole tubule to the collecting duct (--hs-flow:Xs).",
+  "hs-skin": "ALREADY ANIMATED: sweat rises up the eccrine duct to the pore (--hs-flow:Xs).",
+  "hs-villus": "ALREADY ANIMATED: absorbed fat moves down the central lacteal and nutrients down the capillary (--hs-flow:Xs).",
 };

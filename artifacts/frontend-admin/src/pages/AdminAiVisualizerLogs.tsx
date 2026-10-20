@@ -4,8 +4,8 @@
 //   Saved library  - every saved widget: search, filter (catalog / custom), sort, page, delete
 //   Activity       - what students asked for: filter by outcome, search, page, failures with raw AI output
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { Activity, AlertTriangle, BookMarked, CheckCircle2, ChevronRight, Library, Search, Sparkles, Wand2, Zap } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Activity, AlertTriangle, BookMarked, CheckCircle2, ChevronRight, Library, Loader2, Play, Search, Sparkles, Square, Wand2, Zap } from 'lucide-react';
 import { aiVisualizerAdminApi, type AiVisualizerLogEntry } from '@/lib/api';
 import { EmptyState, SectionHeader, cn } from '@/lib/shared';
 import { Chip, StatTiles } from '@/lib/admin-ui';
@@ -37,6 +37,66 @@ function Pager({ offset, limit, total, onChange }: { offset: number; limit: numb
 
 function SearchBox({ value, onChange, placeholder, testId }: { value: string; onChange: (v: string) => void; placeholder: string; testId: string }) {
   return <div className="relative min-w-[12rem] max-w-sm flex-1"><Search className="absolute left-3 top-2.5 text-muted-foreground" size={15} /><input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-xs outline-none" data-testid={testId} /></div>;
+}
+
+// ---------------------------------------------------------------- pre-generate the library
+// Fills every catalog topic that has no saved widget yet, in the background, so students never wait for
+// the first generation. Safe to stop / restart: only topics without a saved widget are ever generated.
+function PregenPanel() {
+  const qc = useQueryClient();
+  const [discipline, setDiscipline] = useState('');
+  const [amount, setAmount] = useState<number>(25);
+  const [speed, setSpeed] = useState<number>(2);
+  const cat = useQuery({ queryKey: ['admin-ai-visualizer-catalog'], queryFn: () => aiVisualizerAdminApi.catalog() });
+  const info = useQuery({
+    queryKey: ['admin-ai-visualizer-pregen', discipline],
+    queryFn: () => aiVisualizerAdminApi.pregenStatus(discipline || undefined),
+    refetchInterval: (q) => (q.state.data?.status.running ? 3000 : false),
+  });
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['admin-ai-visualizer-pregen'] }); qc.invalidateQueries({ queryKey: ['admin-ai-visualizer-catalog'] }); qc.invalidateQueries({ queryKey: ['admin-ai-visualizer-library'] }); };
+  const start = useMutation({ mutationFn: () => aiVisualizerAdminApi.pregenStart({ discipline: discipline || undefined, limit: amount || undefined, concurrency: speed }), onSuccess: refresh });
+  const stop = useMutation({ mutationFn: () => aiVisualizerAdminApi.pregenStop(), onSuccess: refresh });
+  const st = info.data?.status;
+  const running = !!st?.running;
+  const finished = st && !running && st.finishedAt;
+  const processed = st ? st.done + st.failed : 0;
+  const eta = st?.etaSeconds != null ? (st.etaSeconds >= 3600 ? `${Math.floor(st.etaSeconds / 3600)}h ${Math.round((st.etaSeconds % 3600) / 60)}m` : `${Math.max(1, Math.round(st.etaSeconds / 60))} min`) : null;
+  const err = (start.error as Error | null)?.message;
+  const amounts: Array<[number, string]> = [[25, '25 (test)'], [100, '100'], [500, '500'], [2000, '2,000'], [0, 'Everything left']];
+  return <div className="mb-5 rounded-2xl border border-primary/25 bg-primary/5 p-4" data-testid="card-ai-visualizer-pregen">
+    <div className="flex flex-wrap items-center gap-2"><Sparkles size={15} className="text-primary" /><h3 className="text-sm font-extrabold">Pre-generate the library</h3>
+      <span className="rounded-full bg-card px-2 py-0.5 text-[10px] font-bold text-muted-foreground">{(info.data?.pending ?? 0).toLocaleString()} topics still without a saved visualization</span></div>
+    <p className="mt-1.5 text-xs leading-5 text-muted-foreground">Builds the visualizations ahead of time, in the background, so every catalog topic opens instantly for all students with no AI wait. Each topic is one AI generation, so start with the test batch to check quality and cost, then scale up. You can stop and resume any time; finished topics are never regenerated.</p>
+    {!running && <div className="mt-3 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-bold text-muted-foreground" htmlFor="pregen-discipline">Subject</label>
+        <select id="pregen-discipline" value={discipline} onChange={(e) => setDiscipline(e.target.value)} className="h-9 rounded-xl border border-border bg-background px-3 text-xs" data-testid="select-pregen-discipline">
+          <option value="">All subjects</option>
+          {(cat.data?.disciplines ?? []).map((d) => <option key={d.id} value={d.id}>{d.name} ({(d.total - d.saved).toLocaleString()} left)</option>)}
+        </select>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-bold text-muted-foreground">How many</span>
+        {amounts.map(([n, label]) => <Chip key={n} active={amount === n} onClick={() => setAmount(n)} testId={`chip-pregen-amount-${n}`}>{label}</Chip>)}</div>
+      <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] font-bold text-muted-foreground">Speed</span>
+        {([[1, 'Gentle'], [2, 'Normal'], [3, 'Fast'], [4, 'Max']] as const).map(([n, label]) => <Chip key={n} active={speed === n} onClick={() => setSpeed(n)} testId={`chip-pregen-speed-${n}`}>{label}</Chip>)}</div>
+      <button type="button" onClick={() => start.mutate()} disabled={start.isPending || !(info.data?.pending)} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-pregen-start">
+        {start.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Start pre-generating
+      </button>
+      {err && <p className="text-xs font-semibold text-destructive">{err}</p>}
+    </div>}
+    {running && st && <div className="mt-3" data-testid="pregen-progress">
+      <div className="flex items-center justify-between gap-3 text-[11px]"><span className="inline-flex items-center gap-1.5 font-bold"><Loader2 size={12} className="animate-spin text-primary" /> {st.stopping ? 'Stopping after the current topics…' : 'Generating in the background'}</span>
+        <span className="font-mono-app text-muted-foreground">{processed.toLocaleString()} / {st.target.toLocaleString()}{eta ? ` · about ${eta} left` : ''}</span></div>
+      <div className="mt-2"><Bar value={processed} total={st.target} /></div>
+      <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-muted-foreground"><span><b className="text-foreground">{st.done.toLocaleString()}</b> saved</span><span><b className={st.failed ? 'text-destructive' : 'text-foreground'}>{st.failed.toLocaleString()}</b> failed</span></div>
+      {!!st.active.length && <p className="mt-2 truncate text-[11px] text-muted-foreground">Now: {st.active.join(' · ')}</p>}
+      <button type="button" onClick={() => stop.mutate()} disabled={stop.isPending || st.stopping} className="mt-3 inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-xs font-extrabold disabled:opacity-50" data-testid="button-pregen-stop"><Square size={12} /> Stop</button>
+    </div>}
+    {finished && st && <div className="mt-3 rounded-xl bg-card px-3 py-2.5 text-[11px]" data-testid="pregen-result">
+      <span className="font-extrabold">Last run:</span> {st.done.toLocaleString()} saved, {st.failed.toLocaleString()} failed{st.stoppedReason ? ` — ${st.stoppedReason}` : ''}.
+      {!!st.recentErrors.length && <ul className="mt-1.5 space-y-0.5 text-muted-foreground">{st.recentErrors.slice(0, 3).map((e) => <li key={e.at + e.prompt} className="truncate">• {e.prompt}: {e.error}</li>)}</ul>}
+    </div>}
+  </div>;
 }
 
 // ---------------------------------------------------------------- catalog coverage
@@ -173,7 +233,7 @@ function AdminAiVisualizerLogs() {
         ].map((c) => <button key={c.id} onClick={() => setTab(c.id)} className="rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted/50" data-testid={`card-visualizer-goto-${c.id}`}><div className="flex items-center justify-between text-xs font-extrabold">{c.title}<ChevronRight size={14} className="text-primary" /></div><p className="mt-1 text-[11px] text-muted-foreground">{c.body}</p></button>)}
       </div>
     </div>}
-    {tab === 'catalog' && <CatalogCoverage />}
+    {tab === 'catalog' && <><PregenPanel /><CatalogCoverage /></>}
     {tab === 'library' && <SavedLibrary />}
     {tab === 'activity' && <ActivityLog />}
   </div>;

@@ -10,6 +10,7 @@ import { generateWidget } from "../lib/aiWidget";
 import { findSavedWidget, saveWidget, LIBRARY_VERSION } from "../lib/widgetLibrary";
 import { CATALOG_DISCIPLINES, catalogKeySet, getCatalog } from "../lib/visualizerCatalog";
 import { getAllSettings } from "../lib/settings";
+import { countPending, getPregenStatus, startPregen, stopPregen } from "../lib/visualizerPregen";
 
 const router: IRouter = Router();
 
@@ -80,8 +81,8 @@ async function runJob(jobId: string, userId: number, prompt: string, mode: "auto
       } catch (err) { console.error("widget library lookup failed (generating instead)", err); }
     }
     const visualization = await Promise.race([
-      generateWidget(prompt),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new InvalidVisualizationError("The visualization was too long to complete in time — try a simpler or more specific prompt.")), 255_000).unref?.()),
+      generateWidget(prompt, { parallel: 3 }), // 3 requests at once, first good result wins (faster for students)
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("The AI service is busy right now. Please try again in a moment.")), 600_000).unref?.()),
     ]);
     await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "success", visualizationType: visualization.type });
     try { await saveWidget(prompt, visualization); } catch (err) { console.error("saving widget to library failed", err); }
@@ -94,8 +95,8 @@ async function runJob(jobId: string, userId: number, prompt: string, mode: "auto
     try { await db.insert(aiVisualizerLogsTable).values({ userId, prompt, status: "error", errorMessage, rawResponse }); } catch { /* logging is best-effort */ }
     if (err instanceof AiNotConfiguredError) Object.assign(job, { status: "error", httpStatus: 503, error: err.message });
     else if (err instanceof InvalidVisualizationError) {
-      const timedOut = err.issues.includes("too long to complete in time");
-      Object.assign(job, { status: "error", httpStatus: 502, error: timedOut ? err.issues : "The AI produced an unusable visualization. Try rephrasing your prompt or regenerating." });
+      const timedOut = /ran out of time|too long to complete/i.test(err.issues);
+      Object.assign(job, { status: "error", httpStatus: 502, error: timedOut ? "The AI service is busy right now. Please try again in a moment." : "The AI produced an unusable visualization. Try rephrasing your prompt or regenerating." });
     } else Object.assign(job, { status: "error", httpStatus: 502, error: "Couldn't generate a visualization right now. Try again shortly." });
   }
 }
@@ -240,6 +241,35 @@ router.delete("/admin/ai-visualizer-library", requireAdmin, async (_req, res): P
   await db.delete(aiVisualizerLibraryTable);
   savedKeysCache = null;
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Admin: bulk pre-generate the library so every catalog topic opens instantly for everyone
+// ---------------------------------------------------------------------------
+const PregenBody = z.object({
+  discipline: z.string().max(60).optional(),
+  group: z.string().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(10000).optional(),
+  concurrency: z.coerce.number().int().min(1).max(4).optional(),
+});
+
+router.get("/admin/ai-visualizer-pregen", requireAdmin, async (req, res): Promise<void> => {
+  const discipline = typeof req.query.discipline === "string" && req.query.discipline ? req.query.discipline : undefined;
+  const group = typeof req.query.group === "string" && req.query.group ? req.query.group : undefined;
+  res.json({ status: getPregenStatus(), ...(await countPending({ discipline, group })) });
+});
+
+router.post("/admin/ai-visualizer-pregen/start", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = PregenBody.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }); return; }
+  const result = await startPregen(parsed.data);
+  if (!result.started) { res.status(409).json({ error: result.reason }); return; }
+  savedKeysCache = null;
+  res.status(202).json({ ok: true, target: result.target });
+});
+
+router.post("/admin/ai-visualizer-pregen/stop", requireAdmin, (_req, res): void => {
+  res.json({ ok: stopPregen() });
 });
 
 export default router;
