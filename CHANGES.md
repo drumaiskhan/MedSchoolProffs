@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ## v97 — Books: add a book from a Google Drive link
 - Admin -> Books has a new "paste a Google Drive link" field (instead of choosing a PDF). Fixes the Cloudinary per-file size limit for big books: the server reads the PDF straight from Drive and the secure reader renders it as before (watermarked page images, highlights, pen, search).
 - NEW `api-server/src/lib/driveLink.ts` (parse share/open/uc links, canonical form, fetch with the large-file virus-scan confirm step, clear errors for not-shared / quota). `loadBook` uses it for Drive paths; `POST /books` stores one canonical link. No schema change. The file must be shared as "Anyone with the link".
@@ -7,6 +8,8 @@
 ## v96 — Cloudinary upload errors now show the real reason
 - `uploadToCloudinary` caught Cloudinary failures with `err instanceof Error`, but the SDK rejects with a plain `{ message, http_code }` object, so every failure was reported as just "upload failed". It now extracts the real message and, for size-limit errors, explains that the cap is the Cloudinary plan's per-file limit (not this app's 300 MB limit).
 
+=======
+>>>>>>> ab5cad7b55740bfac60f6fe943a432e41cb7951a
 ## v95 — Book reader: prominent Pen & Highlighter, freehand pen with many colours
 - **Pen (new):** freehand drawing on book pages with a 16-colour palette + any custom colour (colour picker), 4 thicknesses (Fine/Medium/Bold/Marker) and an Eraser (drag over a stroke to remove it). Strokes show instantly (optimistic), scale with zoom, and are saved to the account like highlights. Tap a stroke in Read mode to recolour or remove it. Pen strokes are kept out of the Notes list (they only count in the Save message).
 - **Highlighter:** palette grown from 4 to 10 colours + custom colour picker; old yellow/green/pink/blue highlights still work.
