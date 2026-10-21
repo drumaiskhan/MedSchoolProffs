@@ -1,3 +1,19 @@
+## v97 — Books: add a book from a Google Drive link
+- Admin -> Books has a new "paste a Google Drive link" field (instead of choosing a PDF). Fixes the Cloudinary per-file size limit for big books: the server reads the PDF straight from Drive and the secure reader renders it as before (watermarked page images, highlights, pen, search).
+- NEW `api-server/src/lib/driveLink.ts` (parse share/open/uc links, canonical form, fetch with the large-file virus-scan confirm step, clear errors for not-shared / quota). `loadBook` uses it for Drive paths; `POST /books` stores one canonical link. No schema change. The file must be shared as "Anyone with the link".
+- Cover: not auto-generated for Drive books (the browser can't read the file); upload a cover image in the form if wanted.
+- Not tested against live Google Drive here. Drive isn't a CDN: a very popular file can hit Drive's download quota, and after a server restart the first reader re-downloads the file.
+
+## v96 — Cloudinary upload errors now show the real reason
+- `uploadToCloudinary` caught Cloudinary failures with `err instanceof Error`, but the SDK rejects with a plain `{ message, http_code }` object, so every failure was reported as just "upload failed". It now extracts the real message and, for size-limit errors, explains that the cap is the Cloudinary plan's per-file limit (not this app's 300 MB limit).
+
+## v95 — Book reader: prominent Pen & Highlighter, freehand pen with many colours
+- **Pen (new):** freehand drawing on book pages with a 16-colour palette + any custom colour (colour picker), 4 thicknesses (Fine/Medium/Bold/Marker) and an Eraser (drag over a stroke to remove it). Strokes show instantly (optimistic), scale with zoom, and are saved to the account like highlights. Tap a stroke in Read mode to recolour or remove it. Pen strokes are kept out of the Notes list (they only count in the Save message).
+- **Highlighter:** palette grown from 4 to 10 colours + custom colour picker; old yellow/green/pink/blue highlights still work.
+- **Prominent tools:** the small header icons are replaced by a floating bottom dock with large labelled buttons (Read, Pen, Highlight, Area, Eraser), a colour chip on the active tool and the palette/size row right above it. Shortcuts: P pen, H highlighter, E eraser (press again to go back to Read).
+- **Storage/API (no migration):** new highlight `kind: 'ink'`; the stroke ({pts, w}) is stored as JSON in the existing `rect` TEXT column and returned as `ink`. `color` accepts the 4 legacy names or `#rrggbb`. Pen strokes have their own cap (20,000/book); highlights keep 5,000. New files `lib/reader-palette.ts`; helpers added to `lib/reader-geometry.ts`.
+- NOTE: not built/typechecked here (no node_modules): changed files parse and the geometry/palette modules typecheck under `tsc --strict`. Run `pnpm install --frozen-lockfile && pnpm run typecheck && pnpm run build:student`, and `tests/integration/02-secure-reader.mjs`.
+
 ## v89 — Journal-style notebook + automatic MCQ highlighter
 - **Notebook (Windows 11 Journal style):** new full-screen handwriting editor (`components/study/InkEditor.tsx`, engine `lib/ink.ts`). Pen, pencil (works in every colour), highlighter, stroke eraser (pen eraser end supported), lasso (move / resize / rotate / recolour / duplicate / delete), ruler with snapping, undo/redo, pinch + button zoom, paper (lined/grid/dots/blank), per-tool colour + thickness flyout, custom colour, touch-writing toggle (stylus writes, fingers scroll), autosave. Long pages are painted in tile canvases (safe on iOS).
 - "Write by hand" button on the Notebook page; handwritten notes show a lazy vector preview and "Open page". The practice-screen notes panel also has "Write by hand" (same note, attached to the question).
@@ -1253,3 +1269,6 @@ Student app: any request answered with that code (hand-written `request()` in li
 - Free books skip the anti-capture guards (veil/devtools/native screenshot block); paid books keep them. Server watermark unchanged.
 - New table med_book_bookmarks (created automatically by ensureSchema; included in full backup + MySQL restore). New endpoints: GET /books/:id/outline, GET /books/:id/search, GET/POST/DELETE /books/:id/bookmarks.
 - Journal (handwritten notebook): new **New page** button in the editor toolbar. It saves the current page, then opens a fresh blank page on the same paper (the new note is created on its first stroke).
+- Reader: free books that can't be drawn (not a PDF, external link, unreachable file) show an 'Open the file instead' button on any failure.
+- Admins previewing the student Books page now open books in the reader too (was still opening the raw file).
+- Admin book upload limit raised from 50MB to 300MB (matches the reader's cap); Cloudinary upload timeout 60s → 300s. Fixes 'File is too large' when adding big PDFs.

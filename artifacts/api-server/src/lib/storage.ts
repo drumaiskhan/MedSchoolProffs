@@ -125,6 +125,27 @@ export function setCachedCloudinaryCloudName(name: string | null, slot: Cloudina
   if (name) cachedCloudinaryCloudNameBySlot[slot] = name;
 }
 
+/**
+ * Cloudinary's SDK rejects with a plain object ({ message, http_code }), NOT an
+ * Error, so `err instanceof Error` was always false and every failure showed
+ * only "upload failed". Pull out the real message, and explain the most common
+ * cause (the account's per-file size cap, which is a Cloudinary PLAN limit and
+ * is unaffected by this app's own upload limit).
+ */
+function cloudinaryErrorMessage(err: unknown, bytes: number): string {
+  let msg = "upload failed";
+  if (err instanceof Error) msg = err.message;
+  else if (err && typeof err === "object") {
+    const o = err as { message?: unknown; error?: { message?: unknown } };
+    msg = String(o.message ?? o.error?.message ?? JSON.stringify(err)).slice(0, 300);
+  } else if (typeof err === "string") msg = err;
+  if (/file size too large|maximum is|too large|exceeds|413/i.test(msg)) {
+    const mb = (bytes / 1048576).toFixed(1);
+    msg += ` — this file is ${mb} MB. Cloudinary limits the size of a single file by plan (free plan is about 10 MB), so raise the plan, add a second Cloudinary account in Settings -> Storage, or compress the PDF.`;
+  }
+  return msg;
+}
+
 async function uploadToCloudinary(buffer: Buffer, safeName: string, slot: CloudinarySlot = ""): Promise<{ path: string } | { error: string }> {
   const config = await resolveCloudinaryConfig(slot);
   if (!config) return { error: `Cloudinary ${slotName(slot)} slot is not configured (missing cloud name, API key, or API secret).` };
@@ -147,7 +168,7 @@ async function uploadToCloudinary(buffer: Buffer, safeName: string, slot: Cloudi
     // that matches what Cloudinary will actually serve — see resolveFileUrl.
     const publicId = safeName;
     const result = await new Promise<{ public_id: string; resource_type: string; format?: string }>((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ public_id: publicId, resource_type: "auto", timeout: 60000 }, (err, res) => {
+      const stream = cloudinary.uploader.upload_stream({ public_id: publicId, resource_type: "auto", timeout: 300000 }, (err, res) => {
         if (err || !res) { reject(err ?? new Error("Cloudinary upload returned no result")); return; }
         resolve({ public_id: res.public_id, resource_type: res.resource_type, format: res.format });
       });
@@ -172,7 +193,7 @@ async function uploadToCloudinary(buffer: Buffer, safeName: string, slot: Cloudi
     return { path: `${prefix}:${result.resource_type}/${encoded}` };
   } catch (err) {
     logger.error({ err, slot: slotName(slot) }, "Cloudinary upload failed");
-    return { error: `Cloudinary (${slotName(slot)}): ${err instanceof Error ? err.message : "upload failed"}` };
+    return { error: `Cloudinary (${slotName(slot)}): ${cloudinaryErrorMessage(err, buffer.length)}` };
   }
 }
 

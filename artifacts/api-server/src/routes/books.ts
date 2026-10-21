@@ -69,7 +69,8 @@ function serializeBook(row: typeof booksTable.$inferSelect, opts?: { locked?: bo
 router.get("/books", requireAuth, async (req, res): Promise<void> => {
   const isAdmin = isAdminRole(req.user!.role);
   const rows = await db.select().from(booksTable).where(eq(booksTable.active, true));
-  if (isAdmin) { res.json(rows.map((row) => serializeBook(row))); return; }
+  // Admins previewing the student app read in the reader too (resolveBookAccess lets them read anything); the file link stays for them.
+  if (isAdmin) { res.json(rows.map((row) => ({ ...serializeBook(row), secureReader: true }))); return; }
   const targeting = await getStudentTargeting(req.user!.id);
   const visibleModuleIds = await getVisibleModuleIds(targeting);
   const purchases = await db.select().from(bookPurchasesTable).where(eq(bookPurchasesTable.userId, req.user!.id));
@@ -101,6 +102,8 @@ router.get("/admin/books", requireAdmin, async (_req, res): Promise<void> => {
   res.json(rows.map((row) => serializeBook(row)));
 });
 
+import { canonicalDriveLink, parseDriveFileId } from "../lib/driveLink";
+
 const CreateBookBody = z.object({
   title: z.string().min(1),
   author: z.string().min(1).optional(),
@@ -119,6 +122,13 @@ const CreateBookBody = z.object({
 router.post("/books", requireAdmin, async (req, res): Promise<void> => {
   const parsed = CreateBookBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid book" }); return; }
+  // A pasted Google Drive link is stored in one canonical form; any other link/path is kept as given.
+  let storagePath = parsed.data.storagePath.trim();
+  if (/^https?:\/\/(drive|docs)\.google\.com\//i.test(storagePath)) {
+    const driveId = parseDriveFileId(storagePath);
+    if (!driveId) { res.status(400).json({ error: "That doesn't look like a Google Drive file link. Use the file's Share -> Copy link." }); return; }
+    storagePath = canonicalDriveLink(driveId);
+  }
   const [row] = await db.insert(booksTable).values({
     title: parsed.data.title,
     author: parsed.data.author ?? null,
@@ -127,7 +137,7 @@ router.post("/books", requireAdmin, async (req, res): Promise<void> => {
     topicId: parsed.data.topicId ?? null,
     programTargetKind: parsed.data.programTargetKind ? parsed.data.programTargetKind.trim().toUpperCase() : null,
     yearTargetNumber: parsed.data.yearTargetNumber ?? null,
-    storagePath: parsed.data.storagePath,
+    storagePath,
     coverImagePath: parsed.data.coverImagePath ?? null,
     isFree: parsed.data.isFree ?? false,
     price: parsed.data.isFree ? null : (parsed.data.price != null ? String(parsed.data.price) : null),

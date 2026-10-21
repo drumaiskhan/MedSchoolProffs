@@ -20,6 +20,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveFileUrl } from "./storage";
 import { logger } from "./logger";
+import { fetchDriveFile, parseDriveFileId } from "./driveLink";
 
 // ---- pdf.js (lazy: only loaded the first time someone opens a book) --------
 
@@ -118,7 +119,8 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
   const job = (async () => {
     const url = resolveFileUrl(storagePath);
     if (!url) throw new BookUnavailableError("This book's file can't be located right now.");
-    const res = await fetch(url, { signal: AbortSignal.timeout(120_000) }).catch((err) => { throw new BookUnavailableError(`Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
+    const driveId = parseDriveFileId(url);
+    const res = await (driveId ? fetchDriveFile(driveId, 180_000) : fetch(url, { signal: AbortSignal.timeout(120_000) })).catch((err) => { throw new BookUnavailableError(driveId && err instanceof Error ? err.message : `Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
     if (!res.ok) throw new BookUnavailableError(`The book file could not be fetched (${res.status}).`);
     const len = Number(res.headers.get("content-length") || 0);
     if (len > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
