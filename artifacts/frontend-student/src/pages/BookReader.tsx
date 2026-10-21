@@ -406,7 +406,8 @@ export default function BookReader() {
   if (info.isError || !info.data) {
     const err = info.error instanceof ApiRequestError ? info.error : null;
     const listed = (listQ.data as AdminBookStudent[] | undefined)?.find((b) => b.id === bookId);
-    const plainUrl = err?.status === 415 && listed && !listed.locked ? resolveUploadUrl(listed.storagePath) : null;
+    // A free book that the reader can't draw (not a PDF, external link, unreachable file) still opens as a plain file.
+    const plainUrl = err?.status !== 403 && listed && !listed.locked && listed.isFree ? resolveUploadUrl(listed.storagePath) : null;
     return <div className="mx-auto grid min-h-[50vh] max-w-md place-items-center text-center"><div>
       <LockKeyhole className="mx-auto text-muted-foreground" size={28} />
       <h2 className="mt-3 text-lg font-extrabold">{err?.status === 403 ? 'This book is locked' : "Couldn't open this book"}</h2>

@@ -1253,3 +1253,6 @@ Student app: any request answered with that code (hand-written `request()` in li
 - Free books skip the anti-capture guards (veil/devtools/native screenshot block); paid books keep them. Server watermark unchanged.
 - New table med_book_bookmarks (created automatically by ensureSchema; included in full backup + MySQL restore). New endpoints: GET /books/:id/outline, GET /books/:id/search, GET/POST/DELETE /books/:id/bookmarks.
 - Journal (handwritten notebook): new **New page** button in the editor toolbar. It saves the current page, then opens a fresh blank page on the same paper (the new note is created on its first stroke).
+- Reader: free books that can't be drawn (not a PDF, external link, unreachable file) show an 'Open the file instead' button on any failure.
+- Admins previewing the student Books page now open books in the reader too (was still opening the raw file).
+- Admin book upload limit raised from 50MB to 300MB (matches the reader's cap); Cloudinary upload timeout 60s → 300s. Fixes 'File is too large' when adding big PDFs.

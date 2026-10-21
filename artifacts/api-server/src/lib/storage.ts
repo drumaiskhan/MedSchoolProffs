@@ -147,7 +147,7 @@ async function uploadToCloudinary(buffer: Buffer, safeName: string, slot: Cloudi
     // that matches what Cloudinary will actually serve — see resolveFileUrl.
     const publicId = safeName;
     const result = await new Promise<{ public_id: string; resource_type: string; format?: string }>((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ public_id: publicId, resource_type: "auto", timeout: 60000 }, (err, res) => {
+      const stream = cloudinary.uploader.upload_stream({ public_id: publicId, resource_type: "auto", timeout: 300000 }, (err, res) => {
         if (err || !res) { reject(err ?? new Error("Cloudinary upload returned no result")); return; }
         resolve({ public_id: res.public_id, resource_type: res.resource_type, format: res.format });
       });

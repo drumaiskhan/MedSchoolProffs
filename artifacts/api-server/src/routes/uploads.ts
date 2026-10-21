@@ -36,6 +36,22 @@ const uploadLarge = multer({
   },
 });
 
+// Textbook / notes PDFs for the Books library are routinely well over 50MB (scanned
+// notes especially). 300MB matches MAX_BOOK_BYTES in lib/bookReader.ts — anything bigger
+// couldn't be opened in the reader anyway.
+const uploadBook = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 300 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+    if (!allowed.includes(file.mimetype)) {
+      cb(new Error("Only PNG, JPEG, WEBP, or PDF files are allowed"));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
 const uploadFavicon = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 1 * 1024 * 1024 }, // 1MB — favicons are small
@@ -137,7 +153,7 @@ router.post("/uploads/resource", requireAuth, uploadLarge.single("file"), async 
 });
 
 // Books library — admin-only PDF (and optional cover image) uploads.
-router.post("/uploads/book", requireAdmin, uploadLarge.single("file"), async (req, res): Promise<void> => {
+router.post("/uploads/book", requireAdmin, uploadBook.single("file"), async (req, res): Promise<void> => {
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded" });
     return;

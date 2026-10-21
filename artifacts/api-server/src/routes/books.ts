@@ -69,7 +69,8 @@ function serializeBook(row: typeof booksTable.$inferSelect, opts?: { locked?: bo
 router.get("/books", requireAuth, async (req, res): Promise<void> => {
   const isAdmin = isAdminRole(req.user!.role);
   const rows = await db.select().from(booksTable).where(eq(booksTable.active, true));
-  if (isAdmin) { res.json(rows.map((row) => serializeBook(row))); return; }
+  // Admins previewing the student app read in the reader too (resolveBookAccess lets them read anything); the file link stays for them.
+  if (isAdmin) { res.json(rows.map((row) => ({ ...serializeBook(row), secureReader: true }))); return; }
   const targeting = await getStudentTargeting(req.user!.id);
   const visibleModuleIds = await getVisibleModuleIds(targeting);
   const purchases = await db.select().from(bookPurchasesTable).where(eq(bookPurchasesTable.userId, req.user!.id));
