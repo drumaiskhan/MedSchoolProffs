@@ -260,11 +260,14 @@ export type WordBox = [number, number, number, number];
 export interface BookBookmark { id: number; page: number; label: string | null; createdAt: string }
 export interface BookOutlineItem { title: string; page: number; depth: number }
 export interface BookSearchHit { page: number; start: number; end: number }
-export type HighlightColor = 'yellow' | 'green' | 'pink' | 'blue';
-export interface BookHighlight { id: number; page: number; kind: 'words' | 'area'; startWord: number | null; endWord: number | null; rect: { x: number; y: number; w: number; h: number } | null; color: HighlightColor; note: string | null; createdAt: string }
+// A colour is one of the original names (older highlights) or a "#rrggbb" hex.
+export type HighlightColor = string;
+export interface BookInk { pts: Array<[number, number]>; w: number }
+export interface BookHighlight { id: number; page: number; kind: 'words' | 'area' | 'ink'; startWord: number | null; endWord: number | null; rect: { x: number; y: number; w: number; h: number } | null; ink?: BookInk | null; color: HighlightColor; note: string | null; createdAt: string }
 export type NewBookHighlight =
   | { kind: 'words'; page: number; startWord: number; endWord: number; color?: HighlightColor; note?: string | null }
-  | { kind: 'area'; page: number; rect: { x: number; y: number; w: number; h: number }; color?: HighlightColor; note?: string | null };
+  | { kind: 'area'; page: number; rect: { x: number; y: number; w: number; h: number }; color?: HighlightColor; note?: string | null }
+  | { kind: 'ink'; page: number; ink: BookInk; color?: HighlightColor; note?: string | null };
 
 export const booksApi = {
   readerInfo: (id: number) => request<BookReaderInfo>(`/books/${id}/reader`),

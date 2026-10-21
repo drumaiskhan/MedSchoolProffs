@@ -67,6 +67,10 @@ sql(`insert into med_book_purchases(user_id,book_id,book_title,amount,currency,m
 assert.equal((await s4.req('GET', `/books/${paid}/highlights`)).json.length, 0);
 assert.equal((await s4.req('DELETE', `/books/${paid}/highlights/${hid}`)).status, 404); ok("another student can't see or delete my highlights");
 assert.equal((await s2.req('DELETE', `/books/${paid}/highlights/${hid}`)).status, 200); assert.equal((await s2.req('GET', `/books/${paid}/highlights`)).json.length, 1); ok('delete own highlight');
+r = await s2.req('POST', `/books/${paid}/highlights`, { kind: 'ink', page: 1, ink: { pts: [[0.1, 0.1], [0.2, 0.15], [0.3, 0.12]], w: 0.0035 }, color: '#ef4444' }); assert.equal(r.status, 201, r.text);
+assert.equal(r.json.kind, 'ink'); assert.equal(r.json.color, '#ef4444'); assert.equal(r.json.ink.pts.length, 3); assert.equal(r.json.rect, null);
+assert.equal((await s2.req('POST', `/books/${paid}/highlights`, { kind: 'ink', page: 1, ink: { pts: [[2, 0.1]], w: 0.0035 } })).status, 400);
+assert.equal((await s2.req('POST', `/books/${paid}/highlights`, { kind: 'area', page: 2, rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 }, color: 'not-a-colour' })).status, 400); ok('pen strokes + hex colours: create, validate');
 sql(`update med_book_highlights set file_key='old'`); assert.equal((await s2.req('GET', `/books/${paid}/highlights`)).json.length, 0); ok('highlights hidden when the book file changed');
 
 // progress

@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'wouter';
 import {
-  ArrowLeft, BookOpen, BoxSelect, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, EyeOff, Highlighter, List, ListOrdered,
+  ArrowLeft, BookOpen, BoxSelect, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Eraser, EyeOff, Highlighter, List, ListOrdered, PenLine,
   LockKeyhole, Maximize, Minimize, MousePointer2, Save, Search, ShieldCheck, Sun, Moon, Trash2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import {
@@ -30,11 +30,11 @@ import {
 } from '@/lib/api';
 import { BrandSpinner, cn, useFocusMode } from '@/lib/shared';
 import { toast } from '@/hooks/use-toast';
-import { hitWord, lineRects, type Rect } from '@/lib/reader-geometry';
+import { hitWord, inkNear, inkPath, lineRects, simplifyInk, type InkPts, type Rect } from '@/lib/reader-geometry';
+import { colorHex, HIGHLIGHTER_COLORS, isHex, PEN_COLORS, PEN_SIZES } from '@/lib/reader-palette';
 import { enableScreenshotGuard, disableScreenshotGuard } from '@/lib/nativeScreenshotGuard';
 
-const COLORS: Record<HighlightColor, string> = { yellow: '#ffd93b', green: '#5fd08a', pink: '#ff8fab', blue: '#6fb3ff' };
-type Mode = 'read' | 'text' | 'area';
+type Mode = 'read' | 'text' | 'area' | 'pen' | 'erase';
 type Theme = 'light' | 'sepia' | 'night';
 type PanelTab = 'highlights' | 'bookmarks' | 'contents' | 'search';
 type Found = { start: number; end: number; active: boolean };
@@ -106,9 +106,9 @@ function useDevtoolsGuard(enabled: boolean): boolean {
 
 // ---------------------------------------------------------------------------
 
-function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, onCreate, onOpen, pageRef }: {
-  bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor;
-  onCreate: (h: NewBookHighlight) => void; onOpen: (h: BookHighlight) => void; pageRef: (el: HTMLDivElement | null) => void;
+function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, onCreate, onOpen, onErase, pageRef }: {
+  bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number;
+  onCreate: (h: NewBookHighlight) => void; onOpen: (h: BookHighlight) => void; onErase: (id: number) => void; pageRef: (el: HTMLDivElement | null) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -116,6 +116,7 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
   const [drawnWidth, setDrawnWidth] = useState(0);
   const [failed, setFailed] = useState<string | null>(null);
   const height = Math.round(widthPx * (size.h / size.w));
+  const aspect = size.h / size.w;
 
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
@@ -149,15 +150,36 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
 
   // ---- selection (text range / area rectangle) ----
   const [sel, setSel] = useState<{ a: number; b: number } | { rect: Rect; x0: number; y0: number } | null>(null);
+  const inkRef = useRef<InkPts | null>(null);
+  const [draft, setDraft] = useState<InkPts | null>(null);
+  const erasing = useRef(false);
+  const strokes = useMemo(() => highlights.filter((h) => h.kind === 'ink' && h.ink), [highlights]);
+  const eraseAt = (x: number, y: number) => { for (const h of strokes) if (h.id > 0 && h.ink && inkNear(h.ink.pts, x, y, aspect, Math.max(0.012, h.ink.w * 1.5))) onErase(h.id); };
   const toNorm = (e: React.PointerEvent) => { const r = boxRef.current!.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
   const down = (e: React.PointerEvent) => {
     if (mode === 'read') return;
     const { x, y } = toNorm(e);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (mode === 'pen') { inkRef.current = [[x, y]]; setDraft([[x, y]]); return; }
+    if (mode === 'erase') { erasing.current = true; eraseAt(x, y); return; }
     if (mode === 'text') { const i = hitWord(words, x, y); if (i !== null) setSel({ a: i, b: i }); }
     else setSel({ rect: { x, y, w: 0, h: 0 }, x0: x, y0: y });
   };
   const move = (e: React.PointerEvent) => {
+    if (mode === 'erase') { if (erasing.current) { const { x, y } = toNorm(e); eraseAt(x, y); } return; }
+    if (mode === 'pen') {
+      if (!inkRef.current) return;
+      const edge = 64; if (e.clientY < edge) window.scrollBy(0, -(edge - e.clientY) * 0.5); else if (e.clientY > window.innerHeight - edge) window.scrollBy(0, (e.clientY - (window.innerHeight - edge)) * 0.5);
+      // Coalesced events keep fast pen strokes smooth instead of showing straight jumps.
+      const evs = typeof e.nativeEvent.getCoalescedEvents === 'function' ? e.nativeEvent.getCoalescedEvents() : [];
+      const r = boxRef.current!.getBoundingClientRect();
+      for (const ev of evs.length ? evs : [e.nativeEvent]) {
+        const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+        const last = inkRef.current[inkRef.current.length - 1];
+        if (Math.hypot(x - last[0], (y - last[1]) * aspect) > 0.0012) inkRef.current.push([x, y]);
+      }
+      setDraft([...inkRef.current]); return;
+    }
     if (!sel) return; const { x, y } = toNorm(e);
     if ('a' in sel) { const i = hitWord(words, x, y); if (i !== null) setSel({ a: sel.a, b: i }); }
     else setSel({ ...sel, rect: { x: Math.min(x, sel.x0), y: Math.min(y, sel.y0), w: Math.abs(x - sel.x0), h: Math.abs(y - sel.y0) } });
@@ -169,6 +191,12 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
     else if (e.clientY > window.innerHeight - EDGE) window.scrollBy(0, (e.clientY - (window.innerHeight - EDGE)) * 0.5);
   };
   const up = () => {
+    if (mode === 'erase') { erasing.current = false; return; }
+    if (mode === 'pen') {
+      const pts = inkRef.current; inkRef.current = null; setDraft(null);
+      if (pts && pts.length) onCreate({ kind: 'ink', page: pageNo, ink: { pts: simplifyInk(pts, aspect), w: penWidth }, color });
+      return;
+    }
     if (!sel) return;
     if ('a' in sel) onCreate({ kind: 'words', page: pageNo, startWord: Math.min(sel.a, sel.b), endWord: Math.max(sel.a, sel.b), color });
     else if (sel.rect.w > 0.01 && sel.rect.h > 0.01) onCreate({ kind: 'area', page: pageNo, rect: { x: sel.rect.x, y: sel.rect.y, w: Math.min(sel.rect.w, 1 - sel.rect.x), h: Math.min(sel.rect.h, 1 - sel.rect.y) }, color });
@@ -182,14 +210,22 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
     <canvas ref={canvasRef} className="pointer-events-none block h-full w-full select-none" style={{ WebkitUserSelect: 'none' }} aria-label={`Page ${pageNo}`} />
     {!drawnWidth && !failed && <div className="absolute inset-0 grid place-items-center text-muted-foreground"><BrandSpinner size={22} /></div>}
     {failed && <div className="absolute inset-0 grid place-items-center p-6 text-center text-xs font-semibold text-destructive">{failed}</div>}
-    <div className="absolute inset-0" style={{ touchAction: mode === 'read' ? 'auto' : 'none', cursor: mode === 'text' ? 'text' : mode === 'area' ? 'crosshair' : 'default', pointerEvents: mode === 'read' ? 'none' : 'auto' }}
-      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setSel(null)} data-testid={`layer-page-${pageNo}`}>
+    <div className="absolute inset-0" style={{ touchAction: mode === 'read' ? 'auto' : 'none', cursor: mode === 'text' ? 'text' : mode === 'area' || mode === 'pen' ? 'crosshair' : mode === 'erase' ? 'cell' : 'default', pointerEvents: mode === 'read' ? 'none' : 'auto' }}
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { setSel(null); inkRef.current = null; setDraft(null); erasing.current = false; }} data-testid={`layer-page-${pageNo}`}>
       {sel && ('a' in sel ? lineRects(words, Math.min(sel.a, sel.b), Math.max(sel.a, sel.b)).map((r, i) => <div key={i} style={rectStyle(r, { background: 'rgba(80,140,255,.35)' })} />) : <div style={rectStyle(sel.rect, { border: '1.5px dashed #3b82f6', background: 'rgba(80,140,255,.15)' })} />)}
     </div>
     {highlights.map((h) => {
+      if (h.kind === 'ink') return null;
       const rects = h.kind === 'area' ? (h.rect ? [h.rect] : []) : lineRects(words, h.startWord ?? 0, h.endWord ?? 0);
-      return rects.map((r, i) => <div key={`${h.id}-${i}`} onClick={() => mode === 'read' && onOpen(h)} style={rectStyle(r, { background: COLORS[h.color], opacity: 0.4, mixBlendMode: 'multiply', pointerEvents: mode === 'read' ? 'auto' : 'none', cursor: 'pointer', borderRadius: 2 })} data-testid={`highlight-${h.id}`} />);
+      return rects.map((r, i) => <div key={`${h.id}-${i}`} onClick={() => mode === 'read' && onOpen(h)} style={rectStyle(r, { background: colorHex(h.color), opacity: 0.4, mixBlendMode: 'multiply', pointerEvents: mode === 'read' ? 'auto' : 'none', cursor: 'pointer', borderRadius: 2 })} data-testid={`highlight-${h.id}`} />);
     })}
+    {(strokes.length > 0 || draft) && <svg viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" style={{ pointerEvents: 'none' }} aria-hidden="true">
+      {strokes.map((h) => { const d = inkPath(h.ink!.pts, aspect); return <g key={h.id} style={{ pointerEvents: mode === 'read' ? 'stroke' : 'none', cursor: 'pointer' }} onClick={() => mode === 'read' && onOpen(h)} data-testid={`ink-${h.id}`}>
+        <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(h.ink!.w, 0.018)} strokeLinecap="round" strokeLinejoin="round" />
+        <path d={d} fill="none" stroke={colorHex(h.color)} strokeWidth={h.ink!.w} strokeLinecap="round" strokeLinejoin="round" opacity={h.id < 0 ? 0.7 : 1} />
+      </g>; })}
+      {draft && <path d={inkPath(draft, aspect)} fill="none" stroke={colorHex(color)} strokeWidth={penWidth} strokeLinecap="round" strokeLinejoin="round" />}
+    </svg>}
     {found.map((f, fi) => lineRects(words, f.start, f.end).map((r, i) => <div key={`f-${fi}-${i}`} style={rectStyle(r, { background: f.active ? 'rgba(255,90,0,.55)' : 'rgba(255,170,0,.35)', outline: f.active ? '2px solid rgba(255,90,0,.9)' : undefined, borderRadius: 2, pointerEvents: 'none' })} data-testid="search-hit" />))}
     {bookmarked && <Bookmark size={26} fill="currentColor" className="pointer-events-none absolute right-3 top-0 text-primary drop-shadow" aria-label="Bookmarked" />}
     <div className="pointer-events-none absolute bottom-1 right-2 text-[10px] font-bold text-black/30">{pageNo}</div>
@@ -217,8 +253,13 @@ export default function BookReader() {
   const [mode, setMode] = useState<Mode>('read');
   // Remembers the last color picked so returning to any book keeps it,
   // instead of resetting to yellow every time.
-  const [color, setColor] = useState<HighlightColor>(() => { try { const v = localStorage.getItem('reader:color'); return v === 'green' || v === 'pink' || v === 'blue' ? v : 'yellow'; } catch { return 'yellow'; } });
+  const readColor = (key: string, fallback: string): string => { try { const v = localStorage.getItem(key); return v && (isHex(v) || ['yellow', 'green', 'pink', 'blue'].includes(v)) ? v : fallback; } catch { return fallback; } };
+  const [color, setColor] = useState<HighlightColor>(() => readColor('reader:color', 'yellow'));
   useEffect(() => { try { localStorage.setItem('reader:color', color); } catch { /* private mode / storage blocked */ } }, [color]);
+  const [penColor, setPenColor] = useState<HighlightColor>(() => readColor('reader:pen-color', '#1f2937'));
+  useEffect(() => { try { localStorage.setItem('reader:pen-color', penColor); } catch { /* storage blocked */ } }, [penColor]);
+  const [penSize, setPenSize] = useState<number>(() => { try { const v = Number(localStorage.getItem('reader:pen-size')); return v >= 0 && v < PEN_SIZES.length && Number.isInteger(v) ? v : 1; } catch { return 1; } });
+  useEffect(() => { try { localStorage.setItem('reader:pen-size', String(penSize)); } catch { /* storage blocked */ } }, [penSize]);
   const [theme, setTheme] = useState<Theme>(() => readPref<Theme>('reader:theme', ['light', 'sepia', 'night'], 'light'));
   useEffect(() => { try { localStorage.setItem('reader:theme', theme); } catch { /* storage blocked */ } }, [theme]);
   const [zoom, setZoom] = useState(() => { try { const v = parseFloat(localStorage.getItem('reader:zoom') ?? ''); return v >= 0.5 && v <= 2 ? v : 1; } catch { return 1; } });
@@ -315,9 +356,27 @@ export default function BookReader() {
 
   const add = useMutation({
     mutationFn: (body: NewBookHighlight) => booksApi.addHighlight(bookId, body),
-    onSuccess: (h) => { qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => [...(old ?? []), h]); setActive(h); setSavedAt(Date.now()); },
-    onError: (err: unknown) => toast({ title: 'Could not save highlight', description: err instanceof ApiRequestError ? err.message : 'Try again.', variant: 'destructive' }),
+    // Pen strokes show instantly (a temporary negative id) and are swapped for the saved row, so drawing never waits on the network.
+    onMutate: (body): { tempId: number } | undefined => {
+      if (body.kind !== 'ink') return undefined;
+      const tempId = -(Date.now() * 1000 + Math.floor(Math.random() * 1000));
+      qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => [...(old ?? []), { id: tempId, page: body.page, kind: 'ink', startWord: null, endWord: null, rect: null, ink: body.ink, color: body.color ?? '#1f2937', note: null, createdAt: new Date().toISOString() }]);
+      return { tempId };
+    },
+    onSuccess: (h, _body, ctx) => { qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => [...(old ?? []).filter((x) => x.id !== ctx?.tempId), h]); if (h.kind !== 'ink') setActive(h); setSavedAt(Date.now()); },
+    onError: (err: unknown, _body, ctx) => {
+      if (ctx) qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => (old ?? []).filter((x) => x.id !== ctx.tempId));
+      toast({ title: 'Could not save that', description: err instanceof ApiRequestError ? err.message : 'Try again.', variant: 'destructive' });
+    },
   });
+  // Eraser: remove the stroke on screen straight away, then delete it on the server (and re-sync if that fails).
+  const erasingIds = useRef(new Set<number>());
+  const eraseInk = (id: number) => {
+    if (id <= 0 || erasingIds.current.has(id)) return;
+    erasingIds.current.add(id);
+    qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => (old ?? []).filter((x) => x.id !== id));
+    booksApi.deleteHighlight(bookId, id).then(() => setSavedAt(Date.now())).catch(() => { void qc.invalidateQueries({ queryKey: ['book-highlights', bookId] }); }).finally(() => { erasingIds.current.delete(id); });
+  };
   const update = useMutation({
     mutationFn: (v: { id: number; color?: HighlightColor; note?: string | null }) => booksApi.updateHighlight(bookId, v.id, { color: v.color, note: v.note }),
     onSuccess: (h) => { qc.setQueryData<BookHighlight[]>(['book-highlights', bookId], (old) => (old ?? []).map((x) => (x.id === h.id ? h : x))); setActive((a) => (a && a.id === h.id ? h : a)); setSavedAt(Date.now()); },
@@ -359,6 +418,8 @@ export default function BookReader() {
   const foundByPage = useMemo(() => { const m = new Map<number, Found[]>(); hits.forEach((h, i) => m.set(h.page, [...(m.get(h.page) ?? []), { start: h.start, end: h.end, active: i === hitIdx }])); return m; }, [hits, hitIdx]);
   const hitPages = useMemo(() => { const m = new Map<number, { count: number; first: number }>(); hits.forEach((h, i) => { const e = m.get(h.page); if (e) e.count++; else m.set(h.page, { count: 1, first: i }); }); return [...m.entries()]; }, [hits]);
 
+  const noteCount = useMemo(() => highlights.filter((h) => h.kind !== 'ink').length, [highlights]);
+  const strokeCount = highlights.length - noteCount;
   const byPage = useMemo(() => { const m = new Map<number, BookHighlight[]>(); for (const h of highlights) m.set(h.page, [...(m.get(h.page) ?? []), h]); return m; }, [highlights]);
 
   // ---- Save button: flush anything pending, then re-read from the server so the
@@ -373,7 +434,7 @@ export default function BookReader() {
       const [h, b] = await Promise.all([booksApi.highlights(bookId), booksApi.bookmarks(bookId)]);
       qc.setQueryData(['book-highlights', bookId], h); qc.setQueryData(['book-bookmarks', bookId], b);
       setSavedAt(Date.now()); setSaveFlash(true); window.setTimeout(() => setSaveFlash(false), 2200);
-      toast({ title: 'Saved', description: `Page ${pendingRef.current}, ${h.length} highlight${h.length === 1 ? '' : 's'} and ${b.length} bookmark${b.length === 1 ? '' : 's'} are saved to your account.` });
+      toast({ title: 'Saved', description: `Page ${pendingRef.current}, ${h.filter((x) => x.kind !== 'ink').length} highlight${h.filter((x) => x.kind !== 'ink').length === 1 ? '' : 's'}, ${h.filter((x) => x.kind === 'ink').length} pen stroke${h.filter((x) => x.kind === 'ink').length === 1 ? '' : 's'} and ${b.length} bookmark${b.length === 1 ? '' : 's'} are saved to your account.` });
     } catch (err) {
       toast({ title: 'Could not save', description: err instanceof ApiRequestError ? err.message : 'Check your connection and try again.', variant: 'destructive' });
     } finally { setSaving(false); }
@@ -381,10 +442,10 @@ export default function BookReader() {
 
   // Keyboard: ←/→ turn pages, +/− zoom, B bookmark, / search, Ctrl/⌘+S save. Registered once; it
   // reads the latest handlers through a ref so it never acts on stale state.
-  const actions = useRef({ go: (_d: number) => {}, zoom: (_d: number) => {}, bookmark: () => {}, save: () => {}, openSearch: () => {} });
+  const actions = useRef({ go: (_d: number) => {}, zoom: (_d: number) => {}, bookmark: () => {}, save: () => {}, openSearch: () => {}, tool: (_m: Mode) => {} });
   actions.current = {
     go: (d) => jump(pendingRef.current + d), zoom: (d) => setZoom((z) => Math.min(2, Math.max(0.5, +(z + d).toFixed(1)))),
-    bookmark: toggleBookmark, save: () => void saveAll(), openSearch: () => setPanel('search'),
+    bookmark: toggleBookmark, save: () => void saveAll(), openSearch: () => setPanel('search'), tool: (m) => setMode((cur) => (cur === m ? 'read' : m)),
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -397,6 +458,9 @@ export default function BookReader() {
       else if (k === '-') actions.current.zoom(-0.1);
       else if (k === 'b') actions.current.bookmark();
       else if (k === '/') { e.preventDefault(); actions.current.openSearch(); }
+      else if (k === 'p') actions.current.tool('pen');
+      else if (k === 'h') actions.current.tool('text');
+      else if (k === 'e') actions.current.tool('erase');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -443,11 +507,6 @@ export default function BookReader() {
           <label className="flex items-center gap-1 text-xs font-bold"><input type="number" min={1} max={d.pageCount} value={current} onChange={(e) => jump(Number(e.target.value))} className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center" aria-label="Page number" data-testid="input-reader-page" /> / {d.pageCount}</label>
           <button type="button" onClick={() => jump(current + 1)} disabled={current >= d.pageCount} className={cn(iconBtn, 'disabled:opacity-40')} aria-label="Next page" data-testid="button-reader-next"><ChevronRight size={15} /></button>
         </div>
-        <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-1">
-          {([['read', MousePointer2, 'Read'], ['text', Highlighter, 'Highlight text'], ['area', BoxSelect, 'Highlight area']] as const).map(([m, Icon, label]) =>
-            <button key={m} type="button" onClick={() => setMode(m)} title={label} aria-pressed={mode === m} className={cn('grid size-8 place-items-center rounded-lg', mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')} data-testid={`button-mode-${m}`}><Icon size={15} /></button>)}
-        </div>
-        {mode !== 'read' && <div className="flex items-center gap-1.5">{(Object.keys(COLORS) as HighlightColor[]).map((c) => <button key={c} type="button" onClick={() => setColor(c)} aria-label={`${c} highlighter`} className={cn('size-6 rounded-full border-2', color === c ? 'border-foreground' : 'border-transparent')} style={{ background: COLORS[c] }} data-testid={`button-color-${c}`} />)}</div>}
         <div className="flex items-center gap-1">
           <button type="button" onClick={() => actions.current.zoom(-0.1)} className={iconBtn} aria-label="Zoom out"><ZoomOut size={14} /></button>
           <button type="button" onClick={() => setZoom(1)} className="h-8 min-w-11 rounded-lg border border-border bg-card px-1.5 text-[11px] font-bold hover:bg-muted" title="Fit to width" data-testid="button-reader-zoom-reset">{Math.round(zoom * 100)}%</button>
@@ -458,24 +517,59 @@ export default function BookReader() {
           {typeof document !== 'undefined' && document.fullscreenEnabled && <button type="button" onClick={toggleFullscreen} className={iconBtn} aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} data-testid="button-reader-fullscreen">{fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}</button>}
           <button type="button" onClick={toggleBookmark} className={cn(iconBtn, currentBookmark && 'border-primary bg-primary/10 text-primary')} aria-pressed={!!currentBookmark} title={currentBookmark ? 'Remove bookmark (B)' : 'Bookmark this page (B)'} aria-label="Bookmark this page" data-testid="button-reader-bookmark"><Bookmark size={14} fill={currentBookmark ? 'currentColor' : 'none'} /></button>
           <button type="button" onClick={() => setPanel((p) => (p === 'search' ? null : 'search'))} className={cn(iconBtn, panel === 'search' && 'bg-primary text-primary-foreground')} title="Search in book (/)" aria-label="Search in book" data-testid="button-reader-search"><Search size={14} /></button>
-          <button type="button" onClick={() => setPanel((p) => (p ? null : 'highlights'))} className={cn('relative', iconBtn, panel && panel !== 'search' && 'bg-primary text-primary-foreground')} aria-label="Highlights, bookmarks and contents" data-testid="button-reader-highlights"><ListOrdered size={14} />{highlights.length > 0 && <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-[#e5a952] px-1 text-[9px] font-black text-[#183844]">{highlights.length}</span>}</button>
+          <button type="button" onClick={() => setPanel((p) => (p ? null : 'highlights'))} className={cn('relative', iconBtn, panel && panel !== 'search' && 'bg-primary text-primary-foreground')} aria-label="Highlights, bookmarks and contents" data-testid="button-reader-highlights"><ListOrdered size={14} />{noteCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-[#e5a952] px-1 text-[9px] font-black text-[#183844]">{noteCount}</span>}</button>
         </div>
       </div>
       <div className="h-0.5 w-full bg-border/60" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pctRead} aria-label="Reading progress"><div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${pctRead}%` }} /></div>
     </div>
 
-    <div className="rounded-xl px-1 pb-24 pt-3" style={{ background: THEMES[theme].room }}>
-      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={color}
-        onCreate={(h) => add.mutate(h)} onOpen={setActive} pageRef={(el) => { pageEls.current[i] = el; }} />)}
+    <div className="rounded-xl px-1 pb-48 pt-3" style={{ background: THEMES[theme].room }}>
+      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={PEN_SIZES[penSize].w}
+        onCreate={(h) => add.mutate(h)} onOpen={setActive} onErase={eraseInk} pageRef={(el) => { pageEls.current[i] = el; }} />)}
     </div>
 
+    {/* Annotation dock: big, labelled tools pinned to the bottom of the screen so the Pen and Highlighter are always one tap away. */}
+    {!active && <div className="fixed inset-x-0 bottom-3 z-30 mx-auto w-[calc(100%-1.5rem)] max-w-xl rounded-3xl border border-border bg-card/95 p-2 shadow-2xl backdrop-blur" data-testid="dock-annotate">
+      {(mode === 'pen' || mode === 'text' || mode === 'area') && (() => {
+        const isPen = mode === 'pen'; const palette = isPen ? PEN_COLORS : HIGHLIGHTER_COLORS; const cur = isPen ? penColor : color; const setCur = isPen ? setPenColor : setColor;
+        const custom = !palette.some((c) => c.id === cur);
+        return <div className="mb-2 rounded-2xl bg-muted/50 p-2">
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label={isPen ? 'Pen colour' : 'Highlighter colour'}>
+            {palette.map((c) => <button key={c.id} type="button" onClick={() => setCur(c.id)} aria-label={`${c.label} ${isPen ? 'pen' : 'highlighter'}`} aria-pressed={cur === c.id} title={c.label}
+              className={cn('grid size-8 place-items-center rounded-full border-2 shadow-sm transition-transform', cur === c.id ? 'scale-110 border-foreground ring-2 ring-primary/40' : 'border-black/10 hover:scale-105')} style={{ background: c.hex }} data-testid={`button-color-${c.id.replace('#', '')}`}>
+              {cur === c.id && <Check size={14} className={c.id === '#1f2937' || c.id === '#1d4ed8' || c.id === '#92400e' || c.id === '#6b7280' ? 'text-white' : 'text-black/70'} strokeWidth={3} />}
+            </button>)}
+            <label className={cn('relative grid size-8 cursor-pointer place-items-center overflow-hidden rounded-full border-2 shadow-sm', custom ? 'scale-110 border-foreground ring-2 ring-primary/40' : 'border-black/10')} title="Pick any colour" style={{ background: custom ? colorHex(cur) : 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)' }}>
+              <input type="color" value={colorHex(cur)} onChange={(e) => setCur(e.target.value.toLowerCase())} className="absolute inset-0 size-full cursor-pointer opacity-0" aria-label="Custom colour" data-testid="input-color-custom" />
+              {custom && <Check size={14} className="text-black/70" strokeWidth={3} />}
+            </label>
+          </div>
+          {isPen && <div className="mt-2 flex items-center gap-1.5" role="group" aria-label="Pen thickness">
+            <span className="mr-1 text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Size</span>
+            {PEN_SIZES.map((z) => <button key={z.id} type="button" onClick={() => setPenSize(z.id)} aria-pressed={penSize === z.id} aria-label={`${z.label} pen`} title={z.label}
+              className={cn('grid h-8 w-12 place-items-center rounded-xl border', penSize === z.id ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-muted')} data-testid={`button-pen-size-${z.id}`}>
+              <span className="block w-7 rounded-full" style={{ height: Math.max(2, Math.round(z.w * 900)), background: colorHex(penColor) }} />
+            </button>)}
+          </div>}
+        </div>;
+      })()}
+      <div className="grid grid-cols-5 gap-1" role="toolbar" aria-label="Reader tools">
+        {([['read', MousePointer2, 'Read', null], ['pen', PenLine, 'Pen', penColor], ['text', Highlighter, 'Highlight', color], ['area', BoxSelect, 'Area', color], ['erase', Eraser, 'Eraser', null]] as const).map(([m, Icon, label, chip]) =>
+          <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} title={`${label}${m === 'pen' ? ' (P)' : m === 'text' ? ' (H)' : m === 'erase' ? ' (E)' : ''}`}
+            className={cn('relative flex flex-col items-center gap-0.5 rounded-2xl px-1 py-2 text-[11px] font-extrabold transition-colors', mode === m ? 'bg-primary text-primary-foreground shadow-md' : 'text-foreground/80 hover:bg-muted')} data-testid={`button-mode-${m}`}>
+            <Icon size={20} />{label}
+            {chip && <span className="absolute right-2 top-1.5 size-2.5 rounded-full border border-white shadow" style={{ background: colorHex(chip) }} />}
+          </button>)}
+      </div>
+    </div>}
+
     {active && <div className="fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md rounded-t-2xl border border-border bg-card p-4 shadow-2xl sm:bottom-4 sm:rounded-2xl" data-testid="sheet-highlight">
-      <div className="flex items-center gap-2"><span className="text-xs font-extrabold">Highlight · page {active.page}</span>
-        <div className="ml-2 flex gap-1.5">{(Object.keys(COLORS) as HighlightColor[]).map((c) => <button key={c} type="button" onClick={() => update.mutate({ id: active.id, color: c })} aria-label={`Make ${c}`} className={cn('size-6 rounded-full border-2', active.color === c ? 'border-foreground' : 'border-transparent')} style={{ background: COLORS[c] }} />)}</div>
+      <div className="flex items-center gap-2"><span className="text-xs font-extrabold">{active.kind === 'ink' ? 'Pen stroke' : 'Highlight'} · page {active.page}</span>
+        <div className="ml-2 flex flex-wrap gap-1.5">{(active.kind === 'ink' ? PEN_COLORS : HIGHLIGHTER_COLORS).map((c) => <button key={c.id} type="button" onClick={() => update.mutate({ id: active.id, color: c.id })} aria-label={`Make ${c.label}`} className={cn('size-6 rounded-full border-2', active.color === c.id ? 'border-foreground' : 'border-black/10')} style={{ background: c.hex }} />)}</div>
         <button type="button" onClick={() => setActive(null)} className="ml-auto grid size-7 place-items-center rounded-lg hover:bg-muted" aria-label="Close"><X size={15} /></button></div>
       <textarea value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} onBlur={() => noteDraft !== (active.note ?? '') && update.mutate({ id: active.id, note: noteDraft.trim() || null })} placeholder="Add a note (optional)" maxLength={1000} rows={2} className="mt-3 w-full select-text rounded-xl border border-border bg-background p-3 text-xs outline-none focus:ring-2 focus:ring-primary/20" data-testid="input-highlight-note" />
       <div className="mt-2 flex items-center justify-between">
-        <button type="button" onClick={() => remove.mutate(active.id)} className="inline-flex items-center gap-1.5 text-xs font-bold text-destructive" data-testid="button-delete-highlight"><Trash2 size={13} /> Remove highlight</button>
+        <button type="button" onClick={() => remove.mutate(active.id)} className="inline-flex items-center gap-1.5 text-xs font-bold text-destructive" data-testid="button-delete-highlight"><Trash2 size={13} /> Remove {active.kind === 'ink' ? 'stroke' : 'highlight'}</button>
         <button type="button" onClick={() => update.mutate({ id: active.id, note: noteDraft.trim() || null }, { onSuccess: () => toast({ title: 'Note saved' }) })} disabled={update.isPending || noteDraft === (active.note ?? '')} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-save-note"><Save size={12} /> Save note</button>
       </div>
     </div>}
@@ -483,7 +577,7 @@ export default function BookReader() {
     {panel && <aside className="fixed inset-y-0 right-0 z-40 flex w-80 max-w-[90vw] flex-col border-l border-border bg-card p-4 shadow-2xl" data-testid="panel-highlights">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex flex-1 gap-1 rounded-xl border border-border bg-background p-1">
-          {tabBtn('highlights', Highlighter, 'Notes', highlights.length)}
+          {tabBtn('highlights', Highlighter, 'Notes', noteCount)}
           {tabBtn('bookmarks', Bookmark, 'Marks', bookmarks.length)}
           {tabBtn('contents', List, 'Contents')}
           {tabBtn('search', Search, 'Find')}
@@ -491,8 +585,8 @@ export default function BookReader() {
         <button type="button" onClick={() => setPanel(null)} className="grid size-7 shrink-0 place-items-center rounded-lg hover:bg-muted" aria-label="Close"><X size={15} /></button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {panel === 'highlights' && (highlights.length === 0 ? <p className="text-xs text-muted-foreground">Nothing yet. Choose the highlighter, then drag across text — or draw a box around a figure.</p> :
-          <ul className="space-y-2">{[...highlights].sort((a, b) => a.page - b.page || a.id - b.id).map((h) => <li key={h.id}><button type="button" onClick={() => { jump(h.page); setActive(h); }} className="flex w-full items-start gap-2 rounded-xl border border-border p-3 text-left hover:bg-muted/60"><span className="mt-0.5 size-3 shrink-0 rounded-full" style={{ background: COLORS[h.color] }} /><span className="min-w-0 text-xs"><span className="font-bold">Page {h.page}</span> <span className="text-muted-foreground">· {h.kind === 'area' ? 'area' : 'text'}</span>{h.note && <span className="mt-1 block truncate text-muted-foreground">{h.note}</span>}</span></button></li>)}</ul>)}
+        {panel === 'highlights' && (noteCount === 0 ? <p className="text-xs text-muted-foreground">Nothing yet. Choose the highlighter, then drag across text — or draw a box around a figure.{strokeCount > 0 ? ` You have ${strokeCount} pen stroke${strokeCount === 1 ? '' : 's'} on the pages.` : ''}</p> :
+          <ul className="space-y-2">{[...highlights.filter((h) => h.kind !== 'ink')].sort((a, b) => a.page - b.page || a.id - b.id).map((h) => <li key={h.id}><button type="button" onClick={() => { jump(h.page); setActive(h); }} className="flex w-full items-start gap-2 rounded-xl border border-border p-3 text-left hover:bg-muted/60"><span className="mt-0.5 size-3 shrink-0 rounded-full" style={{ background: colorHex(h.color) }} /><span className="min-w-0 text-xs"><span className="font-bold">Page {h.page}</span> <span className="text-muted-foreground">· {h.kind === 'area' ? 'area' : 'text'}</span>{h.note && <span className="mt-1 block truncate text-muted-foreground">{h.note}</span>}</span></button></li>)}</ul>)}
 
         {panel === 'bookmarks' && (bookmarks.length === 0 ? <p className="text-xs text-muted-foreground">No bookmarks yet. Tap the bookmark button in the toolbar (or press B) to mark the page you're on.</p> :
           <ul className="space-y-2">{bookmarks.map((b) => <li key={b.id} className="flex items-center gap-2 rounded-xl border border-border p-2 pl-3"><button type="button" onClick={() => jump(b.page)} className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs"><Bookmark size={13} className="shrink-0 text-primary" fill="currentColor" /><span className="font-bold">Page {b.page}</span>{b.label && <span className="truncate text-muted-foreground">· {b.label}</span>}</button><button type="button" onClick={() => removeBookmark.mutate(b.id)} className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-destructive" aria-label={`Remove bookmark on page ${b.page}`}><Trash2 size={13} /></button></li>)}</ul>)}

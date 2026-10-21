@@ -120,14 +120,17 @@ router.get("/books/:id/pages/:page/words", requireAuth, async (req, res): Promis
 });
 
 // ---- Highlights ------------------------------------------------------------------
-const COLORS = ["yellow", "green", "pink", "blue"] as const;
+// Original colour names (kept for older highlights) or a #rrggbb hex from the reader's palette / colour picker.
+const ColorSchema = z.string().regex(/^(yellow|green|pink|blue|#[0-9a-fA-F]{6})$/);
 const HighlightBody = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("words"), page: z.number().int().min(1), startWord: z.number().int().min(0), endWord: z.number().int().min(0), color: z.enum(COLORS).optional(), note: z.string().max(1000).nullable().optional() }),
-  z.object({ kind: z.literal("area"), page: z.number().int().min(1), rect: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.005).max(1), h: z.number().min(0.005).max(1) }), color: z.enum(COLORS).optional(), note: z.string().max(1000).nullable().optional() }),
+  z.object({ kind: z.literal("words"), page: z.number().int().min(1), startWord: z.number().int().min(0), endWord: z.number().int().min(0), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
+  z.object({ kind: z.literal("area"), page: z.number().int().min(1), rect: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.005).max(1), h: z.number().min(0.005).max(1) }), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
+  // Freehand pen stroke: points in 0..1 page coordinates, width as a fraction of page width. Stored as JSON in the `rect` column.
+  z.object({ kind: z.literal("ink"), page: z.number().int().min(1), ink: z.object({ pts: z.array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)])).min(1).max(800), w: z.number().min(0.0005).max(0.05) }), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
 ]);
 
 function highlightView(h: typeof bookHighlightsTable.$inferSelect) {
-  return { id: h.id, page: h.page, kind: h.kind, startWord: h.startWord, endWord: h.endWord, rect: h.rect ? JSON.parse(h.rect) : null, color: h.color, note: h.note, createdAt: h.createdAt.toISOString() };
+  return { id: h.id, page: h.page, kind: h.kind, startWord: h.startWord, endWord: h.endWord, rect: h.rect && h.kind !== "ink" ? JSON.parse(h.rect) : null, ink: h.rect && h.kind === "ink" ? JSON.parse(h.rect) : null, color: h.color, note: h.note, createdAt: h.createdAt.toISOString() };
 }
 
 router.get("/books/:id/highlights", requireAuth, async (req, res): Promise<void> => {
@@ -149,13 +152,14 @@ router.post("/books/:id/highlights", requireAuth, async (req, res): Promise<void
   const parsed = HighlightBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid highlight" }); return; }
   const d = parsed.data;
-  const existing = await db.select({ id: bookHighlightsTable.id }).from(bookHighlightsTable).where(and(eq(bookHighlightsTable.userId, req.user!.id), eq(bookHighlightsTable.bookId, bookId)));
-  if (existing.length >= 5000) { res.status(400).json({ error: "You've reached the highlight limit for this book." }); return; }
+  const existing = await db.select({ id: bookHighlightsTable.id, kind: bookHighlightsTable.kind }).from(bookHighlightsTable).where(and(eq(bookHighlightsTable.userId, req.user!.id), eq(bookHighlightsTable.bookId, bookId)));
+  const inkCount = existing.filter((e) => e.kind === "ink").length;
+  if (d.kind === "ink" ? inkCount >= 20000 : existing.length - inkCount >= 5000) { res.status(400).json({ error: d.kind === "ink" ? "You've reached the pen-stroke limit for this book." : "You've reached the highlight limit for this book." }); return; }
   const [row] = await db.insert(bookHighlightsTable).values({
     userId: req.user!.id, bookId, fileKey: fileKeyOf(access.book.storagePath), page: d.page, kind: d.kind,
     startWord: d.kind === "words" ? Math.min(d.startWord, d.endWord) : null,
     endWord: d.kind === "words" ? Math.max(d.startWord, d.endWord) : null,
-    rect: d.kind === "area" ? JSON.stringify(d.rect) : null,
+    rect: d.kind === "area" ? JSON.stringify(d.rect) : d.kind === "ink" ? JSON.stringify(d.ink) : null,
     color: d.color ?? "yellow", note: d.note ?? null,
   }).returning();
   res.status(201).json(highlightView(row));
@@ -166,7 +170,7 @@ router.patch("/books/:id/highlights/:hid", requireAuth, async (req, res): Promis
   if (!bookId || !hid) { res.status(400).json({ error: "Invalid request" }); return; }
   const access = await resolveBookAccess(req.user!, bookId);
   if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
-  const parsed = z.object({ color: z.enum(COLORS).optional(), note: z.string().max(1000).nullable().optional() }).safeParse(req.body);
+  const parsed = z.object({ color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid highlight" }); return; }
   const [row] = await db.update(bookHighlightsTable).set({ ...parsed.data, updatedAt: new Date() })
     .where(and(eq(bookHighlightsTable.id, hid), eq(bookHighlightsTable.userId, req.user!.id), eq(bookHighlightsTable.bookId, bookId))).returning();
