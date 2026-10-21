@@ -73,12 +73,14 @@ export class NotPdfError extends Error { constructor() { super("This book isn't 
 export class BookUnavailableError extends Error { constructor(msg: string) { super(msg); } }
 
 interface PageSize { w: number; h: number }
+export interface OutlineItem { title: string; page: number; depth: number }
 interface LoadedBook {
   key: string;
   pdf: import("pdfjs-dist/legacy/build/pdf.mjs").PDFDocumentProxy;
   bytes: number;
   pageCount: number;
   sizes: PageSize[] | null;
+  outline?: OutlineItem[];
   lastUsed: number;
 }
 
@@ -244,18 +246,23 @@ function charWeight(ch: string): number {
  * order. The words' TEXT is deliberately not returned. */
 export type WordBox = [number, number, number, number];
 const wordCache = new Map<string, WordBox[]>();
+// Lower-cased, edge-punctuation-stripped text of each word, index-aligned with
+// the boxes above. Kept ONLY on the server for search; it is never sent.
+const textCache = new Map<string, string[]>();
 
-export async function getPageWords(book: LoadedBook, pageNumber: number): Promise<WordBox[]> {
-  if (pageNumber < 1 || pageNumber > book.pageCount) throw new RangeError("Page out of range");
+const normWord = (w: string): string => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+
+async function computePage(book: LoadedBook, pageNumber: number): Promise<{ boxes: WordBox[]; texts: string[] }> {
   const cacheKey = `${book.key}#${pageNumber}`;
-  const hit = wordCache.get(cacheKey);
-  if (hit) return hit;
+  const hit = wordCache.get(cacheKey), hitT = textCache.get(cacheKey);
+  if (hit && hitT) return { boxes: hit, texts: hitT };
   const pdfjs = await loadPdfjs();
   const page = await book.pdf.getPage(pageNumber);
   try {
     const viewport = page.getViewport({ scale: 1 });
     const content = await page.getTextContent();
     const out: WordBox[] = [];
+    const texts: string[] = [];
     for (const raw of content.items) {
       const item = raw as { str?: string; transform?: number[]; width?: number; height?: number };
       if (!item.str || !item.transform || !item.str.trim()) continue;
@@ -276,13 +283,88 @@ export async function getPageWords(book: LoadedBook, pageNumber: number): Promis
         const top = t[5] - fontH * 0.95;
         const r = (n: number) => Math.round(n * 10000) / 10000;
         const box: WordBox = [r(x0 / viewport.width), r(top / viewport.height), r((x1 - x0) / viewport.width), r((fontH * 1.2) / viewport.height)];
-        if (box[2] > 0 && box[3] > 0) out.push(box);
+        if (box[2] > 0 && box[3] > 0) { out.push(box); texts.push(normWord(m[0])); }
       }
     }
-    if (wordCache.size > 400) wordCache.delete(wordCache.keys().next().value as string);
-    wordCache.set(cacheKey, out);
-    return out;
+    if (wordCache.size > 400) { const k = wordCache.keys().next().value as string; wordCache.delete(k); textCache.delete(k); }
+    wordCache.set(cacheKey, out); textCache.set(cacheKey, texts);
+    return { boxes: out, texts };
   } finally {
     page.cleanup();
   }
+}
+
+export async function getPageWords(book: LoadedBook, pageNumber: number): Promise<WordBox[]> {
+  if (pageNumber < 1 || pageNumber > book.pageCount) throw new RangeError("Page out of range");
+  return (await computePage(book, pageNumber)).boxes;
+}
+
+// ---- Search ----------------------------------------------------------------
+// Matches come back as word-index ranges (the same indices highlights use), so
+// the reader can paint them over the page image. No text is returned.
+export interface SearchHit { page: number; start: number; end: number }
+const searchIndex = new Map<string, string[][]>();
+
+async function indexOf(book: LoadedBook): Promise<string[][]> {
+  const hit = searchIndex.get(book.key);
+  if (hit) return hit;
+  const pages: string[][] = [];
+  for (let p = 1; p <= book.pageCount; p++) pages.push((await computePage(book, p)).texts);
+  if (searchIndex.size >= 6) searchIndex.delete(searchIndex.keys().next().value as string);
+  searchIndex.set(book.key, pages);
+  return pages;
+}
+
+export async function searchBook(book: LoadedBook, query: string, limit = 300): Promise<{ hits: SearchHit[]; truncated: boolean }> {
+  const tokens = query.split(/\s+/).map(normWord).filter(Boolean);
+  if (!tokens.length) return { hits: [], truncated: false };
+  const pages = await indexOf(book);
+  const hits: SearchHit[] = [];
+  const last = tokens.length - 1;
+  const matches = (w: string, i: number): boolean => {
+    const t = tokens[i];
+    if (tokens.length === 1) return w.includes(t);
+    if (i === 0) return w.endsWith(t);
+    if (i === last) return w.startsWith(t);
+    return w === t;
+  };
+  for (let p = 0; p < pages.length; p++) {
+    const words = pages[p];
+    for (let i = 0; i + tokens.length <= words.length; i++) {
+      let ok = true;
+      for (let k = 0; k < tokens.length; k++) if (!matches(words[i + k], k)) { ok = false; break; }
+      if (ok) { hits.push({ page: p + 1, start: i, end: i + tokens.length - 1 }); if (hits.length >= limit) return { hits, truncated: true }; }
+    }
+  }
+  return { hits, truncated: false };
+}
+
+// ---- Table of contents -------------------------------------------------------
+export async function getOutline(book: LoadedBook): Promise<OutlineItem[]> {
+  if (book.outline) return book.outline;
+  const out: OutlineItem[] = [];
+  type RawItem = { title?: string; dest?: unknown; items?: RawItem[] };
+  const resolvePage = async (dest: unknown): Promise<number | null> => {
+    try {
+      let d: unknown = dest;
+      if (typeof d === "string") d = await book.pdf.getDestination(d);
+      if (!Array.isArray(d) || !d.length) return null;
+      const ref = d[0];
+      if (typeof ref === "number") return ref + 1;
+      if (ref && typeof ref === "object") return (await book.pdf.getPageIndex(ref as never)) + 1;
+    } catch { /* unresolved destination — skip the entry */ }
+    return null;
+  };
+  const walk = async (items: RawItem[] | undefined, depth: number): Promise<void> => {
+    for (const it of items ?? []) {
+      if (out.length >= 600) return;
+      const page = await resolvePage(it.dest);
+      const title = (it.title ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+      if (page && title && page >= 1 && page <= book.pageCount) out.push({ title, page, depth: Math.min(depth, 3) });
+      await walk(it.items, depth + 1);
+    }
+  };
+  try { await walk((await book.pdf.getOutline()) as RawItem[] | null ?? [], 0); } catch { /* no outline */ }
+  book.outline = out;
+  return out;
 }

@@ -33,7 +33,8 @@ list = (await s2.req('GET', '/books')).json; b = list.find((x) => x.id === paid)
 assert.equal(b.locked, false); assert.equal(b.storagePath, null, 'paid unlocked book must not expose a file URL'); assert.equal(b.secureReader, true);
 assert.ok(!JSON.stringify(list).includes('test.pdf') || list.find((x) => x.id === free).storagePath, 'only the free book may carry the file link');
 assert.ok(!JSON.stringify(list.find((x) => x.id === paid)).includes('8099')); ok('purchased paid book: secureReader=true, file URL never sent');
-assert.match(list.find((x) => x.id === free).storagePath, /8099/); ok('free book keeps its direct link');
+assert.match(list.find((x) => x.id === free).storagePath, /8099/); ok('free book keeps its direct link (fallback for non-PDF files)');
+assert.equal(list.find((x) => x.id === free).secureReader, true); ok('free book opens in the full reader too');
 
 let r = await s2.req('GET', `/books/${paid}/reader`); assert.equal(r.status, 200, r.text);
 assert.equal(r.json.pageCount, 3); assert.equal(r.json.pages.length, 3); assert.ok(r.json.pages[0].h > r.json.pages[0].w);

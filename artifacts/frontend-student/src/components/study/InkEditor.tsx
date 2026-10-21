@@ -13,7 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ArrowLeft, Check, Copy, Eraser, Hand, Highlighter, LassoSelect, Loader2, MoreHorizontal, PenLine, Pencil,
-  Redo2, Ruler as RulerIcon, Trash2, Undo2, ZoomIn, ZoomOut,
+  FilePlus2, Redo2, Ruler as RulerIcon, Trash2, Undo2, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -44,13 +44,15 @@ export interface InkEditorProps {
   /** Small context shown under the title (e.g. the attached question). */
   subtitle?: ReactNode;
   defaultPaper?: Paper;
+  /** Saves this page, then asks the host to open a fresh one on the same paper. */
+  onNewPage?: (paper: Paper) => void;
 }
 
 const PAPERS: Array<{ id: Paper; label: string }> = [{ id: 'lined', label: 'Lined' }, { id: 'grid', label: 'Grid' }, { id: 'dots', label: 'Dots' }, { id: 'blank', label: 'Blank' }];
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 const HEXC = /^#[0-9a-f]{6}$/i;
 
-export default function InkEditor({ initialInk, initialTitle = '', onSave, onClose, subtitle, defaultPaper = 'lined' }: InkEditorProps) {
+export default function InkEditor({ initialInk, initialTitle = '', onSave, onClose, subtitle, defaultPaper = 'lined', onNewPage }: InkEditorProps) {
   const docRef = useRef<InkDoc>(null as unknown as InkDoc);
   if (!docRef.current) docRef.current = parseInk(initialInk) ?? emptyInk(defaultPaper);
   const doc = docRef.current;
@@ -648,6 +650,7 @@ export default function InkEditor({ initialInk, initialTitle = '', onSave, onClo
   const brush = tool === 'pen' || tool === 'pencil' || tool === 'hl' ? cfg[tool] : null;
   const palette = tool === 'hl' ? HL_COLORS : PEN_COLORS;
   const setBrush = (patch: Partial<ToolCfg>) => { if (tool === 'pen' || tool === 'pencil' || tool === 'hl') setCfg((c) => ({ ...c, [tool]: { ...c[tool], ...patch } })); };
+  const newPage = async () => { commitSelection(false); await flushSave(); if (dirtyDoc.current && !window.confirm('This page could not be saved yet. Start a new page anyway?')) return; setMenu(false); onNewPage?.(doc.paper); };
   const canUndo = undoStack.current.length > 0, canRedo = redoStack.current.length > 0;
   const selAllHl = !!sel && sel.strokes.every((s) => s.t === 'hl');
   const selBox = sel?.box;
@@ -678,6 +681,7 @@ export default function InkEditor({ initialInk, initialTitle = '', onSave, onClo
           <input value={title} onChange={(e) => { setTitle(e.target.value.slice(0, 160)); scheduleSave(); }} placeholder="Untitled note" className="h-7 w-full bg-transparent text-sm font-extrabold outline-none placeholder:font-semibold placeholder:text-muted-foreground" data-testid="ink-title" />
           <div className="flex items-center gap-2 text-[10px] font-semibold text-muted-foreground" aria-live="polite" data-testid="ink-status">{statusEl}{subtitle && <span className="min-w-0 truncate">{subtitle}</span>}</div>
         </div>
+        {onNewPage && iconBtn('New page', () => void newPage(), <FilePlus2 size={17} />, false, 'ink-new-page')}
         {iconBtn('Undo', undo, <Undo2 size={17} />, !canUndo, 'ink-undo')}
         {iconBtn('Redo', redo, <Redo2 size={17} />, !canRedo, 'ink-redo')}
         <div className="hidden items-center sm:flex">

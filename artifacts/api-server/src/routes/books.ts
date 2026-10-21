@@ -40,7 +40,9 @@ function serializeBook(row: typeof booksTable.$inferSelect, opts?: { locked?: bo
     // (routes/book-reader.ts) — the file's URL is never sent to them, so there
     // is nothing to open in a new tab, download, or share. Free books keep the
     // plain link, and admins (who manage the files) always get it.
-    storagePath: locked || opts?.secureReader ? null : resolveFileUrl(row.storagePath),
+    // A free book keeps its plain link even in the reader: it is not secret, and it is the
+    // fallback for a free file that is not a PDF (the reader can only draw PDFs).
+    storagePath: locked || (opts?.secureReader && !row.isFree) ? null : resolveFileUrl(row.storagePath),
     secureReader: opts?.secureReader ?? false,
     // Round 3, item 10 (perf) — the cover thumbnail gets a delivery
     // transform (resized + auto format/quality); the actual book file
@@ -89,7 +91,7 @@ router.get("/books", requireAuth, async (req, res): Promise<void> => {
   ));
   res.json(visible.map((row) => {
     const locked = !row.isFree && !approvedBookIds.has(row.id) && !trialOpensBooks;
-    return serializeBook(row, { locked, pending: pendingBookIds.has(row.id), secureReader: !row.isFree && !locked });
+    return serializeBook(row, { locked, pending: pendingBookIds.has(row.id), secureReader: !locked });
   }));
 });
 

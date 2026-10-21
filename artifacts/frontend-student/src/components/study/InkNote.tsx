@@ -7,7 +7,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, PenLine, X } from 'lucide-react';
 import { notebookApi } from '@/lib/api';
-import { inkToSvg, parseInk } from '@/lib/ink';
+import { inkToSvg, parseInk, type Paper } from '@/lib/ink';
 import { queryClient } from '@/lib/query-client';
 import { cn } from '@/lib/utils';
 
@@ -52,11 +52,14 @@ export interface InkNoteSheetProps {
 }
 
 export function InkNoteSheet({ noteId, mcqId, questionText, initialTitle = '', onClose, onCreated }: InkNoteSheetProps) {
+  // `page` changes when the student taps "New page": the editor is remounted blank, and the
+  // next note row is only created on the first stroke (same as a brand-new handwritten note).
+  const [page, setPage] = useState<{ key: number; id: number | null; paper?: Paper }>({ key: 0, id: noteId });
   const idRef = useRef<number | null>(noteId);
   const loaded = useQuery({
-    queryKey: ['notebook-ink-edit', noteId],
-    queryFn: () => notebookApi.get(noteId!),
-    enabled: noteId !== null,
+    queryKey: ['notebook-ink-edit', page.id],
+    queryFn: () => notebookApi.get(page.id!),
+    enabled: page.id !== null,
     staleTime: 0, gcTime: 0, retry: 1,
   });
 
@@ -74,7 +77,9 @@ export function InkNoteSheet({ noteId, mcqId, questionText, initialTitle = '', o
     void queryClient.invalidateQueries({ queryKey: ['notebook'] });
   };
 
-  if (noteId !== null && (loaded.isLoading || loaded.isError || !loaded.data)) {
+  const startNewPage = (paper: Paper) => { idRef.current = null; setPage((p) => ({ key: p.key + 1, id: null, paper })); void queryClient.invalidateQueries({ queryKey: ['notebook'] }); };
+
+  if (page.id !== null && (loaded.isLoading || loaded.isError || !loaded.data)) {
     return <div className="fixed inset-0 z-[80] grid place-items-center bg-background/90 backdrop-blur-sm" data-testid="ink-loading">
       {loaded.isError ? <div className="rounded-2xl border border-border bg-card p-5 text-center text-sm"><p className="font-bold">Couldn’t open this page.</p><button onClick={onClose} className="mt-3 inline-flex items-center gap-1 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground"><X size={13} /> Close</button></div>
         : <Loader2 className="animate-spin text-muted-foreground" />}
@@ -83,8 +88,11 @@ export function InkNoteSheet({ noteId, mcqId, questionText, initialTitle = '', o
 
   return <Suspense fallback={<div className="fixed inset-0 z-[80] grid place-items-center bg-background/90"><Loader2 className="animate-spin text-muted-foreground" /></div>}>
     <InkEditor
+      key={page.key}
+      defaultPaper={page.paper}
+      onNewPage={startNewPage}
       initialInk={loaded.data?.ink ?? null}
-      initialTitle={loaded.data?.title ?? initialTitle}
+      initialTitle={page.id !== null ? loaded.data?.title ?? initialTitle : page.key ? '' : initialTitle}
       subtitle={questionText ? <span className="truncate">Q: {questionText}</span> : undefined}
       onSave={onSave}
       onClose={onClose}

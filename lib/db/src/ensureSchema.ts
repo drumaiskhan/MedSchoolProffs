@@ -524,6 +524,16 @@ CREATE TABLE IF NOT EXISTS med_book_highlights (
 );
 CREATE INDEX IF NOT EXISTS med_book_highlights_user_book_idx ON med_book_highlights (user_id, book_id);
 
+CREATE TABLE IF NOT EXISTS med_book_bookmarks (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  book_id INTEGER NOT NULL,
+  page INTEGER NOT NULL,
+  label TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS med_book_bookmarks_user_book_page_idx ON med_book_bookmarks (user_id, book_id, page);
+
 CREATE TABLE IF NOT EXISTS med_book_reading_progress (
   user_id INTEGER NOT NULL,
   book_id INTEGER NOT NULL,

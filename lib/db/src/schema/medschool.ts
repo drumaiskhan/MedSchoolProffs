@@ -764,6 +764,16 @@ export const bookHighlightsTable = pgTable("med_book_highlights", {
   ...timestamps,
 });
 
+// A student's page bookmarks inside the book reader (one per page per book).
+export const bookBookmarksTable = pgTable("med_book_bookmarks", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  bookId: integer("book_id").notNull(),
+  page: integer("page").notNull(),
+  label: text("label"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const bookReadingProgressTable = pgTable("med_book_reading_progress", {
   userId: integer("user_id").notNull(),
   bookId: integer("book_id").notNull(),

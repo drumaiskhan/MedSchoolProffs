@@ -1246,3 +1246,10 @@ Student app: any request answered with that code (hand-written `request()` in li
 
 ## v97 — Build fix: duplicate `ids` in buildStudySet
 `artifacts/frontend-student/src/lib/study.ts`: the weak-topic branch declared `const ids` while `buildStudySet(kind, count, ids = [])` already has an `ids` parameter (esbuild: 'The symbol "ids" has already been declared'). Renamed the local to `weakIds` (declaration + its one use). No behaviour change; selected-IDs, mistakes, flagged and weak-topic modes untouched.
+
+## v90 — Free books use the full reader
+- Free books now open in the same reader as paid books (highlights, notes, progress) instead of a bare browser tab. Non-PDF free files fall back to "Open the file instead".
+- New in the reader (free + paid): Save button (Ctrl/⌘+S), bookmarks, search inside the book, table of contents, Light/Sepia/Night themes, zoom %, prev/next, ←/→ B / + − shortcuts, full screen, reading-progress bar, "Save note" in the highlight sheet.
+- Free books skip the anti-capture guards (veil/devtools/native screenshot block); paid books keep them. Server watermark unchanged.
+- New table med_book_bookmarks (created automatically by ensureSchema; included in full backup + MySQL restore). New endpoints: GET /books/:id/outline, GET /books/:id/search, GET/POST/DELETE /books/:id/bookmarks.
+- Journal (handwritten notebook): new **New page** button in the editor toolbar. It saves the current page, then opens a fresh blank page on the same paper (the new note is created on its first stroke).

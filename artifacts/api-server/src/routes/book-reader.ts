@@ -1,13 +1,13 @@
 import { Router, type IRouter, type Response } from "express";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { db, usersTable, bookHighlightsTable, bookReadingProgressTable, auditLogsTable } from "@workspace/db";
+import { db, usersTable, bookHighlightsTable, bookBookmarksTable, bookReadingProgressTable, auditLogsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { resolveBookAccess } from "../lib/bookAccess";
 import { checkRateLimit } from "../lib/rateLimit";
 import { logger } from "../lib/logger";
 import {
-  BookUnavailableError, NotPdfError, fileKeyOf, getPageSizes, getPageWords, loadBook, renderPageJpeg, type Watermark,
+  BookUnavailableError, NotPdfError, fileKeyOf, getOutline, getPageSizes, getPageWords, loadBook, renderPageJpeg, searchBook, type Watermark,
 } from "../lib/bookReader";
 
 const router: IRouter = Router();
@@ -76,7 +76,7 @@ router.get("/books/:id/reader", requireAuth, async (req, res): Promise<void> => 
     const [progress] = await db.select().from(bookReadingProgressTable).where(and(eq(bookReadingProgressTable.userId, req.user!.id), eq(bookReadingProgressTable.bookId, bookId)));
     await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "BOOK_READER_OPENED", entity: "book", entityId: bookId });
     res.set("Cache-Control", NO_STORE).json({
-      id: access.book.id, title: access.book.title, author: access.book.author,
+      id: access.book.id, title: access.book.title, author: access.book.author, isFree: access.book.isFree,
       pageCount: book.pageCount, pages: sizes, resumePage: Math.min(Math.max(progress?.page ?? 1, 1), book.pageCount),
       fileKey: fileKeyOf(access.book.storagePath),
     });
@@ -194,6 +194,70 @@ router.put("/books/:id/progress", requireAuth, async (req, res): Promise<void> =
   if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
   await db.insert(bookReadingProgressTable).values({ userId: req.user!.id, bookId, page: parsed.data.page })
     .onConflictDoUpdate({ target: [bookReadingProgressTable.userId, bookReadingProgressTable.bookId], set: { page: parsed.data.page, updatedAt: new Date() } });
+  res.json({ ok: true });
+});
+
+// ---- Table of contents ------------------------------------------------------------
+router.get("/books/:id/outline", requireAuth, async (req, res): Promise<void> => {
+  const bookId = idOf(req.params.id);
+  if (!bookId) { res.status(400).json({ error: "Invalid book" }); return; }
+  const access = await resolveBookAccess(req.user!, bookId);
+  if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+  try {
+    const book = await loadBook(access.book.storagePath);
+    res.set("Cache-Control", NO_STORE).json({ items: await getOutline(book) });
+  } catch (err) { fail(res, err); }
+});
+
+// ---- Search inside the book -----------------------------------------------------------
+// Returns where the words are (page + word range, the same indices highlights use) —
+// never the text around them.
+router.get("/books/:id/search", requireAuth, async (req, res): Promise<void> => {
+  const bookId = idOf(req.params.id);
+  const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 80) : "";
+  if (!bookId || q.length < 2) { res.status(400).json({ error: "Type at least 2 characters to search." }); return; }
+  const access = await resolveBookAccess(req.user!, bookId);
+  if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+  const limit = checkRateLimit(`booksearch:${req.user!.id}`, 40, 60 * 1000);
+  if (!limit.allowed) { res.status(429).json({ error: "Too many searches. Wait a moment and try again." }); return; }
+  try {
+    const book = await loadBook(access.book.storagePath);
+    res.set("Cache-Control", NO_STORE).json(await searchBook(book, q));
+  } catch (err) { fail(res, err); }
+});
+
+// ---- Bookmarks ---------------------------------------------------------------------------
+const bookmarkView = (b: typeof bookBookmarksTable.$inferSelect) => ({ id: b.id, page: b.page, label: b.label, createdAt: b.createdAt.toISOString() });
+
+router.get("/books/:id/bookmarks", requireAuth, async (req, res): Promise<void> => {
+  const bookId = idOf(req.params.id);
+  if (!bookId) { res.status(400).json({ error: "Invalid book" }); return; }
+  const access = await resolveBookAccess(req.user!, bookId);
+  if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+  const rows = await db.select().from(bookBookmarksTable).where(and(eq(bookBookmarksTable.userId, req.user!.id), eq(bookBookmarksTable.bookId, bookId)));
+  res.set("Cache-Control", NO_STORE).json(rows.sort((a, b) => a.page - b.page).map(bookmarkView));
+});
+
+router.post("/books/:id/bookmarks", requireAuth, async (req, res): Promise<void> => {
+  const bookId = idOf(req.params.id);
+  const parsed = z.object({ page: z.number().int().min(1).max(100000), label: z.string().trim().max(120).nullable().optional() }).safeParse(req.body);
+  if (!bookId || !parsed.success) { res.status(400).json({ error: "Invalid bookmark" }); return; }
+  const access = await resolveBookAccess(req.user!, bookId);
+  if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
+  const existing = await db.select({ id: bookBookmarksTable.id }).from(bookBookmarksTable).where(and(eq(bookBookmarksTable.userId, req.user!.id), eq(bookBookmarksTable.bookId, bookId)));
+  if (existing.length >= 1000) { res.status(400).json({ error: "You've reached the bookmark limit for this book." }); return; }
+  const [row] = await db.insert(bookBookmarksTable).values({ userId: req.user!.id, bookId, page: parsed.data.page, label: parsed.data.label || null })
+    .onConflictDoUpdate({ target: [bookBookmarksTable.userId, bookBookmarksTable.bookId, bookBookmarksTable.page], set: { label: parsed.data.label || null } }).returning();
+  res.status(201).json(bookmarkView(row));
+});
+
+router.delete("/books/:id/bookmarks/:bid", requireAuth, async (req, res): Promise<void> => {
+  const bookId = idOf(req.params.id), bid = idOf(req.params.bid);
+  if (!bookId || !bid) { res.status(400).json({ error: "Invalid request" }); return; }
+  // Like highlights: a student can always remove their own, even after losing access.
+  const deleted = await db.delete(bookBookmarksTable)
+    .where(and(eq(bookBookmarksTable.id, bid), eq(bookBookmarksTable.userId, req.user!.id), eq(bookBookmarksTable.bookId, bookId))).returning({ id: bookBookmarksTable.id });
+  if (!deleted.length) { res.status(404).json({ error: "Bookmark not found" }); return; }
   res.json({ ok: true });
 });
 

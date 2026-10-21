@@ -255,8 +255,11 @@ export interface AdminBookStudent { id: number; title: string; author: string | 
 export interface BookPurchase { id: number; bookId: number; bookTitle: string; amount: number; currency: string; method: string; reference: string; paymentDate: string; proofPath: string | null; status: 'PAYMENT_PENDING_REVIEW' | 'approved' | 'rejected'; rejectionReason: string | null; submittedAt: string; reviewedAt: string | null }
 // Secure book reader (GET /books/:id/reader …). The reader never receives the
 // PDF: pages arrive as watermarked images, and the word "boxes" carry no text.
-export interface BookReaderInfo { id: number; title: string; author: string | null; pageCount: number; pages: Array<{ w: number; h: number }>; resumePage: number; fileKey: string }
+export interface BookReaderInfo { id: number; title: string; author: string | null; isFree: boolean; pageCount: number; pages: Array<{ w: number; h: number }>; resumePage: number; fileKey: string }
 export type WordBox = [number, number, number, number];
+export interface BookBookmark { id: number; page: number; label: string | null; createdAt: string }
+export interface BookOutlineItem { title: string; page: number; depth: number }
+export interface BookSearchHit { page: number; start: number; end: number }
 export type HighlightColor = 'yellow' | 'green' | 'pink' | 'blue';
 export interface BookHighlight { id: number; page: number; kind: 'words' | 'area'; startWord: number | null; endWord: number | null; rect: { x: number; y: number; w: number; h: number } | null; color: HighlightColor; note: string | null; createdAt: string }
 export type NewBookHighlight =
@@ -281,6 +284,11 @@ export const booksApi = {
   addHighlight: (id: number, body: NewBookHighlight) => request<BookHighlight>(`/books/${id}/highlights`, { method: 'POST', body: JSON.stringify(body) }),
   updateHighlight: (id: number, hid: number, body: { color?: HighlightColor; note?: string | null }) => request<BookHighlight>(`/books/${id}/highlights/${hid}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteHighlight: (id: number, hid: number) => request<{ ok: true }>(`/books/${id}/highlights/${hid}`, { method: 'DELETE' }),
+  bookmarks: (id: number) => request<BookBookmark[]>(`/books/${id}/bookmarks`),
+  addBookmark: (id: number, body: { page: number; label?: string | null }) => request<BookBookmark>(`/books/${id}/bookmarks`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteBookmark: (id: number, bid: number) => request<{ ok: true }>(`/books/${id}/bookmarks/${bid}`, { method: 'DELETE' }),
+  outline: (id: number) => request<{ items: BookOutlineItem[] }>(`/books/${id}/outline`),
+  search: (id: number, q: string) => request<{ hits: BookSearchHit[]; truncated: boolean }>(`/books/${id}/search?q=${encodeURIComponent(q)}`),
   saveProgress: (id: number, page: number) => request<{ ok: true }>(`/books/${id}/progress`, { method: 'PUT', body: JSON.stringify({ page }) }),
   // Same call, but with `keepalive: true` so the browser lets it finish even
   // though the page is being hidden/closed right now — the normal debounced

@@ -812,6 +812,20 @@ const bookHighlightsSpec: MysqlTableSpec = {
   ],
 };
 
+const bookBookmarksSpec: MysqlTableSpec = {
+  key: "bookBookmarks",
+  sqlName: "med_book_bookmarks",
+  primaryKey: ["id"],
+  columns: [
+    { js: "id", sql: "id", type: "int" },
+    { js: "userId", sql: "user_id", type: "int" },
+    { js: "bookId", sql: "book_id", type: "int" },
+    { js: "page", sql: "page", type: "int" },
+    { js: "label", sql: "label", type: "text" },
+    { js: "createdAt", sql: "created_at", type: "timestamp" },
+  ],
+};
+
 const bookReadingProgressSpec: MysqlTableSpec = {
   key: "bookReadingProgress",
   sqlName: "med_book_reading_progress",
@@ -1060,6 +1074,7 @@ export const USER_TABLE_SPECS: MysqlTableSpec[] = [
   challengeAttemptsSpec,
   notebookEntriesSpec,
   bookHighlightsSpec,
+  bookBookmarksSpec,
   bookReadingProgressSpec,
   savedSessionsSpec,
   flaggedMcqsSpec,
@@ -1118,6 +1133,7 @@ export const FK_CHECKS: Record<string, Array<[string, string]>> = {
   challengeAttempts: [["challengeId", "challenges"], ["userId", "users"]],
   notebookEntries: [["userId", "users"]],
   bookHighlights: [["userId", "users"], ["bookId", "books"]],
+  bookBookmarks: [["userId", "users"], ["bookId", "books"]],
   bookReadingProgress: [["userId", "users"], ["bookId", "books"]],
   savedSessions: [["userId", "users"]],
   flaggedMcqs: [["userId", "users"], ["mcqId", "mcqs"]],
