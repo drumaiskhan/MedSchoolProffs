@@ -1,4 +1,14 @@
-<<<<<<< HEAD
+## v99 — Reader: pinch-to-zoom on phones
+- The app's viewport meta (`maximum-scale=1`) blocks the browser's own pinch-zoom, so the reader now handles two-finger pinch itself, in every mode (Read, Pen, Highlight, Eraser). The pages scale live with a CSS transform while the fingers move; on release the real zoom (0.5x-3x) is applied once and the pinched spot stays under the fingers (pan while pinching works).
+- Zoomed-in pages (over 100%) can now be scrolled sideways (new `data-reader-scroll` container); previously the left edge of an over-wide page was cut off. Finger-scrolling with the Pen selected also scrolls sideways. The +/- buttons and keys go up to 300%.
+- Two-finger touches are ignored by the page layers while pinching, so a pinch can't leave a stray pen stroke or scroll the page.
+- Not run on a device here. Note the server renders pages at up to 1600 px wide, so above about 200% on a big screen the text can look soft.
+
+## v98 — Reader: write and read at the same time, much faster pen
+- **Read + write without switching:** with the Pen (or Eraser) selected, a stylus/mouse writes and a finger scrolls the page (with a little flick momentum). A "Finger: Auto / Scroll / Draw" switch sits above the tools: Auto = finger scrolls once a stylus has been used on the device, otherwise it draws; Scroll/Draw force it. Pinch-zoom is off while a drawing tool is active (use the zoom buttons or Read mode).
+- **Speed:** the live stroke is painted straight into one SVG path once per frame (no React re-render per point); the page rectangle is measured once per stroke; saved strokes' paths are memoised; `PageView` is `React.memo` with a comparator, so drawing or saving on one page no longer re-renders every page of the book.
+- Not run in a browser here. If it's still sluggish, try the Light theme: Sepia/Night apply a CSS filter to each page, which is costly on phones.
+
 ## v97 — Books: add a book from a Google Drive link
 - Admin -> Books has a new "paste a Google Drive link" field (instead of choosing a PDF). Fixes the Cloudinary per-file size limit for big books: the server reads the PDF straight from Drive and the secure reader renders it as before (watermarked page images, highlights, pen, search).
 - NEW `api-server/src/lib/driveLink.ts` (parse share/open/uc links, canonical form, fetch with the large-file virus-scan confirm step, clear errors for not-shared / quota). `loadBook` uses it for Drive paths; `POST /books` stores one canonical link. No schema change. The file must be shared as "Anyone with the link".
@@ -8,8 +18,6 @@
 ## v96 — Cloudinary upload errors now show the real reason
 - `uploadToCloudinary` caught Cloudinary failures with `err instanceof Error`, but the SDK rejects with a plain `{ message, http_code }` object, so every failure was reported as just "upload failed". It now extracts the real message and, for size-limit errors, explains that the cap is the Cloudinary plan's per-file limit (not this app's 300 MB limit).
 
-=======
->>>>>>> ab5cad7b55740bfac60f6fe943a432e41cb7951a
 ## v95 — Book reader: prominent Pen & Highlighter, freehand pen with many colours
 - **Pen (new):** freehand drawing on book pages with a 16-colour palette + any custom colour (colour picker), 4 thicknesses (Fine/Medium/Bold/Marker) and an Eraser (drag over a stroke to remove it). Strokes show instantly (optimistic), scale with zoom, and are saved to the account like highlights. Tap a stroke in Read mode to recolour or remove it. Pen strokes are kept out of the Notes list (they only count in the Save message).
 - **Highlighter:** palette grown from 4 to 10 colours + custom colour picker; old yellow/green/pink/blue highlights still work.

@@ -17,7 +17,7 @@
 //  * Everything the student makes here — highlights, notes, bookmarks and the
 //    reading position — lives on their account. The Save button flushes any
 //    pending note/position and re-syncs from the server so they can see it stuck.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'wouter';
 import {
@@ -45,6 +45,9 @@ const THEMES: Record<Theme, { label: string; filter?: string; room?: string }> =
   night: { label: 'Night', filter: 'invert(0.9) hue-rotate(180deg)', room: '#15171c' },
 };
 const NEXT_THEME: Record<Theme, Theme> = { light: 'sepia', sepia: 'night', night: 'light' };
+
+// Set while two fingers are pinching, so the page layers ignore those touches (no stray strokes / scrolling).
+const readerGesture = { pinching: false };
 
 const isField = (t: EventTarget | null): boolean => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 const readPref = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => { try { const v = localStorage.getItem(key) as T | null; return v && allowed.includes(v) ? v : fallback; } catch { return fallback; } };
@@ -106,8 +109,8 @@ function useDevtoolsGuard(enabled: boolean): boolean {
 
 // ---------------------------------------------------------------------------
 
-function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, onCreate, onOpen, onErase, pageRef }: {
-  bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number;
+function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, fingerScroll, onCreate, onOpen, onErase, pageRef }: {
+  bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number; fingerScroll: boolean;
   onCreate: (h: NewBookHighlight) => void; onOpen: (h: BookHighlight) => void; onErase: (id: number) => void; pageRef: (el: HTMLDivElement | null) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -148,39 +151,83 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
   const wordsQ = useQuery({ queryKey: ['book-words', bookId, pageNo], queryFn: () => booksApi.pageWords(bookId, pageNo), enabled: needWords, staleTime: Infinity, gcTime: 5 * 60_000 });
   const words = useMemo(() => wordsQ.data?.words ?? [], [wordsQ.data]);
 
-  // ---- selection (text range / area rectangle) ----
+  // ---- selection (text range / area rectangle) + pen ----
+  // Speed notes: the stroke being drawn is painted straight into one <path> (draftRef) once per animation frame,
+  // so drawing never re-renders React; the page rectangle is measured once per stroke, not per point; and the
+  // saved strokes' SVG paths are computed once (memo), not on every render.
   const [sel, setSel] = useState<{ a: number; b: number } | { rect: Rect; x0: number; y0: number } | null>(null);
   const inkRef = useRef<InkPts | null>(null);
-  const [draft, setDraft] = useState<InkPts | null>(null);
+  const draftRef = useRef<SVGPathElement | null>(null);
+  const draftD = useRef('');
+  const rafRef = useRef(0);
+  const inertiaRef = useRef(0);
+  const geo = useRef({ left: 0, top: 0, width: 1, height: 1, sx: 0, sy: 0 });
   const erasing = useRef(false);
+  const touchScroll = useRef<{ id: number; x: number; y: number; t: number; vx: number; vy: number } | null>(null);
   const strokes = useMemo(() => highlights.filter((h) => h.kind === 'ink' && h.ink), [highlights]);
+  const strokePaths = useMemo(() => strokes.map((h) => ({ h, d: inkPath(h.ink!.pts, aspect) })), [strokes, aspect]);
+  useEffect(() => { if (!inkRef.current) draftRef.current?.setAttribute('d', ''); }, [strokes]); // the saved stroke has appeared: drop the live copy
+  useEffect(() => () => { cancelAnimationFrame(rafRef.current); cancelAnimationFrame(inertiaRef.current); }, []);
+  const r4 = (n: number) => Math.round(n * 10000) / 10000;
   const eraseAt = (x: number, y: number) => { for (const h of strokes) if (h.id > 0 && h.ink && inkNear(h.ink.pts, x, y, aspect, Math.max(0.012, h.ink.w * 1.5))) onErase(h.id); };
-  const toNorm = (e: React.PointerEvent) => { const r = boxRef.current!.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
+  const scrollPage = (dx: number, dy: number) => { const sc = boxRef.current?.closest('[data-reader-scroll]') as HTMLElement | null; if (sc && dx) sc.scrollLeft += dx; window.scrollBy(0, dy); };
+  const measure = () => { const r = boxRef.current!.getBoundingClientRect(); geo.current = { left: r.left, top: r.top, width: r.width || 1, height: r.height || 1, sx: window.scrollX, sy: window.scrollY }; };
+  const norm = (cx: number, cy: number) => {
+    const g = geo.current; // page position now = position when measured, shifted by how far the window has scrolled since
+    return { x: Math.min(1, Math.max(0, (cx - (g.left - (window.scrollX - g.sx))) / g.width)), y: Math.min(1, Math.max(0, (cy - (g.top - (window.scrollY - g.sy))) / g.height)) };
+  };
+  const paintDraft = () => {
+    rafRef.current = 0; const p = inkRef.current, el = draftRef.current; if (!p || !el) return;
+    const l = p[p.length - 1]; el.setAttribute('d', `${draftD.current}L${r4(l[0])} ${r4(l[1] * aspect)}`);
+  };
+  const pushPoint = (x: number, y: number): boolean => {
+    const p = inkRef.current!; const last = p[p.length - 1];
+    if (Math.hypot(x - last[0], (y - last[1]) * aspect) <= 0.0012) return false;
+    p.push([x, y]);
+    if (p.length >= 3) { const a = p[p.length - 2], b = p[p.length - 1]; draftD.current += `Q${r4(a[0])} ${r4(a[1] * aspect)} ${r4((a[0] + b[0]) / 2)} ${r4(((a[1] + b[1]) / 2) * aspect)}`; }
+    return true;
+  };
   const down = (e: React.PointerEvent) => {
     if (mode === 'read') return;
-    const { x, y } = toNorm(e);
+    if (e.pointerType === 'touch' && readerGesture.pinching) return;
+    // Pen/eraser selected + finger scrolling: a finger drags the page (so you can read and write without switching tools).
+    if ((mode === 'pen' || mode === 'erase') && e.pointerType === 'touch' && fingerScroll) {
+      if (!e.isPrimary) return;
+      cancelAnimationFrame(inertiaRef.current);
+      touchScroll.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), vx: 0, vy: 0 };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); return;
+    }
+    measure();
+    const { x, y } = norm(e.clientX, e.clientY);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    if (mode === 'pen') { inkRef.current = [[x, y]]; setDraft([[x, y]]); return; }
+    if (mode === 'pen') {
+      inkRef.current = [[x, y]]; draftD.current = `M${r4(x)} ${r4(y * aspect)}`;
+      draftRef.current?.setAttribute('d', `${draftD.current}l0.0001 0`); return;
+    }
     if (mode === 'erase') { erasing.current = true; eraseAt(x, y); return; }
     if (mode === 'text') { const i = hitWord(words, x, y); if (i !== null) setSel({ a: i, b: i }); }
     else setSel({ rect: { x, y, w: 0, h: 0 }, x0: x, y0: y });
   };
   const move = (e: React.PointerEvent) => {
-    if (mode === 'erase') { if (erasing.current) { const { x, y } = toNorm(e); eraseAt(x, y); } return; }
+    if (readerGesture.pinching && e.pointerType === 'touch') { inkRef.current = null; touchScroll.current = null; erasing.current = false; draftRef.current?.setAttribute('d', ''); return; }
+    const ts = touchScroll.current;
+    if (ts && ts.id === e.pointerId) {
+      const now = performance.now(), dt = Math.max(1, now - ts.t), dx = ts.x - e.clientX, dy = ts.y - e.clientY;
+      scrollPage(dx, dy);
+      ts.vx = (dx / dt) * 0.8 + ts.vx * 0.2; ts.vy = (dy / dt) * 0.8 + ts.vy * 0.2; ts.x = e.clientX; ts.y = e.clientY; ts.t = now; return;
+    }
+    if (mode === 'erase') { if (erasing.current) { const { x, y } = norm(e.clientX, e.clientY); eraseAt(x, y); } return; }
     if (mode === 'pen') {
       if (!inkRef.current) return;
       const edge = 64; if (e.clientY < edge) window.scrollBy(0, -(edge - e.clientY) * 0.5); else if (e.clientY > window.innerHeight - edge) window.scrollBy(0, (e.clientY - (window.innerHeight - edge)) * 0.5);
       // Coalesced events keep fast pen strokes smooth instead of showing straight jumps.
       const evs = typeof e.nativeEvent.getCoalescedEvents === 'function' ? e.nativeEvent.getCoalescedEvents() : [];
-      const r = boxRef.current!.getBoundingClientRect();
-      for (const ev of evs.length ? evs : [e.nativeEvent]) {
-        const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)), y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
-        const last = inkRef.current[inkRef.current.length - 1];
-        if (Math.hypot(x - last[0], (y - last[1]) * aspect) > 0.0012) inkRef.current.push([x, y]);
-      }
-      setDraft([...inkRef.current]); return;
+      let changed = false;
+      for (const ev of evs.length ? evs : [e.nativeEvent]) { const { x, y } = norm(ev.clientX, ev.clientY); if (pushPoint(x, y)) changed = true; }
+      if (changed && !rafRef.current) rafRef.current = requestAnimationFrame(paintDraft);
+      return;
     }
-    if (!sel) return; const { x, y } = toNorm(e);
+    if (!sel) return; const { x, y } = norm(e.clientX, e.clientY);
     if ('a' in sel) { const i = hitWord(words, x, y); if (i !== null) setSel({ a: sel.a, b: i }); }
     else setSel({ ...sel, rect: { x: Math.min(x, sel.x0), y: Math.min(y, sel.y0), w: Math.abs(x - sel.x0), h: Math.abs(y - sel.y0) } });
     // Auto-scroll while dragging a highlight near the top/bottom edge of the
@@ -190,11 +237,17 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
     if (e.clientY < EDGE) window.scrollBy(0, -(EDGE - e.clientY) * 0.5);
     else if (e.clientY > window.innerHeight - EDGE) window.scrollBy(0, (e.clientY - (window.innerHeight - EDGE)) * 0.5);
   };
-  const up = () => {
+  const up = (e: React.PointerEvent) => {
+    const ts = touchScroll.current;
+    if (ts && ts.id === e.pointerId) {
+      touchScroll.current = null; let { vx, vy } = ts; // flick: keep scrolling a little, slowing down
+      if (Math.abs(vx) + Math.abs(vy) > 0.05) { const step = () => { vx *= 0.95; vy *= 0.95; scrollPage(vx * 16, vy * 16); if (Math.abs(vx) + Math.abs(vy) > 0.02) inertiaRef.current = requestAnimationFrame(step); }; inertiaRef.current = requestAnimationFrame(step); }
+      return;
+    }
     if (mode === 'erase') { erasing.current = false; return; }
     if (mode === 'pen') {
-      const pts = inkRef.current; inkRef.current = null; setDraft(null);
-      if (pts && pts.length) onCreate({ kind: 'ink', page: pageNo, ink: { pts: simplifyInk(pts, aspect), w: penWidth }, color });
+      const pts = inkRef.current; inkRef.current = null; cancelAnimationFrame(rafRef.current); rafRef.current = 0;
+      if (pts && pts.length) { onCreate({ kind: 'ink', page: pageNo, ink: { pts: simplifyInk(pts, aspect), w: penWidth }, color }); window.setTimeout(() => { if (!inkRef.current) draftRef.current?.setAttribute('d', ''); }, 1500); }
       return;
     }
     if (!sel) return;
@@ -211,7 +264,7 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
     {!drawnWidth && !failed && <div className="absolute inset-0 grid place-items-center text-muted-foreground"><BrandSpinner size={22} /></div>}
     {failed && <div className="absolute inset-0 grid place-items-center p-6 text-center text-xs font-semibold text-destructive">{failed}</div>}
     <div className="absolute inset-0" style={{ touchAction: mode === 'read' ? 'auto' : 'none', cursor: mode === 'text' ? 'text' : mode === 'area' || mode === 'pen' ? 'crosshair' : mode === 'erase' ? 'cell' : 'default', pointerEvents: mode === 'read' ? 'none' : 'auto' }}
-      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { setSel(null); inkRef.current = null; setDraft(null); erasing.current = false; }} data-testid={`layer-page-${pageNo}`}>
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { setSel(null); inkRef.current = null; draftRef.current?.setAttribute('d', ''); erasing.current = false; touchScroll.current = null; }} data-testid={`layer-page-${pageNo}`}>
       {sel && ('a' in sel ? lineRects(words, Math.min(sel.a, sel.b), Math.max(sel.a, sel.b)).map((r, i) => <div key={i} style={rectStyle(r, { background: 'rgba(80,140,255,.35)' })} />) : <div style={rectStyle(sel.rect, { border: '1.5px dashed #3b82f6', background: 'rgba(80,140,255,.15)' })} />)}
     </div>
     {highlights.map((h) => {
@@ -219,18 +272,25 @@ function PageView({ bookId, pageNo, size, widthPx, highlights, found, bookmarked
       const rects = h.kind === 'area' ? (h.rect ? [h.rect] : []) : lineRects(words, h.startWord ?? 0, h.endWord ?? 0);
       return rects.map((r, i) => <div key={`${h.id}-${i}`} onClick={() => mode === 'read' && onOpen(h)} style={rectStyle(r, { background: colorHex(h.color), opacity: 0.4, mixBlendMode: 'multiply', pointerEvents: mode === 'read' ? 'auto' : 'none', cursor: 'pointer', borderRadius: 2 })} data-testid={`highlight-${h.id}`} />);
     })}
-    {(strokes.length > 0 || draft) && <svg viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" style={{ pointerEvents: 'none' }} aria-hidden="true">
-      {strokes.map((h) => { const d = inkPath(h.ink!.pts, aspect); return <g key={h.id} style={{ pointerEvents: mode === 'read' ? 'stroke' : 'none', cursor: 'pointer' }} onClick={() => mode === 'read' && onOpen(h)} data-testid={`ink-${h.id}`}>
+    {(strokePaths.length > 0 || mode === 'pen') && <svg viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" style={{ pointerEvents: 'none' }} aria-hidden="true">
+      {strokePaths.map(({ h, d }) => <g key={h.id} style={{ pointerEvents: mode === 'read' ? 'stroke' : 'none', cursor: 'pointer' }} onClick={() => mode === 'read' && onOpen(h)} data-testid={`ink-${h.id}`}>
         <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(h.ink!.w, 0.018)} strokeLinecap="round" strokeLinejoin="round" />
         <path d={d} fill="none" stroke={colorHex(h.color)} strokeWidth={h.ink!.w} strokeLinecap="round" strokeLinejoin="round" opacity={h.id < 0 ? 0.7 : 1} />
-      </g>; })}
-      {draft && <path d={inkPath(draft, aspect)} fill="none" stroke={colorHex(color)} strokeWidth={penWidth} strokeLinecap="round" strokeLinejoin="round" />}
+      </g>)}
+      <path ref={draftRef} fill="none" stroke={colorHex(color)} strokeWidth={penWidth} strokeLinecap="round" strokeLinejoin="round" />
     </svg>}
     {found.map((f, fi) => lineRects(words, f.start, f.end).map((r, i) => <div key={`f-${fi}-${i}`} style={rectStyle(r, { background: f.active ? 'rgba(255,90,0,.55)' : 'rgba(255,170,0,.35)', outline: f.active ? '2px solid rgba(255,90,0,.9)' : undefined, borderRadius: 2, pointerEvents: 'none' })} data-testid="search-hit" />))}
     {bookmarked && <Bookmark size={26} fill="currentColor" className="pointer-events-none absolute right-3 top-0 text-primary drop-shadow" aria-label="Bookmarked" />}
     <div className="pointer-events-none absolute bottom-1 right-2 text-[10px] font-bold text-black/30">{pageNo}</div>
   </div>;
 }
+
+const sameList = <T,>(a: T[], b: T[], eq: (x: T, y: T) => boolean): boolean => a === b || (a.length === b.length && a.every((v, i) => eq(v, b[i])));
+// Re-render a page only when something about THAT page changed (a stroke on page 40 no longer repaints all 900 pages).
+// Callback props are deliberately ignored: they are stable (setState / refs / mutation.mutate).
+const PageView = memo(PageViewBase, (p, n) => p.bookId === n.bookId && p.pageNo === n.pageNo && p.size.w === n.size.w && p.size.h === n.size.h && p.widthPx === n.widthPx
+  && p.bookmarked === n.bookmarked && p.theme === n.theme && p.mode === n.mode && p.color === n.color && p.penWidth === n.penWidth && p.fingerScroll === n.fingerScroll
+  && sameList(p.highlights, n.highlights, (a, b) => a === b) && sameList(p.found, n.found, (a, b) => a.start === b.start && a.end === b.end && a.active === b.active));
 
 // ---------------------------------------------------------------------------
 
@@ -251,6 +311,17 @@ export default function BookReader() {
   const guarded = info.data ? !info.data.isFree : true;
 
   const [mode, setMode] = useState<Mode>('read');
+  // Finger behaviour while the Pen/Eraser is selected: 'auto' = a finger scrolls once a stylus has been used on this device,
+  // otherwise it draws; 'scroll' / 'draw' force it. (A stylus or mouse always draws.)
+  const [touchPref, setTouchPref] = useState<'auto' | 'scroll' | 'draw'>(() => readPref<'auto' | 'scroll' | 'draw'>('reader:touch', ['auto', 'scroll', 'draw'], 'auto'));
+  useEffect(() => { try { localStorage.setItem('reader:touch', touchPref); } catch { /* storage blocked */ } }, [touchPref]);
+  const [stylus, setStylus] = useState(false);
+  useEffect(() => {
+    const f = (e: PointerEvent) => { if (e.pointerType === 'pen') setStylus(true); };
+    window.addEventListener('pointerdown', f, true); window.addEventListener('pointerover', f, true);
+    return () => { window.removeEventListener('pointerdown', f, true); window.removeEventListener('pointerover', f, true); };
+  }, []);
+  const fingerScroll = touchPref === 'scroll' || (touchPref === 'auto' && stylus);
   // Remembers the last color picked so returning to any book keeps it,
   // instead of resetting to yellow every time.
   const readColor = (key: string, fallback: string): string => { try { const v = localStorage.getItem(key); return v && (isHex(v) || ['yellow', 'green', 'pink', 'blue'].includes(v)) ? v : fallback; } catch { return fallback; } };
@@ -262,7 +333,7 @@ export default function BookReader() {
   useEffect(() => { try { localStorage.setItem('reader:pen-size', String(penSize)); } catch { /* storage blocked */ } }, [penSize]);
   const [theme, setTheme] = useState<Theme>(() => readPref<Theme>('reader:theme', ['light', 'sepia', 'night'], 'light'));
   useEffect(() => { try { localStorage.setItem('reader:theme', theme); } catch { /* storage blocked */ } }, [theme]);
-  const [zoom, setZoom] = useState(() => { try { const v = parseFloat(localStorage.getItem('reader:zoom') ?? ''); return v >= 0.5 && v <= 2 ? v : 1; } catch { return 1; } });
+  const [zoom, setZoom] = useState(() => { try { const v = parseFloat(localStorage.getItem('reader:zoom') ?? ''); return v >= 0.5 && v <= 3 ? v : 1; } catch { return 1; } });
   useEffect(() => { try { localStorage.setItem('reader:zoom', String(zoom)); } catch { /* storage blocked */ } }, [zoom]);
   const [current, setCurrent] = useState(1);
   const [panel, setPanel] = useState<PanelTab | null>(null);
@@ -305,6 +376,56 @@ export default function BookReader() {
   const [viewportW, setViewportW] = useState(() => Math.min(window.innerWidth - 24, 1100));
   useEffect(() => { const f = () => setViewportW(Math.min(window.innerWidth - 24, 1100)); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const widthPx = Math.round(Math.min(viewportW, 900) * zoom);
+
+  // ---- pinch to zoom (the page's viewport meta blocks the browser's own pinch-zoom) ----
+  // While the fingers are down the pages are scaled with a CSS transform (cheap, follows the fingers); on release the
+  // real zoom is applied once and the scroll position is set so the spot you pinched stays under your fingers.
+  const roomRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(zoom); zoomRef.current = zoom;
+  const anchorRef = useRef<{ ry: number; rx: number; top0: number; cx: number; cy: number; ratio: number; rootLeft: number } | null>(null);
+  const hasBook = !!info.data;
+  useEffect(() => {
+    const root = roomRef.current; if (!root) return;
+    const inner = root.firstElementChild as HTMLElement | null; if (!inner) return;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t: TouchList) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    let p: { d0: number; z0: number; ratio: number; cx: number; cy: number; ry: number; rx: number; top0: number; rootLeft: number } | null = null;
+    let release = 0;
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      window.clearTimeout(release);
+      const r = root.getBoundingClientRect(), b = inner.getBoundingClientRect(), m = mid(e.touches);
+      readerGesture.pinching = true;
+      p = { d0: dist(e.touches) || 1, z0: zoomRef.current, ratio: 1, cx: m.x, cy: m.y, ry: m.y - r.top, rx: root.scrollLeft + (m.x - r.left), top0: r.top + window.scrollY, rootLeft: r.left };
+      inner.style.transformOrigin = `${m.x - b.left}px ${m.y - b.top}px`; inner.style.willChange = 'transform';
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!p || e.touches.length !== 2) return;
+      if (e.cancelable) e.preventDefault();
+      const z = Math.min(3, Math.max(0.5, p.z0 * (dist(e.touches) / p.d0)));
+      p.ratio = z / p.z0; const m = mid(e.touches); p.cx = m.x; p.cy = m.y;
+      inner.style.transform = `scale(${p.ratio})`;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!p || e.touches.length >= 2) return;
+      const q = p; p = null;
+      inner.style.transform = ''; inner.style.transformOrigin = ''; inner.style.willChange = '';
+      release = window.setTimeout(() => { readerGesture.pinching = false; }, 200); // ignore the finger that is still lifting
+      if (Math.abs(q.ratio - 1) < 0.02) return;
+      anchorRef.current = { ry: q.ry, rx: q.rx, top0: q.top0, cx: q.cx, cy: q.cy, ratio: q.ratio, rootLeft: q.rootLeft };
+      setZoom(Math.min(3, Math.max(0.5, +(q.z0 * q.ratio).toFixed(2))));
+    };
+    root.addEventListener('touchstart', onStart, { passive: true });
+    root.addEventListener('touchmove', onMove, { passive: false });
+    root.addEventListener('touchend', onEnd); root.addEventListener('touchcancel', onEnd);
+    return () => { root.removeEventListener('touchstart', onStart); root.removeEventListener('touchmove', onMove); root.removeEventListener('touchend', onEnd); root.removeEventListener('touchcancel', onEnd); window.clearTimeout(release); readerGesture.pinching = false; inner.style.transform = ''; };
+  }, [hasBook]);
+  // After the new zoom has rendered, put the pinched spot back under the fingers.
+  useLayoutEffect(() => {
+    const a = anchorRef.current; if (!a) return; anchorRef.current = null;
+    const root = roomRef.current; if (root) root.scrollLeft = a.rx * a.ratio - (a.cx - a.rootLeft);
+    window.scrollTo(window.scrollX, a.top0 + a.ry * a.ratio - a.cy);
+  }, [zoom]);
 
   // lastSavedRef / pendingRef track what's on screen vs. what's confirmed
   // saved, so a tab-close mid-debounce still gets flushed (see below) instead
@@ -369,6 +490,7 @@ export default function BookReader() {
       toast({ title: 'Could not save that', description: err instanceof ApiRequestError ? err.message : 'Try again.', variant: 'destructive' });
     },
   });
+  const addRef = useRef(add); addRef.current = add;
   // Eraser: remove the stroke on screen straight away, then delete it on the server (and re-sync if that fails).
   const erasingIds = useRef(new Set<number>());
   const eraseInk = (id: number) => {
@@ -444,7 +566,7 @@ export default function BookReader() {
   // reads the latest handlers through a ref so it never acts on stale state.
   const actions = useRef({ go: (_d: number) => {}, zoom: (_d: number) => {}, bookmark: () => {}, save: () => {}, openSearch: () => {}, tool: (_m: Mode) => {} });
   actions.current = {
-    go: (d) => jump(pendingRef.current + d), zoom: (d) => setZoom((z) => Math.min(2, Math.max(0.5, +(z + d).toFixed(1)))),
+    go: (d) => jump(pendingRef.current + d), zoom: (d) => setZoom((z) => Math.min(3, Math.max(0.5, +(z + d).toFixed(1)))),
     bookmark: toggleBookmark, save: () => void saveAll(), openSearch: () => setPanel('search'), tool: (m) => setMode((cur) => (cur === m ? 'read' : m)),
   };
   useEffect(() => {
@@ -523,9 +645,11 @@ export default function BookReader() {
       <div className="h-0.5 w-full bg-border/60" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pctRead} aria-label="Reading progress"><div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${pctRead}%` }} /></div>
     </div>
 
-    <div className="rounded-xl px-1 pb-48 pt-3" style={{ background: THEMES[theme].room }}>
-      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={PEN_SIZES[penSize].w}
-        onCreate={(h) => add.mutate(h)} onOpen={setActive} onErase={eraseInk} pageRef={(el) => { pageEls.current[i] = el; }} />)}
+    <div ref={roomRef} data-reader-scroll className="overflow-x-auto rounded-xl px-1 pb-48 pt-3" style={{ background: THEMES[theme].room, overscrollBehaviorX: 'contain' }}>
+     <div style={{ minWidth: widthPx }}>
+      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={PEN_SIZES[penSize].w} fingerScroll={fingerScroll}
+        onCreate={(h) => addRef.current.mutate(h)} onOpen={setActive} onErase={eraseInk} pageRef={(el) => { pageEls.current[i] = el; }} />)}
+     </div>
     </div>
 
     {/* Annotation dock: big, labelled tools pinned to the bottom of the screen so the Pen and Highlighter are always one tap away. */}
@@ -553,6 +677,11 @@ export default function BookReader() {
           </div>}
         </div>;
       })()}
+      {(mode === 'pen' || mode === 'erase') && <div className="mb-2 flex items-center gap-1.5 rounded-2xl bg-muted/50 px-2 py-1.5" role="group" aria-label="What a finger does">
+        <span className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Finger</span>
+        {([['auto', 'Auto'], ['scroll', 'Scroll'], ['draw', 'Draw']] as const).map(([v, l]) => <button key={v} type="button" onClick={() => setTouchPref(v)} aria-pressed={touchPref === v} className={cn('rounded-lg px-2.5 py-1 text-[11px] font-extrabold', touchPref === v ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground/80 hover:bg-muted')} data-testid={`button-touch-${v}`}>{l}</button>)}
+        <span className="ml-auto truncate text-[10px] font-semibold text-muted-foreground">{fingerScroll ? 'Finger scrolls · pen writes' : 'Finger writes'}</span>
+      </div>}
       <div className="grid grid-cols-5 gap-1" role="toolbar" aria-label="Reader tools">
         {([['read', MousePointer2, 'Read', null], ['pen', PenLine, 'Pen', penColor], ['text', Highlighter, 'Highlight', color], ['area', BoxSelect, 'Area', color], ['erase', Eraser, 'Eraser', null]] as const).map(([m, Icon, label, chip]) =>
           <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} title={`${label}${m === 'pen' ? ' (P)' : m === 'text' ? ' (H)' : m === 'erase' ? ' (E)' : ''}`}
