@@ -896,7 +896,6 @@ export const aiMcqMakerApi = {
 };
 
 export interface SolvedMcq { answer: string; answerIndex: number; confidence: 'high' | 'medium' | 'low'; explanation: string; optionExplanations: string[]; keyPoint: string; caveat: string }
-<<<<<<< HEAD
 export interface SolvedMcqFromPhoto extends SolvedMcq { question: string; options: string[] }
 export interface SolverChatTurn { role: 'student' | 'tutor'; text: string }
 /** AI MCQ Solver — paste (or photograph) any MCQ you're unsure about, get the best answer with an explanation, then ask follow-ups. */
@@ -907,11 +906,6 @@ export const aiMcqSolverApi = {
   solveImage: (images: Array<{ mime: 'image/jpeg'; data: string }>) => request<SolvedMcqFromPhoto>('/ai/mcq-solver/image', { method: 'POST', body: JSON.stringify({ images }) }),
   followUp: (body: { question: string; options: string[]; answer: string; explanation?: string; history: SolverChatTurn[]; message: string }) =>
     request<{ reply: string }>('/ai/mcq-solver/followup', { method: 'POST', body: JSON.stringify(body) }),
-=======
-/** AI MCQ Solver — paste any MCQ you're unsure about, get the best answer with an explanation. */
-export const aiMcqSolverApi = {
-  solve: (body: { question: string; options: string[] }) => request<SolvedMcq>('/ai/mcq-solver', { method: 'POST', body: JSON.stringify(body) }),
->>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
 };
 
 /** Header search palette. */
