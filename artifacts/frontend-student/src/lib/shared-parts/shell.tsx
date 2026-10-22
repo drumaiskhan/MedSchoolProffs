@@ -82,7 +82,7 @@ type NavItem = [string, string, typeof LayoutDashboard];
 
 export const navGroups: Array<{ label: string; items: NavItem[] }> = [
   { label: 'Study desk', items: [
-    ['/dashboard', 'Dashboard', LayoutDashboard], ['/blocks', 'Blocks', BookOpen], ['/flashcards', 'Flashcards', Zap], ['/past-papers', 'Past papers', FileStack], ['/exams', 'Pre-Proffs Exams', ClipboardCheck], ['/ospe-osce', 'OSPE/OSCE', Stethoscope], ['/books', 'Books', Library], ['/progress', 'My progress', TrendingUp], ['/study', 'Study plan', CalendarCheck], ['/ai-visualizer', 'AI Visualizer', Wand2], ['/ai-mcq-maker', 'AI MCQ Maker', Sparkles],
+    ['/dashboard', 'Dashboard', LayoutDashboard], ['/blocks', 'Blocks', BookOpen], ['/flashcards', 'Flashcards', Zap], ['/past-papers', 'Past papers', FileStack], ['/exams', 'Pre-Proffs Exams', ClipboardCheck], ['/ospe-osce', 'OSPE/OSCE', Stethoscope], ['/books', 'Books', Library], ['/progress', 'My progress', TrendingUp], ['/study', 'Study plan', CalendarCheck], ['/ai-visualizer', 'AI Visualizer', Wand2], ['/ai-mcq-maker', 'AI MCQ Maker', Sparkles], ['/ai-mcq-solver', 'AI MCQ Solver', Lightbulb],
   ] },
   { label: 'Your tools', items: [
     ['/notebook', 'My notebook', NotebookPen], ['/saved-mcqs', 'Saved MCQs', Star], ['/saved-sessions', 'Saved sessions', Bookmark], ['/flagged-mcqs', 'Flagged MCQs', Flag], ['/leaderboard', 'Leaderboard', Trophy], ['/challenge', 'Challenge a friend', Swords],
@@ -195,7 +195,7 @@ export function MobileTabBar({ user, onMore }: { user: User; onMore: () => void 
 
 // Hues for the glossy page tiles in the search palette (one per nav destination).
 const NAV_HUE: Record<string, number> = {
-  '/dashboard': 214, '/progress': 228, '/blocks': 205, '/exams': 4, '/past-papers': 22, '/flashcards': 268, '/ai-visualizer': 290, '/ai-mcq-maker': 172, '/books': 38,
+  '/dashboard': 214, '/progress': 228, '/blocks': 205, '/exams': 4, '/past-papers': 22, '/flashcards': 268, '/ai-visualizer': 290, '/ai-mcq-maker': 172, '/ai-mcq-solver': 48, '/books': 38,
   '/notebook': 172, '/saved-mcqs': 262, '/saved-sessions': 190, '/flagged-mcqs': 350, '/leaderboard': 45, '/challenge': 12,
   '/payments': 152, '/notifications': 200, '/feedback': 160, '/profile': 240,
 };

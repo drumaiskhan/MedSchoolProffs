@@ -893,5 +893,11 @@ export const aiMcqMakerApi = {
     request<{ id: number; scorePercent: number; correctCount: number; totalQuestions: number }>('/ai/mcq-maker/session', { method: 'POST', body: JSON.stringify({ ...body, tz: new Date().getTimezoneOffset() }) }),
 };
 
+export interface SolvedMcq { answer: string; answerIndex: number; confidence: 'high' | 'medium' | 'low'; explanation: string; optionExplanations: string[]; keyPoint: string; caveat: string }
+/** AI MCQ Solver — paste any MCQ you're unsure about, get the best answer with an explanation. */
+export const aiMcqSolverApi = {
+  solve: (body: { question: string; options: string[] }) => request<SolvedMcq>('/ai/mcq-solver', { method: 'POST', body: JSON.stringify(body) }),
+};
+
 /** Header search palette. */
 export const searchApi = { query: (q: string) => request<SearchResults>(`/student/search?q=${encodeURIComponent(q)}`) };
