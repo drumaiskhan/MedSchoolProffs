@@ -421,6 +421,8 @@ export const ospeApi = {
   // repeatedly, already-graded stations are skipped server-side.
   grade: (attemptId: number) => request<{ ok: true; graded: number; pending: number; obtainedMarks: number; percentage: number }>(`/ospe/exam-attempts/${attemptId}/grade`, { method: 'POST' }),
   result: (attemptId: number) => request<OspeExamResult>(`/ospe/exam-attempts/${attemptId}/result`),
+  /** AI tutor: why this station lost marks and how to write it correctly. */
+  explainMistake: (attemptId: number, stationId: number) => request<{ whatWentWrong: string; howToWrite: string; tip: string }>(`/ospe/exam-attempts/${attemptId}/stations/${stationId}/explain`, { method: 'POST' }),
 };
 
 export const studentsAdminApi = {
@@ -891,6 +893,19 @@ export const aiMcqMakerApi = {
   /** Saves a finished set as a practice session so it counts toward stats, streak and leaderboard. */
   saveSession: (body: { answered: number; correct: number; durationSeconds?: number }) =>
     request<{ id: number; scorePercent: number; correctCount: number; totalQuestions: number }>('/ai/mcq-maker/session', { method: 'POST', body: JSON.stringify({ ...body, tz: new Date().getTimezoneOffset() }) }),
+};
+
+export interface SolvedMcq { answer: string; answerIndex: number; confidence: 'high' | 'medium' | 'low'; explanation: string; optionExplanations: string[]; keyPoint: string; caveat: string }
+export interface SolvedMcqFromPhoto extends SolvedMcq { question: string; options: string[] }
+export interface SolverChatTurn { role: 'student' | 'tutor'; text: string }
+/** AI MCQ Solver — paste (or photograph) any MCQ you're unsure about, get the best answer with an explanation, then ask follow-ups. */
+export const aiMcqSolverApi = {
+  solve: (body: { question: string; options: string[] }) => request<SolvedMcq>('/ai/mcq-solver', { method: 'POST', body: JSON.stringify(body) }),
+  /** Any layout: the AI works out the question and options from the raw text, then solves it. */
+  solveText: (raw: string) => request<SolvedMcqFromPhoto>('/ai/mcq-solver/text', { method: 'POST', body: JSON.stringify({ raw }) }),
+  solveImage: (images: Array<{ mime: 'image/jpeg'; data: string }>) => request<SolvedMcqFromPhoto>('/ai/mcq-solver/image', { method: 'POST', body: JSON.stringify({ images }) }),
+  followUp: (body: { question: string; options: string[]; answer: string; explanation?: string; history: SolverChatTurn[]; message: string }) =>
+    request<{ reply: string }>('/ai/mcq-solver/followup', { method: 'POST', body: JSON.stringify(body) }),
 };
 
 /** Header search palette. */

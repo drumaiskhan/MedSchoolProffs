@@ -1,10 +1,36 @@
 // Auto-extracted route page — code-split via React.lazy() in App.tsx.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'wouter';
-import { CheckCircle2, Clock3, Loader2, X } from 'lucide-react';
-import { ospeApi, resolveUploadUrl } from '@/lib/api';
+import { useState } from 'react';
+import { CheckCircle2, Clock3, GraduationCap, Lightbulb, Loader2, X } from 'lucide-react';
+import { ApiRequestError, ospeApi, resolveUploadUrl } from '@/lib/api';
 import { SkeletonPage, usePageTitle, Badge, cn } from '@/lib/shared';
 import { toast } from '@/hooks/use-toast';
+
+/** "Why was this wrong / how do I write it correctly?" — on demand, only for stations where marks were lost. */
+function ExplainMistake({ attemptId, stationId }: { attemptId: number; stationId: number }) {
+  const [data, setData] = useState<{ whatWentWrong: string; howToWrite: string; tip: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = async () => {
+    setBusy(true); setError(null);
+    try { setData(await ospeApi.explainMistake(attemptId, stationId)); }
+    catch (e) { setError(e instanceof ApiRequestError ? e.message : 'Could not load the explanation. Try again.'); }
+    finally { setBusy(false); }
+  };
+  if (!data) return <div className="mt-3">
+    <button type="button" onClick={() => void load()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 bg-primary/5 px-3.5 py-2 text-xs font-extrabold text-primary hover:bg-primary/10 disabled:opacity-60" data-testid={`button-explain-mistake-${stationId}`}>
+      {busy ? <Loader2 size={14} className="animate-spin" /> : <GraduationCap size={14} />}{busy ? 'Explaining…' : 'Why was this wrong? Show me how to write it'}
+    </button>
+    {error && <p className="mt-1.5 text-[11px] font-semibold text-destructive">{error}</p>}
+  </div>;
+  return <div className="mt-3 space-y-2 text-xs" data-testid={`card-explain-mistake-${stationId}`}>
+    <div className="rounded-lg border border-[#f0d3cc] bg-[#fff1ed] p-3"><p className="mb-1 text-[10px] font-bold uppercase text-[#a34c3e]">Why you lost marks</p><p className="whitespace-pre-line leading-5">{data.whatWentWrong}</p></div>
+    <div className="rounded-lg bg-[#e6f3ed] p-3"><p className="mb-1 text-[10px] font-bold uppercase text-[#287058]">How to write it correctly</p><p className="whitespace-pre-line leading-5 text-[#164b4b]">{data.howToWrite}</p></div>
+    {data.tip && <div className="flex items-start gap-2 rounded-lg border border-primary/25 bg-primary/5 p-3 leading-5"><Lightbulb size={14} className="mt-0.5 shrink-0 text-primary" /><span><b>Exam tip:</b> {data.tip}</span></div>}
+    <p className="text-[10px] text-muted-foreground">AI tutor explanation — compare with the model answer above.</p>
+  </div>;
+}
 
 function OspeExamResult() {
   const params = useParams();
@@ -61,9 +87,10 @@ function OspeExamResult() {
           : <div className="mt-3 space-y-2 text-xs">
             <div className="rounded-lg bg-muted/40 p-3"><p className="mb-1 text-[10px] font-bold uppercase text-muted-foreground">Your answer</p><p className="whitespace-pre-wrap">{b.writtenAnswer || '(no answer submitted)'}</p></div>
             {b.modelAnswer && <div className="rounded-lg bg-[#e6f3ed] p-3"><p className="mb-1 text-[10px] font-bold uppercase text-[#287058]">Model answer</p><p className="whitespace-pre-wrap text-[#164b4b]">{b.modelAnswer}</p></div>}
-            {b.aiFeedback && <p className="text-[11px] font-semibold text-muted-foreground">AI feedback: {b.aiFeedback}</p>}
+            {b.aiFeedback && <p className="whitespace-pre-line text-[11px] font-semibold text-muted-foreground">AI feedback: {b.aiFeedback}</p>}
             {ungraded && <p className="text-[11px] font-semibold text-muted-foreground">Not graded yet — tap "Check for grades" above.</p>}
           </div>}
+        {!ungraded && b.marksObtained != null && b.marksObtained < b.marks && <ExplainMistake attemptId={attemptId} stationId={b.stationId} />}
       </div>;
     })}</div>}
   </div>;

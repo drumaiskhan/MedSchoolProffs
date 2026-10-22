@@ -1,3 +1,53 @@
+## v104 — OSPE/OSCE results: "Why was this wrong? Show me how to write it"
+- Every station where a student lost marks (written, MCQ or labelling) now has a **Why was this wrong? Show me how to write it** button on the result page. It opens an AI tutor explanation with three parts: **Why you lost marks** (specific to the student's own answer: what was wrong, vague or missing), **How to write it correctly** (the answer as a top student would write it in the exam, as short dash-points for written answers; correct option or labels with a one-line reason for MCQ/labelling) and an **Exam tip**.
+- New `POST /ospe/exam-attempts/:id/stations/:stationId/explain` (`routes/ospe.ts`). Safeguards: the attempt must be the student's own and finished, results must be released, and the exam must have "show correct answers" on (the explanation uses the model answer); full-mark stations and ungraded written answers are refused; uses the existing "Ask AI" membership feature; 30 per 10 minutes per student. Nothing is stored (no schema change). The AI is told to stay consistent with the model answer, and the student's text is fenced as data (prompt-injection safe).
+- `lib/aiExplain.ts`: `buildOspeMistakePrompt`, `parseOspeMistakeJson`, `explainOspeMistake`; tests added to `test/ospe-grading.test.ts` (pass). Not run against a live AI provider.
+
+## v103 — AI MCQ Solver: accepts any layout
+- The paste parser now handles: the option letter on its own line with the text on the next line(s) (`A` / `Hjdjd` / `B` / `Shjsjs` ...), `A.` `A)` `(a)` `A:` `A -` `A text` `Option A:`, numbered options (`1.` `1)`), options that wrap over several lines, everything on one line, and pasted answer keys (`Answer: B` lines are dropped so they can't leak in). Statement-style stems (`A. ... B. ...` listed before the real options) are told apart from the options.
+- Anything it still can't split falls back to the AI: new `POST /ai/mcq-solver/text` makes the AI work out the question stem and the options from the raw text (treated as data, not instructions), then solves it. The answer screen shows the question and options the AI found. Shares the photo route's extract-and-solve code; same rate limit.
+- Parser checked against 12 layouts (including the one above); not run against a live AI provider.
+
+## v102 — OSPE/OSCE written-answer grading: fair, proportional marks
+- Marks now reflect how good the answer is: a really good answer gets **full marks**, a good answer missing one of five points gets **4/5**, and so on. Each key point from the model answer earns full credit (1), partial credit (0.5, right idea but vague/incomplete or a closely related term) or none. Synonyms, alternative correct terms, extra correct detail and spelling mistakes no longer cost marks.
+- If the scheme says how many marks a point is worth, those weights are used; otherwise points are equal.
+- A clearly wrong statement now costs half a point (it used to cost a whole one, capped at a quarter of the marks), so one slip no longer wipes out a good answer. At 90%+ with nothing wrong the student gets full marks. Marks are in half-mark steps (4, 4.5, 5...). Verdict: 90%+ = correct, some marks = partial, none = incorrect.
+- The student sees how the marks were made up under AI feedback: one encouraging sentence, then each key point as ✓ (full) / ◐ (partly) / ✗ (missed).
+- Marks are still calculated by the server from the AI's per-point checklist (never a number the AI picked), and the prompt-injection protections are unchanged. Older `met: true/false` AI output is still understood. No schema change; stations already graded keep their marks (use the existing re-grade to re-mark them).
+- `lib/aiExplain.ts`: `buildWrittenGradingPrompt`, `scoreFromChecklist`, `parseWrittenGradingJson`; `test/ospe-grading.test.ts` rewritten for the new rules (passes). `OspeExamResult.tsx` keeps line breaks in the feedback.
+
+## v101 — AI MCQ Solver: 600+ word questions, photo upload, follow-up chat, save to notebook
+- **Long questions:** the question limit is now ~6,500 characters (about 900 words; a typical 600-word vignette fits) and the box shows a live word count. Options may be up to 1,200 characters each.
+- **Photo of the question:** "Use a photo of the question" (camera or gallery, up to 3 photos for a question that spans pages). The browser shrinks the photo first (max 1600 px JPEG), the AI reads and transcribes the MCQ, solves it, and the transcribed text is put in the box so it can be corrected and re-run. New `POST /ai/mcq-solver/image`. Needs a vision-capable model (Claude, GPT-4o class, Gemini); if the configured model can't read images the student is told to type it instead. `lib/aiExplain.ts` gained optional `images` on `AiRunOptions` (all four providers: Anthropic, OpenAI, Gemini, custom/OpenAI-compatible) — text-only callers are unaffected.
+- **Follow-up chat:** after an answer the student can chat (suggestion chips: simpler words / mnemonic / why not option X / "I think it's different"). The tutor reconsiders honestly if the student disagrees. New `POST /ai/mcq-solver/followup`, 40 messages / 10 min / student, last 10 turns of context.
+- **Save to My notebook:** one tap saves the question, options, answer, explanation, per-option reasons and take-home point as a notebook note (uses the existing notebook API; Saved MCQs is keyed to question-bank items so it can't hold custom questions).
+- Not run against a live AI provider here.
+
+## v100 — NEW: AI MCQ Solver
+- New student page **AI MCQ Solver** (`/ai-mcq-solver`, in the Study desk menu). The student pastes any MCQ they're unsure about (question, then each option on its own line as A. / B. / (c) ...; options on one line also work) and gets: the best answer, a 3-6 sentence explanation, why every option is right or wrong, a one-line "remember this" point, and a confidence label (high / fairly sure / not sure). Flawed or ambiguous questions are flagged with a caveat instead of a confident guess. The last question + answer survive a refresh (sessionStorage).
+- Backend: `POST /ai/mcq-solver` (`routes/ai-mcq-solver.ts`), using the existing AI provider setup (Admin -> Platform settings -> AI, with backups), the same "Ask AI" membership feature (`ai_explain`, so trial/membership rules apply), 20 requests per 10 minutes per student, one automatic retry on malformed AI output. No schema change, no new setting.
+- Not run against a live AI provider here. Possible next steps: photo upload of a question (needs a vision-capable provider), a follow-up chat, saving solved questions to Saved MCQs.
+
+## v99 — Reader: pinch-to-zoom on phones
+- The app's viewport meta (`maximum-scale=1`) blocks the browser's own pinch-zoom, so the reader now handles two-finger pinch itself, in every mode (Read, Pen, Highlight, Eraser). The pages scale live with a CSS transform while the fingers move; on release the real zoom (0.5x-3x) is applied once and the pinched spot stays under the fingers (pan while pinching works).
+- Zoomed-in pages (over 100%) can now be scrolled sideways (new `data-reader-scroll` container); previously the left edge of an over-wide page was cut off. Finger-scrolling with the Pen selected also scrolls sideways. The +/- buttons and keys go up to 300%.
+- Two-finger touches are ignored by the page layers while pinching, so a pinch can't leave a stray pen stroke or scroll the page.
+- Not run on a device here. Note the server renders pages at up to 1600 px wide, so above about 200% on a big screen the text can look soft.
+
+## v98 — Reader: write and read at the same time, much faster pen
+- **Read + write without switching:** with the Pen (or Eraser) selected, a stylus/mouse writes and a finger scrolls the page (with a little flick momentum). A "Finger: Auto / Scroll / Draw" switch sits above the tools: Auto = finger scrolls once a stylus has been used on the device, otherwise it draws; Scroll/Draw force it. Pinch-zoom is off while a drawing tool is active (use the zoom buttons or Read mode).
+- **Speed:** the live stroke is painted straight into one SVG path once per frame (no React re-render per point); the page rectangle is measured once per stroke; saved strokes' paths are memoised; `PageView` is `React.memo` with a comparator, so drawing or saving on one page no longer re-renders every page of the book.
+- Not run in a browser here. If it's still sluggish, try the Light theme: Sepia/Night apply a CSS filter to each page, which is costly on phones.
+
+## v97 — Books: add a book from a Google Drive link
+- Admin -> Books has a new "paste a Google Drive link" field (instead of choosing a PDF). Fixes the Cloudinary per-file size limit for big books: the server reads the PDF straight from Drive and the secure reader renders it as before (watermarked page images, highlights, pen, search).
+- NEW `api-server/src/lib/driveLink.ts` (parse share/open/uc links, canonical form, fetch with the large-file virus-scan confirm step, clear errors for not-shared / quota). `loadBook` uses it for Drive paths; `POST /books` stores one canonical link. No schema change. The file must be shared as "Anyone with the link".
+- Cover: not auto-generated for Drive books (the browser can't read the file); upload a cover image in the form if wanted.
+- Not tested against live Google Drive here. Drive isn't a CDN: a very popular file can hit Drive's download quota, and after a server restart the first reader re-downloads the file.
+
+## v96 — Cloudinary upload errors now show the real reason
+- `uploadToCloudinary` caught Cloudinary failures with `err instanceof Error`, but the SDK rejects with a plain `{ message, http_code }` object, so every failure was reported as just "upload failed". It now extracts the real message and, for size-limit errors, explains that the cap is the Cloudinary plan's per-file limit (not this app's 300 MB limit).
+
 ## v95 — Book reader: prominent Pen & Highlighter, freehand pen with many colours
 - **Pen (new):** freehand drawing on book pages with a 16-colour palette + any custom colour (colour picker), 4 thicknesses (Fine/Medium/Bold/Marker) and an Eraser (drag over a stroke to remove it). Strokes show instantly (optimistic), scale with zoom, and are saved to the account like highlights. Tap a stroke in Read mode to recolour or remove it. Pen strokes are kept out of the Notes list (they only count in the Save message).
 - **Highlighter:** palette grown from 4 to 10 colours + custom colour picker; old yellow/green/pink/blue highlights still work.

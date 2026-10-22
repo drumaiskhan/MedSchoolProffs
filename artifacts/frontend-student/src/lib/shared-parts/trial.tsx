@@ -72,5 +72,5 @@ export function trialEndsLabel(endsAt: string | null | undefined): string {
 // Sidebar routes that belong to one trial-gated feature. Books aren't listed:
 // they're sold one by one, so the Books page shows lock state per book.
 export const NAV_FEATURE: Record<string, string> = {
-  '/blocks': 'mcqs', '/exams': 'exams', '/past-papers': 'past_papers', '/flashcards': 'flashcards', '/ai-visualizer': 'ai_visualizer', '/ai-mcq-maker': 'ai_mcq_maker', '/challenge': 'challenges',
+  '/blocks': 'mcqs', '/exams': 'exams', '/past-papers': 'past_papers', '/flashcards': 'flashcards', '/ai-visualizer': 'ai_visualizer', '/ai-mcq-maker': 'ai_mcq_maker', '/ai-mcq-solver': 'ai_explain', '/challenge': 'challenges',
 };

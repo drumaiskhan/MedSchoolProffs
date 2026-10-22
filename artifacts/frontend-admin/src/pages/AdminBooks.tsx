@@ -68,6 +68,7 @@ function AdminBooks() {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [driveLink, setDriveLink] = useState('');
   const [cover, setCover] = useState<File | null>(null);
   const [isFree, setIsFree] = useState(false);
   const [price, setPrice] = useState('');
@@ -80,12 +81,15 @@ function AdminBooks() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['admin-books'] });
   const create = useMutation({
     mutationFn: async () => {
-      if (!file) throw new Error('Choose a PDF to upload');
-      const uploaded = await uploadFile(file, 'book');
+      const link = driveLink.trim();
+      if (!file && !link) throw new Error('Choose a PDF to upload or paste a Google Drive link');
+      if (link && !/^https?:\/\/(drive|docs)\.google\.com\//i.test(link)) throw new Error('That is not a Google Drive link. In Drive: right-click the PDF -> Share -> Copy link.');
+      // A Drive link is used as-is (the server reads the PDF from Drive); otherwise the PDF is uploaded to storage.
+      const uploaded = link ? { storagePath: link } : await uploadFile(file!, 'book');
       let coverPath: string | undefined;
       if (cover) {
         coverPath = (await uploadFile(cover, 'book')).storagePath;
-      } else if (file.type === 'application/pdf') {
+      } else if (file && !link && file.type === 'application/pdf') {
         // Auto-thumbnail: admin didn't supply a cover, so render page 1 of
         // the PDF itself instead of leaving the card blank. Best-effort —
         // if it fails for any reason, the book still saves, just without a
@@ -95,7 +99,7 @@ function AdminBooks() {
       }
       return booksAdminApi.create({ title: title.trim(), author: author.trim() || undefined, programTargetKind: degree || null, yearTargetNumber: studyYearToNumber(degree, studyYear) ?? null, storagePath: uploaded.storagePath, coverImagePath: coverPath, isFree, price: isFree ? null : (price ? Number(price) : null), currency: isFree ? null : currency });
     },
-    onSuccess: () => { invalidate(); setOpen(false); setTitle(''); setAuthor(''); setFile(null); setCover(null); setDegree(''); setStudyYear(''); setIsFree(false); setPrice(''); toast({ title: 'Book added', description: 'Now visible to students.' }); },
+    onSuccess: () => { invalidate(); setOpen(false); setTitle(''); setAuthor(''); setFile(null); setDriveLink(''); setCover(null); setDegree(''); setStudyYear(''); setIsFree(false); setPrice(''); toast({ title: 'Book added', description: 'Now visible to students.' }); },
     onError: (err: unknown) => toast({ title: 'Could not add book', description: err instanceof ApiRequestError ? err.message : err instanceof Error ? err.message : 'Something went wrong.', variant: 'destructive' }),
   });
   const update = useMutation({
@@ -150,8 +154,10 @@ function AdminBooks() {
         </div>}
       </div>
       <p className="text-[11px] text-muted-foreground">{isFree ? 'Visible to every logged-in student, regardless of membership.' : 'Requires an active membership. Price shown here is informational only — students still get access through membership, not a separate purchase.'}</p>
-      <div className="grid gap-2 sm:grid-cols-2"><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{file ? file.name : 'Choose PDF'}<input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-file" /></label><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{cover ? cover.name : 'Cover image (optional)'}<input type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-cover" /></label></div>
-      <button type="submit" disabled={create.isPending || !title.trim() || !file} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-submit-book">{create.isPending ? 'Uploading…' : 'Add book'}</button>
+      <div className="grid gap-2 sm:grid-cols-2"><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{file ? file.name : 'Choose PDF'}<input type="file" accept="application/pdf" disabled={!!driveLink.trim()} onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-file" /></label><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{cover ? cover.name : 'Cover image (optional)'}<input type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-cover" /></label></div>
+      <div><input value={driveLink} onChange={(e) => setDriveLink(e.target.value)} disabled={!!file} placeholder="…or paste a Google Drive link to the PDF (large books)" className="h-10 w-full rounded-xl border border-border bg-background px-3 text-xs disabled:opacity-50" data-testid="input-book-drive-link" />
+        <p className="mt-1 text-[11px] text-muted-foreground">In Google Drive: right-click the PDF → Share → General access → <b>Anyone with the link</b> (Viewer) → Copy link. Students read it in the app's secure reader; they never get the Drive link for paid books. No size limit from Cloudinary applies. A cover image is optional (upload one above).</p></div>
+      <button type="submit" disabled={create.isPending || !title.trim() || (!file && !driveLink.trim())} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-submit-book">{create.isPending ? 'Uploading…' : 'Add book'}</button>
     </form>}
     {/* Grouped by Degree (MBBS/BDS) then Year, same classification Past
         papers and Pre-Proffs exams use — a book with no program/year set
