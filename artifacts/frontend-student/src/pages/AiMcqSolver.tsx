@@ -2,12 +2,18 @@
 // own line starting A. / B. / ...) and gets the best answer, a clear explanation, why each option is
 // right or wrong, and a one-line take-home point. The last question and answer are kept in this browser
 // tab (sessionStorage) so a refresh or the app being backgrounded doesn't lose them.
+<<<<<<< HEAD
 //
 // Also: a photo of the question can be used instead of typing (shrunk in the browser first), the answer
 // can be discussed in a follow-up chat, and a solved question can be saved to the student's notebook.
 import { useRef, useState } from 'react';
 import { Camera, Check, Lightbulb, NotebookPen, RotateCcw, Send, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { aiMcqSolverApi, ApiRequestError, notebookApi, type SolvedMcq, type SolverChatTurn } from '@/lib/api';
+=======
+import { useRef, useState } from 'react';
+import { Check, Lightbulb, RotateCcw, Sparkles, TriangleAlert, X } from 'lucide-react';
+import { aiMcqSolverApi, ApiRequestError, type SolvedMcq } from '@/lib/api';
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
 import { cn } from '@/lib/utils';
 import { BrandSpinner, SectionHeader } from '@/lib/shared';
 
@@ -21,6 +27,7 @@ D. Left main coronary artery`;
 
 type Parsed = { question: string; options: string[] };
 
+<<<<<<< HEAD
 /** Splits pasted text into a question and its options. Handles the usual layouts:
  *   "A. text" / "A) text" / "(a) text" / "A: text" / "A - text" / "A text" / "Option A: text" / "1. text" (one per line),
  *   a label on its own line with the text on the next line(s) ("A" / "Hjdjd" / "B" / "Shjsjs" ...),
@@ -62,6 +69,24 @@ export function parseMcq(text: string): Parsed | null {
     }
   }
   if (best) return best.parsed;
+=======
+/** Splits pasted text into a question and its options. Accepts "A." "A)" "(A)" "A:" "A-", one per line, or all on one line. */
+export function parseMcq(text: string): Parsed | null {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const optRe = /^\(?([A-Fa-f])[\).:\-]\s*(.+)$/;
+  const firstOpt = lines.findIndex((l, i) => { const m = optRe.exec(l); return !!m && m[1].toUpperCase() === 'A' && lines.slice(i + 1).some((x) => /^\(?[Bb][\).:\-]\s*\S/.test(x)); });
+  if (firstOpt > 0) {
+    const options: string[] = []; let expect = 0; const extra: string[] = [];
+    for (const l of lines.slice(firstOpt)) {
+      const m = optRe.exec(l);
+      if (m && m[1].toUpperCase() === LETTERS[expect]) { options.push(m[2].trim()); expect++; }
+      else if (options.length) options[options.length - 1] += ' ' + l; // wrapped option text
+      else extra.push(l);
+    }
+    const question = [...lines.slice(0, firstOpt), ...extra].join('\n').trim();
+    if (question && options.length >= 2) return { question, options: options.slice(0, 6) };
+  }
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
   // Everything on one line / one paragraph: "... A. foo B. bar C. baz D. qux"
   const flat = lines.join(' ');
   const re = /(?:^|\s)\(?([A-Fa-f])[\).:]\s+/g; const hits: Array<{ i: number; end: number; letter: string }> = [];
@@ -84,6 +109,7 @@ const CONFIDENCE: Record<SolvedMcq['confidence'], { label: string; cls: string }
   low: { label: 'Not sure — check this one', cls: 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300' },
 };
 
+<<<<<<< HEAD
 type Saved = { text: string; parsed: Parsed | null; result: SolvedMcq | null; chat: SolverChatTurn[] };
 function load(): Saved {
   try { const v = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? 'null'); if (v && typeof v.text === 'string') return { text: v.text, parsed: v.parsed ?? null, result: v.result ?? null, chat: Array.isArray(v.chat) ? v.chat : [] }; } catch { /* ignore */ }
@@ -109,6 +135,11 @@ function notebookText(p: Parsed, r: SolvedMcq): string {
   const opts = p.options.map((o, i) => `${LETTERS[i]}. ${o}${i === r.answerIndex ? '  ✓' : ''}`).join('\n');
   const why = p.options.map((_, i) => r.optionExplanations[i] ? `${LETTERS[i]}: ${r.optionExplanations[i]}` : '').filter(Boolean).join('\n');
   return `${p.question}\n\n${opts}\n\nAnswer: ${r.answer}. ${p.options[r.answerIndex]}\n\n${r.explanation}${why ? `\n\nEach option:\n${why}` : ''}${r.keyPoint ? `\n\nRemember: ${r.keyPoint}` : ''}`;
+=======
+function load(): { text: string; parsed: Parsed | null; result: SolvedMcq | null } {
+  try { const v = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? 'null'); if (v && typeof v.text === 'string') return { text: v.text, parsed: v.parsed ?? null, result: v.result ?? null }; } catch { /* ignore */ }
+  return { text: '', parsed: null, result: null };
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
 }
 
 export default function AiMcqSolver() {
@@ -116,6 +147,7 @@ export default function AiMcqSolver() {
   const [text, setText] = useState(restored.text);
   const [parsed, setParsed] = useState<Parsed | null>(restored.parsed);
   const [result, setResult] = useState<SolvedMcq | null>(restored.result);
+<<<<<<< HEAD
   const [chat, setChat] = useState<SolverChatTurn[]>(restored.chat);
   const [photos, setPhotos] = useState<Array<{ id: number; preview: string; data: string }>>([]);
   const [busy, setBusy] = useState(false);
@@ -180,11 +212,29 @@ export default function AiMcqSolver() {
       const r = await aiMcqSolverApi.solve(p);
       if (id !== run.current) return;
       setResult(r); persist(text, p, r, []);
+=======
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = useRef(0);
+
+  const persist = (t: string, p: Parsed | null, r: SolvedMcq | null) => { try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ text: t, parsed: p, result: r })); } catch { /* storage blocked */ } };
+
+  const solve = async () => {
+    setError(null);
+    const p = parseMcq(text);
+    if (!p) { setError('I couldn\'t find the options. Put the question first, then each option on its own line starting with A., B., C., D.'); return; }
+    const id = ++run.current; setBusy(true); setResult(null); setParsed(p);
+    try {
+      const r = await aiMcqSolverApi.solve(p);
+      if (id !== run.current) return;
+      setResult(r); persist(text, p, r);
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
     } catch (e) {
       if (id !== run.current) return;
       setError(e instanceof ApiRequestError ? e.message : 'Something went wrong. Try again.');
     } finally { if (id === run.current) setBusy(false); }
   };
+<<<<<<< HEAD
   const reset = () => { run.current++; setText(''); setParsed(null); setResult(null); setError(null); setBusy(false); setChat([]); setPhotos([]); setFollowUp(''); setNoteState('idle'); persist('', null, null, []); };
 
   const ask = async (message: string) => {
@@ -241,6 +291,24 @@ export default function AiMcqSolver() {
           <Sparkles size={16} />{busy ? 'Thinking…' : 'Get answer'}
         </button>
         {(text || result || photos.length > 0) && <button type="button" onClick={reset} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-muted-foreground hover:bg-muted" data-testid="button-mcq-solver-clear"><RotateCcw size={14} />New question</button>}
+=======
+  const reset = () => { run.current++; setText(''); setParsed(null); setResult(null); setError(null); setBusy(false); persist('', null, null); };
+
+  return <div className="mx-auto max-w-3xl">
+    <SectionHeader eyebrow="Study tools" title="AI MCQ Solver" description="Stuck on an MCQ? Paste it here — question first, then each option on its own line — and get the answer with a proper explanation." />
+
+    <div className="rounded-2xl border border-border bg-card p-4 sm:p-5">
+      <label htmlFor="mcq-solver-input" className="text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">Paste your MCQ</label>
+      <textarea id="mcq-solver-input" value={text} maxLength={3500} onChange={(e) => { setText(e.target.value); if (error) setError(null); }} placeholder={PLACEHOLDER}
+        className="mt-1.5 min-h-56 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm leading-6 outline-none focus:ring-2 focus:ring-primary/20" data-testid="textarea-mcq-solver" />
+      {error && <div className="mt-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive" data-testid="text-mcq-solver-error">{error}</div>}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => void solve()} disabled={busy || text.trim().length < 12}
+          className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-mcq-solver-solve">
+          <Sparkles size={16} />{busy ? 'Thinking…' : 'Get answer'}
+        </button>
+        {(text || result) && <button type="button" onClick={reset} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-4 py-2.5 text-sm font-bold text-muted-foreground hover:bg-muted" data-testid="button-mcq-solver-clear"><RotateCcw size={14} />New question</button>}
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
       </div>
     </div>
 
@@ -273,6 +341,7 @@ export default function AiMcqSolver() {
 
       {result.keyPoint && <div className="flex items-start gap-2.5 rounded-2xl border border-primary/25 bg-primary/5 p-4 text-sm leading-6"><Lightbulb size={18} className="mt-0.5 shrink-0 text-primary" /><div><div className="text-[11px] font-extrabold uppercase tracking-wide text-primary">Remember this</div>{result.keyPoint}</div></div>}
 
+<<<<<<< HEAD
       <div className="rounded-2xl border border-border bg-card p-4" data-testid="card-mcq-solver-chat">
         <div className="mb-2 text-[11px] font-extrabold uppercase tracking-wide text-muted-foreground">Still confused? Ask a follow-up</div>
         {chat.length === 0 && <div className="mb-3 flex flex-wrap gap-2">
@@ -296,6 +365,8 @@ export default function AiMcqSolver() {
         </button>
       </div>
 
+=======
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
       <p className="text-center text-[11px] leading-5 text-muted-foreground">AI can make mistakes. For anything that matters, confirm with your textbook or teacher.</p>
     </div>}
   </div>;

@@ -9,10 +9,16 @@ const router: IRouter = Router();
 // AI MCQ Solver: a student pastes any MCQ they're unsure about (from a book, a past paper, a friend...)
 // and gets the best answer plus a proper explanation. Uses whatever AI provider the admin configured
 // (Admin -> Platform settings -> AI), and the same "Ask AI" membership feature as the in-quiz Ask AI button.
+<<<<<<< HEAD
 // Long clinical vignettes are common (600+ words), so the limits are generous: ~6,500 characters is roughly 900 words.
 const Body = z.object({
   question: z.string().trim().min(8, "Type or paste the question first").max(6500, "That question is too long (limit is about 900 words)"),
   options: z.array(z.string().trim().min(1).max(1200)).min(2, "Add at least two options (A, B, ...)").max(6, "Up to six options are supported"),
+=======
+const Body = z.object({
+  question: z.string().trim().min(8, "Type or paste the question first").max(2500, "That question is too long — keep it under 2,500 characters"),
+  options: z.array(z.string().trim().min(1).max(600)).min(2, "Add at least two options (A, B, ...)").max(6, "Up to six options are supported"),
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
 });
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
@@ -94,6 +100,7 @@ router.post("/ai/mcq-solver", requireAuth, requireMembershipFor("ai_explain"), a
   }
 });
 
+<<<<<<< HEAD
 // ---- Photo of an MCQ -------------------------------------------------------------------------------
 // The student photographs (or screenshots) a question; the AI reads it, then solves it. Needs a vision-capable
 // model on the configured provider (Claude, GPT-4o class, Gemini all are). The client shrinks photos first.
@@ -225,4 +232,6 @@ router.post("/ai/mcq-solver/followup", requireAuth, requireMembershipFor("ai_exp
   }
 });
 
+=======
+>>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
 export default router;
