@@ -36,6 +36,10 @@ export const FIGURE_ANIM_CSS = `<style>
 @keyframes hs-rec{0%,70%{opacity:0}85%{opacity:.95}100%{opacity:0}}
 @keyframes hs-atp{0%{transform:translate(0,0) scale(.5);opacity:0}20%{opacity:1}100%{transform:translate(var(--dx,8px),-26px) scale(1);opacity:0}}
 @keyframes hs-scroll{to{transform:translateY(102.4px)}}
+@keyframes hs-jawopen{0%,12%,88%,100%{transform:translate(0,0) rotate(0)}44%,56%{transform:translate(-17px,9px) rotate(-5deg)}}
+@keyframes hs-discslide{0%,12%,88%,100%{transform:translate(0,0)}44%,56%{transform:translate(8px,-3px)}}
+@keyframes hs-slidel{0%,10%,90%,100%{transform:translateX(0)}45%,55%{transform:translateX(30px)}}
+@keyframes hs-slider{0%,10%,90%,100%{transform:translateX(0)}45%,55%{transform:translateX(-30px)}}
 @keyframes hs-wave{0%,100%{transform:skewX(-4deg)}50%{transform:skewX(4deg)}}
 .hs-a-beat{animation:hs-beat var(--hs-beat,.9s) ease-in-out infinite;transform-origin:50% 64%}
 .hs-a-breathe{animation:hs-breathe var(--hs-breath,4s) ease-in-out infinite;transform-origin:50% 22%}
@@ -48,6 +52,10 @@ export const FIGURE_ANIM_CSS = `<style>
 .hs-a-sway{animation:hs-sway calc(2.8s / var(--hs-speed,1)) ease-in-out infinite}
 .hs-a-swim{animation:hs-swim calc(3.2s / var(--hs-speed,1)) ease-in-out infinite}
 .hs-a-screw{animation:hs-screw calc(2.2s / var(--hs-speed,1)) ease-in-out infinite}
+.hs-a-jaw{animation:hs-jawopen var(--hs-jaw,5s) ease-in-out infinite;transform-origin:150px 120px;transform-box:view-box}
+.hs-a-disc{animation:hs-discslide var(--hs-jaw,5s) ease-in-out infinite}
+.hs-a-slideL{animation:hs-slidel calc(4.5s / var(--hs-speed,1)) ease-in-out infinite}
+.hs-a-slideR{animation:hs-slider calc(4.5s / var(--hs-speed,1)) ease-in-out infinite}
 .hs-a-spin{animation:hs-spin calc(28s / var(--hs-speed,1)) linear infinite}
 .hs-a-bob{animation:hs-bob calc(3.4s / var(--hs-speed,1)) ease-in-out infinite}
 .hs-a-wave{animation:hs-wave calc(2.4s / var(--hs-speed,1)) ease-in-out infinite}
@@ -237,4 +245,19 @@ export const ANIMATION_NOTES: Record<string, string> = {
   "hs-nephron": "ALREADY ANIMATED: blood in the afferent arteriole and yellow filtrate flowing through the whole tubule to the collecting duct (--hs-flow:Xs).",
   "hs-skin": "ALREADY ANIMATED: sweat rises up the eccrine duct to the pore (--hs-flow:Xs).",
   "hs-villus": "ALREADY ANIMATED: absorbed fat moves down the central lacteal and nutrients down the capillary (--hs-flow:Xs).",
+  // v105: dental and more systems
+  "hs-tooth": "ALREADY ANIMATED: blood dots rise up the root canal from the apical foramen (--hs-flow:Xs). The rest is a still picture.",
+  "hs-caries": "Still picture (no built-in motion): you can pulse the lesion zone you are explaining.",
+  "hs-dentition": "Still picture: the teeth do not move; highlight a tooth type by drawing a ring/arrow at its landmark coordinates.",
+  "hs-tooth-germ": "Still picture: add your own stage highlight (e.g. pulse the inner enamel epithelium layer).",
+  "hs-tmj": "ALREADY ANIMATED: the mouth opens and closes - the condyle rotates then translates forward-and-down under the articular eminence and the disc glides with it (--hs-jaw:Xs = seconds per open/close cycle). Landmark coordinates in the notes are for the CLOSED position.",
+  "hs-tongue": "Still picture: no built-in motion.",
+  "hs-salivary": "ALREADY ANIMATED: saliva dots flow along Stensen's duct and Wharton's duct towards the mouth (--hs-flow:Xs sets the pace).",
+  "hs-mandible": "Still picture: no built-in motion.",
+  "hs-sarcomere": "ALREADY ANIMATED: the thin filaments slide towards the M line and back (contraction/relaxation) while the thick filaments stay put, so the H zone and I band shrink and the A band stays constant (--hs-speed:2 doubles the rate). The notes' coordinates are for the relaxed state.",
+  "hs-ear": "ALREADY ANIMATED: sound dots travel down the ear canal and a wave of fluid movement runs round the cochlea (--hs-flow:Xs).",
+  "hs-lymph-node": "ALREADY ANIMATED: lymph dots flow from the afferent vessels through the sinuses and out of the efferent vessel (--hs-flow:Xs).",
+  "hs-thyroid": "Still picture (no built-in motion).",
+  "hs-long-bone": "Still picture (no built-in motion).",
+  "hs-reflex-arc": "ALREADY ANIMATED: an impulse runs receptor -> dorsal root ganglion -> cord -> ventral root -> muscle and the muscle end flashes (--hs-ap:Xs = seconds per impulse).",
 };

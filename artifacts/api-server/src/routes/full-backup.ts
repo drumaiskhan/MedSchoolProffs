@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
+import { restoreSavedMcqsFromBackup } from "../lib/savedMcqMarks";
 import { z } from "zod";
 import { auditLogsTable, db } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
@@ -157,6 +158,26 @@ router.post("/admin/full-backup/import", requireAdmin, upload.single("file"), as
 
 // Repair for a restore that left MCQs detached from their past papers: upload
 // the same backup file and the links are filled back in (never overwritten).
+// Repair: students whose Saved MCQs disappeared after a replace/re-import get them back from an older full backup
+// (it has the `savedMcqs` + `mcqs` tables). Questions are found again by their text, so new ids don't matter.
+// ?dryRun=1 only counts. Safe to run twice: a save that already exists is never duplicated.
+router.post("/admin/full-backup/restore-saved-mcqs", requireAdmin, upload.single("file"), async (req, res): Promise<void> => {
+  if (!req.file) { res.status(400).json({ error: "No backup file uploaded" }); return; }
+  let raw: FullBackupFile;
+  try { raw = JSON.parse(req.file.buffer.toString("utf-8")) as FullBackupFile; } catch { res.status(422).json({ error: "That file isn't valid JSON." }); return; }
+  if (!raw || typeof raw !== "object" || !raw.data || !Array.isArray(raw.data.mcqs)) { res.status(422).json({ error: "This doesn't look like a full backup (no MCQs found in it)." }); return; }
+  if (!Array.isArray(raw.data.savedMcqs)) { res.status(422).json({ error: "This backup has no students' saved MCQs in it. Use a \"Full\" or \"Users\" backup made BEFORE they disappeared." }); return; }
+  const dryRun = req.query.dryRun === "1";
+  try {
+    const result = await restoreSavedMcqsFromBackup(raw.data as Record<string, Array<Record<string, unknown>>>, { dryRun });
+    if (!dryRun) await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "SAVED_MCQS_RESTORED", entity: "mcq", metadata: JSON.stringify(result) }).catch((err: unknown) => logger.error({ err }, "[full-backup] saved-mcq audit failed"));
+    res.status(200).json(result);
+  } catch (err) {
+    logger.error({ err }, "[full-backup] restore saved mcqs failed");
+    res.status(500).json({ error: `Could not restore the saved MCQs: ${dbErrorMessage(err, "unknown database error")}` });
+  }
+});
+
 router.post("/admin/full-backup/relink-past-papers", requireAdmin, upload.single("file"), async (req, res): Promise<void> => {
   if (!req.file) { res.status(400).json({ error: "No backup file uploaded" }); return; }
   let raw: FullBackupFile;

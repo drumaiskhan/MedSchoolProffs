@@ -262,7 +262,7 @@ export interface BookOutlineItem { title: string; page: number; depth: number }
 export interface BookSearchHit { page: number; start: number; end: number }
 // A colour is one of the original names (older highlights) or a "#rrggbb" hex.
 export type HighlightColor = string;
-export interface BookInk { pts: Array<[number, number]>; w: number }
+export interface BookInk { pts: Array<[number, number]>; w: number; /** freehand highlighter: drawn translucent and multiplied over the page */ hl?: boolean }
 export interface BookHighlight { id: number; page: number; kind: 'words' | 'area' | 'ink'; startWord: number | null; endWord: number | null; rect: { x: number; y: number; w: number; h: number } | null; ink?: BookInk | null; color: HighlightColor; note: string | null; createdAt: string }
 export type NewBookHighlight =
   | { kind: 'words'; page: number; startWord: number; endWord: number; color?: HighlightColor; note?: string | null }
@@ -274,9 +274,10 @@ export const booksApi = {
   pageWords: (id: number, page: number) => request<{ page: number; words: WordBox[] }>(`/books/${id}/pages/${page}/words`),
   // Fetched with the session cookie and drawn straight onto a <canvas>; no
   // object URL is kept, so there's nothing to "save image as".
-  pageImage: async (id: number, page: number, width: number): Promise<Blob> => {
+  // freeKey is set only for FREE books: their pictures carry no personal watermark, so the browser may keep them (instant on revisit).
+  pageImage: async (id: number, page: number, width: number, signal?: AbortSignal, freeKey?: string | null): Promise<Blob> => {
     const { credentials, authHeaders } = await authInit();
-    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials, headers: authHeaders, cache: 'no-store' });
+    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}${freeKey ? `&v=${encodeURIComponent(freeKey)}` : ''}`, { credentials, headers: authHeaders, cache: freeKey ? 'default' : 'no-store', signal });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || `Request failed (${res.status})`, data);

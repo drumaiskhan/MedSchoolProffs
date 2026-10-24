@@ -1,0 +1,10 @@
+<?php
+// Copy to config.php (same folder) and fill in. Never commit config.php.
+return [
+  // Same value you put in FILE_BRIDGE_SECRET on the API server (a long random string).
+  'secret' => 'CHANGE-ME-to-a-long-random-string',
+  // Where PDFs are kept. Keep it OUTSIDE public_html. Default (if omitted): two folders above this script, i.e. ~/msp-files
+  // 'dir' => '/home/CPANELUSER/msp-files',
+  // Largest single file accepted (bytes). Default 2 GB.
+  // 'max_bytes' => 2147483648,
+];

@@ -13,6 +13,7 @@ import {
   MCQ_BACKUP_FORMAT_VERSION,
 } from "../lib/mcqBackup";
 import { deleteMcqsEverywhere } from "../lib/mcqCascade";
+import { snapshotSavedMarks, restoreSavedMarks } from "../lib/savedMcqMarks";
 import { mcqsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { BACKUP_SCOPE_LEVELS, BACKUP_PROGRAMS, describeScope, sanitizeScopeLabel, scopeFilenamePart, type BackupScope } from "../lib/backupScope";
@@ -179,6 +180,7 @@ router.post("/admin/mcq-backup/import", requireAdmin, upload.single("file"), asy
 
     // ---- v1: flat file, raw ids (the original behavior) ----------------------
     let deletedCount = 0;
+    let preservedSaves: Awaited<ReturnType<typeof snapshotSavedMarks>> = [];
     if (mode === "replace") {
       // A scoped backup (one Year/Block/Module/Subject/Topic branch) only
       // wipes that same branch before restoring — replacing the *entire*
@@ -186,12 +188,14 @@ router.post("/admin/mcq-backup/import", requireAdmin, upload.single("file"), asy
       // silently destroy everything outside it. A whole-bank backup (no
       // embedded scope) keeps the original full wipe.
       const idsToDelete = scope ? await selectMcqIdsInScope(scope) : (await db.select({ id: mcqsTable.id }).from(mcqsTable)).map((r) => r.id);
+      preservedSaves = await snapshotSavedMarks(idsToDelete); // keep students' saved MCQs across the swap
       await deleteMcqsEverywhere(idsToDelete);
       deletedCount = idsToDelete.length;
     }
     const created = await restoreMcqBackup(file.mcqs);
+    const savedKept = preservedSaves.length ? (await restoreSavedMarks(preservedSaves)).restored : 0;
     await auditRestore(req.user!.id, { mode, restored: created, deletedFirst: deletedCount, scope: scope ?? null });
-    res.status(201).json({ legacy: true, restored: created, mode, deletedFirst: deletedCount, scope: scope ?? null });
+    res.status(201).json({ legacy: true, restored: created, mode, deletedFirst: deletedCount, savedKept, scope: scope ?? null });
   } catch (err) {
     logger.error({ err }, "[mcq-backup] restore failed");
     res.status(422).json({ error: `Could not restore this backup: ${dbErrorMessage(err, err instanceof Error ? err.message : "unknown database error")}` });

@@ -1,8 +1,10 @@
 import { Router, type IRouter } from "express";
+import express from "express";
 import multer from "multer";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
 import { uploadFile, resolveFileUrl } from "../lib/storage";
 import { checkRateLimit } from "../lib/rateLimit";
+import { CPANEL_PREFIX, CpanelError, cpanelAppend, cpanelConfigured, cpanelFinish } from "../lib/cpanelFiles";
 
 const router: IRouter = Router();
 
@@ -160,6 +162,27 @@ router.post("/uploads/book", requireAdmin, uploadBook.single("file"), async (req
   }
   const storagePath = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype, "books");
   res.status(201).json({ storagePath, url: resolveFileUrl(storagePath), sizeBytes: req.file.size });
+});
+
+// Big book PDFs (200 MB+) go to the cPanel disk. The admin page cuts the file into 8 MB pieces and sends them one
+// after another (so nothing is held in memory and no proxy times out); the last piece finishes the file.
+//   POST /uploads/book-chunk?id=<random>&offset=<bytes so far>[&last=1]   body = raw bytes
+router.post("/uploads/book-chunk", requireAdmin, express.raw({ type: () => true, limit: "16mb" }), async (req, res): Promise<void> => {
+  const id = String(req.query.id ?? ""), offset = Number(req.query.offset), last = req.query.last === "1";
+  const body = req.body as Buffer;
+  if (!/^[A-Za-z0-9]{16,40}$/.test(id) || !Number.isInteger(offset) || offset < 0 || !Buffer.isBuffer(body) || body.length === 0) { res.status(400).json({ error: "Bad upload piece" }); return; }
+  if (!cpanelConfigured()) { res.status(503).json({ error: "cPanel file storage is not set up yet. Add FILE_BRIDGE_SECRET (and install /cpanel-filebridge), or paste a Google Drive link instead." }); return; }
+  if (offset === 0 && !body.subarray(0, 1024).toString("latin1").includes("%PDF-")) { res.status(400).json({ error: "That file is not a PDF." }); return; }
+  const name = `books/${id}.pdf`;
+  try {
+    const size = await cpanelAppend(name, offset, body);
+    if (!last) { res.json({ ok: true, size }); return; }
+    const total = await cpanelFinish(name);
+    res.status(201).json({ storagePath: `${CPANEL_PREFIX}${name}`, url: null, sizeBytes: total });
+  } catch (err) {
+    if (err instanceof CpanelError) { res.status(err.status === 413 ? 413 : 502).json({ error: err.message }); return; }
+    throw err;
+  }
 });
 
 // Website favicon — shown in browser tabs, so unlike the uploads above it

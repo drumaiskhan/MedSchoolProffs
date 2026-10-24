@@ -7,7 +7,7 @@ import { resolveBookAccess } from "../lib/bookAccess";
 import { checkRateLimit } from "../lib/rateLimit";
 import { logger } from "../lib/logger";
 import {
-  BookUnavailableError, NotPdfError, fileKeyOf, getOutline, getPageSizes, getPageWords, loadBook, renderPageJpeg, searchBook, type Watermark,
+  BookUnavailableError, NotPdfError, RenderCancelled, fileKeyOf, renderIdle, getOutline, getPageSizes, getPageWords, loadBook, renderPageJpeg, searchBook, type Watermark,
 } from "../lib/bookReader";
 
 const router: IRouter = Router();
@@ -43,7 +43,7 @@ const idOf = (v: string | string[] | undefined): number | null => { const n = Nu
 // Small LRU of already-rendered pages per (user, book, page, width) so scrolling
 // back over pages doesn't re-render them. Per-user because the watermark is.
 const imageCache = new Map<string, { buf: Buffer; at: number }>();
-const IMAGE_CACHE_MAX_BYTES = 60 * 1024 * 1024;
+const IMAGE_CACHE_MAX_BYTES = Math.max(30, Number(process.env.BOOK_IMAGE_CACHE_MB) || 120) * 1024 * 1024;
 let imageCacheBytes = 0;
 function cachePut(key: string, buf: Buffer): void {
   imageCache.set(key, { buf, at: Date.now() });
@@ -57,7 +57,7 @@ function cachePut(key: string, buf: Buffer): void {
 function cacheGet(key: string): Buffer | null {
   const hit = imageCache.get(key);
   if (!hit) return null;
-  if (Date.now() - hit.at > 10 * 60 * 1000) { imageCacheBytes -= hit.buf.byteLength; imageCache.delete(key); return null; }
+  if (Date.now() - hit.at > 30 * 60 * 1000) { imageCacheBytes -= hit.buf.byteLength; imageCache.delete(key); return null; }
   imageCache.delete(key); imageCache.set(key, hit); // refresh recency
   return hit.buf;
 }
@@ -91,20 +91,42 @@ router.get("/books/:id/pages/:page/image", requireAuth, async (req, res): Promis
   if (!access.ok) { res.status(access.status).json({ error: access.error }); return; }
   // Two brakes on scraping a whole book: a per-minute burst limit (a person
   // scrolling fast stays well under it) and a daily ceiling per book.
-  const burst = checkRateLimit(`bookpage-burst:${req.user!.id}`, 90, 60 * 1000);
-  const daily = checkRateLimit(`bookpage-day:${req.user!.id}:${bookId}`, 4000, 24 * 60 * 60 * 1000);
+  const burst = checkRateLimit(`bookpage-burst:${req.user!.id}`, 150, 60 * 1000);
+  const daily = checkRateLimit(`bookpage-day:${req.user!.id}:${bookId}`, 6000, 24 * 60 * 60 * 1000);
   if (!burst.allowed || !daily.allowed) { res.status(429).json({ error: "Too many pages requested. Slow down and try again shortly." }); return; }
   const width = Math.min(1600, Math.max(600, Number(req.query.w) || 1000));
-  const cacheKey = `${req.user!.id}:${bookId}:${fileKeyOf(access.book.storagePath)}:${page}:${Math.round(width / 100)}`;
+  const free = !!access.book.isFree;
+  // Free books carry no per-student watermark, so one render is shared by everybody (and by the browser's own cache).
+  const keyFor = (pg: number) => `${free ? "free" : req.user!.id}:${bookId}:${fileKeyOf(access.book.storagePath)}:${pg}:${Math.round(width / 100)}`;
+  // The reader aborts the request when a page scrolls out of range; skip the render if nobody is waiting any more.
+  let gone = false; res.on("close", () => { if (!res.writableEnded) gone = true; });
   try {
-    let buf = cacheGet(cacheKey);
+    let buf = cacheGet(keyFor(page));
     if (!buf) {
       const book = await loadBook(access.book.storagePath);
-      buf = await renderPageJpeg(book, page, width, await watermarkFor(req.user!.id));
-      cachePut(cacheKey, buf);
+      buf = await renderPageJpeg(book, page, width, free ? null : await watermarkFor(req.user!.id), () => gone);
+      cachePut(keyFor(page), buf);
     }
-    res.set({ "Content-Type": "image/jpeg", "Cache-Control": NO_STORE, Pragma: "no-cache", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" }).send(buf);
-  } catch (err) { fail(res, err); }
+    res.set({ "Content-Type": "image/jpeg", "Cache-Control": free ? "private, max-age=604800" : NO_STORE, ...(free ? {} : { Pragma: "no-cache" }), "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" }).send(buf);
+    // Read-ahead: while the reader looks at this page, quietly draw the next one so it is ready when they scroll.
+    // Only when the server is otherwise idle, so it never slows down anyone's visible pages.
+    const ahead = free ? [page + 1, page + 2] : [page + 1];
+    if (!gone && renderIdle() && ahead.some((n) => !cacheGet(keyFor(n)))) {
+      void (async () => {
+        try {
+          const book = await loadBook(access.book.storagePath);
+          const wm = free ? null : await watermarkFor(req.user!.id);
+          for (const next of ahead) {
+            if (next > book.pageCount || !renderIdle()) return;
+            if (!cacheGet(keyFor(next))) cachePut(keyFor(next), await renderPageJpeg(book, next, width, wm));
+          }
+        } catch { /* read-ahead is best effort */ }
+      })();
+    }
+  } catch (err) {
+    if (err instanceof RenderCancelled) { if (!res.headersSent) res.status(499).end(); return; }
+    fail(res, err);
+  }
 });
 
 // ---- Word boxes ----------------------------------------------------------------
@@ -126,7 +148,7 @@ const HighlightBody = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("words"), page: z.number().int().min(1), startWord: z.number().int().min(0), endWord: z.number().int().min(0), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
   z.object({ kind: z.literal("area"), page: z.number().int().min(1), rect: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.005).max(1), h: z.number().min(0.005).max(1) }), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
   // Freehand pen stroke: points in 0..1 page coordinates, width as a fraction of page width. Stored as JSON in the `rect` column.
-  z.object({ kind: z.literal("ink"), page: z.number().int().min(1), ink: z.object({ pts: z.array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)])).min(1).max(800), w: z.number().min(0.0005).max(0.05) }), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
+  z.object({ kind: z.literal("ink"), page: z.number().int().min(1), ink: z.object({ pts: z.array(z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)])).min(1).max(800), w: z.number().min(0.0005).max(0.05), hl: z.boolean().optional() }), color: ColorSchema.optional(), note: z.string().max(1000).nullable().optional() }),
 ]);
 
 function highlightView(h: typeof bookHighlightsTable.$inferSelect) {

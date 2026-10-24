@@ -802,6 +802,8 @@ export interface PastPaperRelinkResult {
   mcqsNotMatched: number;
 }
 
+export interface SavedMcqRestoreResult { dryRun: boolean; savedInBackup: number; total: number; restored: number; alreadySaved: number; noMatch: number; approximate: number; missingStudents: number }
+
 export const fullBackupApi = {
   // Same "fetch as a blob with credentials, trigger the save ourselves"
   // pattern as mcqBackupApi.downloadBackup above — a plain <a href> can't
@@ -840,6 +842,15 @@ export const fullBackupApi = {
     const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/import?mode=${mode}`, { method: 'POST', credentials: 'include', body: form });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore this backup', data);
+    return data;
+  },
+  // Repair: give students their Saved MCQs back from an older full backup (dryRun only counts).
+  restoreSavedMcqs: async (file: File, dryRun: boolean): Promise<SavedMcqRestoreResult> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetchOrThrow(`${API_BASE}/admin/full-backup/restore-saved-mcqs${dryRun ? '?dryRun=1' : ''}`, { method: 'POST', credentials: 'include', body: form });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Could not restore the saved MCQs', data);
     return data;
   },
   // Repair: re-attach MCQs to their past papers from the original backup file.
@@ -1046,6 +1057,36 @@ export async function uploadFile(file: File, kind: 'payment-proof' | 'profile-pi
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiRequestError(res.status, (data && data.error) || 'Upload failed', data);
   return data;
+}
+
+/** PDFs at or above this size are stored on the cPanel disk (sent in pieces) instead of Cloudinary. */
+export const BIG_BOOK_BYTES = 200 * 1024 * 1024;
+const CHUNK_BYTES = 8 * 1024 * 1024;
+
+/** Uploads a big PDF to the cPanel storage in 8 MB pieces (each retried a few times), reporting progress 0..1. */
+export async function uploadBigBook(file: File, onProgress?: (fraction: number) => void): Promise<{ storagePath: string; url: string | null; sizeBytes?: number }> {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(file.size, offset + CHUNK_BYTES), last = end >= file.size;
+    const piece = file.slice(offset, end);
+    let lastErr: unknown = null, data: { storagePath?: string; url?: string | null; sizeBytes?: number } | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const res = await fetchOrThrow(`${API_ORIGIN}/api/uploads/book-chunk?id=${id}&offset=${offset}${last ? '&last=1' : ''}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: piece });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) { const e = new ApiRequestError(res.status, (body && body.error) || 'Upload failed', body); if (res.status >= 400 && res.status < 500) throw Object.assign(e, { fatal: true }); throw e; }
+        data = body; lastErr = null; break;
+      } catch (err) {
+        lastErr = err; if ((err as { fatal?: boolean }).fatal) break;
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
+    if (lastErr) throw lastErr;
+    offset = end; onProgress?.(offset / file.size);
+    if (last) { if (!data?.storagePath) throw new Error('The server did not confirm the upload.'); return { storagePath: data.storagePath, url: data.url ?? null, sizeBytes: data.sizeBytes }; }
+  }
+  throw new Error('That file is empty.');
 }
 
 export const publicApi = {

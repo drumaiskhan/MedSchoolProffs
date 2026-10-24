@@ -24,7 +24,7 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, Archive, CheckCircle2, Database, Download, Loader2, ShieldAlert, Upload, Users } from 'lucide-react';
 import { SectionHeader, ConfirmDialog, cn } from '@/lib/shared';
-import { fullBackupApi, ApiRequestError, type FullBackupScope, type FullBackupValidation, type FullBackupRestoreResult, type PastPaperRelinkResult } from '@/lib/api';
+import { fullBackupApi, ApiRequestError, type FullBackupScope, type FullBackupValidation, type FullBackupRestoreResult, type PastPaperRelinkResult, type SavedMcqRestoreResult } from '@/lib/api';
 import { toast } from '@/hooks/use-toast';
 
 const SCOPES: Array<{ scope: FullBackupScope; title: string; description: string; icon: typeof Database }> = [
@@ -208,6 +208,31 @@ function RelinkPastPapersCard() {
   </div>;
 }
 
+// Students lost their Saved MCQs after a replace/re-import (the questions got new ids and the old saves went with them).
+// An older Full/Users backup still has who saved what; questions are found again by their text.
+function RestoreSavedMcqsCard() {
+  const [file, setFile] = useState<File | null>(null);
+  const [result, setResult] = useState<SavedMcqRestoreResult | null>(null);
+  const run = useMutation({
+    mutationFn: ({ f, dryRun }: { f: File; dryRun: boolean }) => fullBackupApi.restoreSavedMcqs(f, dryRun),
+    onSuccess: (r) => { setResult(r); if (!r.dryRun) toast({ title: 'Saved MCQs restored', description: `${r.restored.toLocaleString()} saved question${r.restored === 1 ? '' : 's'} given back to students.` }); },
+    onError: (err: unknown) => toast({ title: 'Could not restore the saved MCQs', description: err instanceof ApiRequestError ? err.message : 'Something went wrong — try again.', variant: 'destructive' }),
+  });
+  return <div className="mt-5 rounded-2xl border border-border bg-card p-5" data-testid="card-restore-saved-mcqs">
+    <div className="flex items-center gap-2 text-sm font-extrabold"><Archive size={16} className="text-primary" /> Restore students' Saved MCQs</div>
+    <p className="mt-1.5 max-w-2xl text-xs leading-5 text-muted-foreground">Some students' Saved MCQs disappeared after questions were replaced or re-imported? Upload a <b>Full</b> or <b>Users</b> backup made before it happened. Each saved question is found again by its text and saved for the same student. Nothing is removed or duplicated, so it is safe to run twice. Use "Check first" to see the numbers without changing anything.</p>
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <input type="file" accept=".json,application/json" onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); }} className="max-w-full text-xs file:mr-3 file:rounded-lg file:border file:border-border file:bg-muted file:px-3 file:py-2 file:text-xs file:font-bold" data-testid="input-saved-mcqs-file" />
+      <button type="button" onClick={() => file && run.mutate({ f: file, dryRun: true })} disabled={!file || run.isPending} className="rounded-xl border border-border px-4 py-2.5 text-xs font-extrabold disabled:opacity-50" data-testid="button-saved-mcqs-check">Check first</button>
+      <button type="button" onClick={() => file && run.mutate({ f: file, dryRun: false })} disabled={!file || run.isPending} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-saved-mcqs-restore">{run.isPending ? <><Loader2 size={14} className="animate-spin" /> Working…</> : 'Restore saved MCQs'}</button>
+    </div>
+    {result && <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs" data-testid="text-saved-mcqs-result">
+      <div className="font-extrabold">{result.dryRun ? 'Would restore' : 'Restored'} {result.restored.toLocaleString()} saved question{result.restored === 1 ? '' : 's'}</div>
+      <div className="mt-1 text-muted-foreground">{result.savedInBackup.toLocaleString()} saves in the file · {result.alreadySaved.toLocaleString()} already there · {result.noMatch.toLocaleString()} not found in the bank any more · {result.missingStudents.toLocaleString()} for students who no longer exist{result.approximate ? ` · ${result.approximate.toLocaleString()} matched to a same-text question in another place` : ''}</div>
+    </div>}
+  </div>;
+}
+
 function AdminDatabaseBackup() {
   const [lastResult, setLastResult] = useState<FullBackupRestoreResult | null>(null);
 
@@ -222,6 +247,7 @@ function AdminDatabaseBackup() {
     </div>
 
     <RelinkPastPapersCard />
+    <RestoreSavedMcqsCard />
 
     {lastResult && <div className={cn('mt-5 rounded-2xl border p-5 text-xs', 'border-primary/30 bg-primary/5')} data-testid="text-last-restore-result">
       <div className="flex items-center gap-2 font-extrabold"><CheckCircle2 size={15} className="text-primary" /> Last restore — {lastResult.scope}, {lastResult.mode === 'wipe-and-restore' ? 'wiped and restored' : 'restored into empty tables'}</div>

@@ -2,6 +2,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { logger } from "./logger";
 import { getSetting } from "./settings";
+import { cpanelDelete, isCpanelPath } from "./cpanelFiles";
 
 // Supabase is used for this app's Postgres database only (DATABASE_URL) —
 // Supabase Storage is NOT used for new uploads. Cloudinary is the one and
@@ -362,6 +363,8 @@ export function resolveFileUrl(storagePath: string | null | undefined, opts?: { 
     const deliveredId = needsFormatSuffix ? `${publicId}.${format}` : publicId;
     return `https://res.cloudinary.com/${cachedCloudinaryCloudName}/${resourceType}/upload/${transformSegment}${deliveredId}`;
   }
+  // Big books kept on cPanel: no public URL exists on purpose. Only the secure reader (server side) can fetch them.
+  if (storagePath.startsWith("cpanel:")) return null;
   if (storagePath.startsWith("local:")) {
     // Legacy rows from before local-disk storage was removed. These no
     // longer resolve to anything (the file is gone) — surfaced as null
@@ -390,6 +393,7 @@ export const THUMBNAIL_TRANSFORM = "w_600,q_auto,f_auto";
  * part the user is actually waiting on.
  */
 export async function deleteFromCloudinary(storagePath: string | null | undefined): Promise<{ ok: boolean; skipped?: boolean; error?: string }> {
+  if (isCpanelPath(storagePath)) return cpanelDelete(storagePath);
   const parsed = storagePath ? parseCloudinaryPath(storagePath) : null;
   if (!parsed) return { ok: true, skipped: true };
   const { slot, rest } = parsed;

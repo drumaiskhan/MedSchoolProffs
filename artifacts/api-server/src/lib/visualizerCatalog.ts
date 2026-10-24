@@ -50,14 +50,14 @@ export const CATALOG_DISCIPLINES: CatalogDiscipline[] = [
     id: "physiology", name: "Physiology", program: "Both",
     aspects: ["{e}: mechanism step by step", "{e}: regulation and feedback control", "{e}: graphs and normal values", "{e}: changes in disease", "{e}: applied and exercise physiology"],
     groups: [
-      g("General physiology", "Membrane potential; Action potential; Sodium-potassium pump; Osmosis and tonicity; Transport across membranes; Body fluid compartments; Homeostasis; Neuromuscular junction; Excitation-contraction coupling; Synaptic transmission; Receptor potentials; Cell signalling pathways"),
+      g("General physiology", "Membrane potential; Action potential; Sodium-potassium pump; Osmosis and tonicity; Transport across membranes; Body fluid compartments; Homeostasis; Neuromuscular junction; Synaptic transmission; Receptor potentials; Cell signalling pathways"),
       g("Blood and immunity", "Erythropoiesis; Haemoglobin and oxygen carriage; Haemostasis; Coagulation cascade; Fibrinolysis; Blood groups; White cell function; Platelet function; Iron metabolism; Plasma proteins"),
       g("Cardiovascular", "Cardiac cycle; Cardiac output; Frank-Starling mechanism; Pacemaker potential; ECG waveform; Heart sounds; Blood pressure regulation; Baroreceptor reflex; Venous return; Coronary circulation; Microcirculation; Capillary exchange; Cerebral circulation; Pressure-volume loop; Hypertension physiology; Shock physiology; Exercise and the circulation"),
       g("Respiratory", "Mechanics of breathing; Lung compliance; Surfactant; Lung volumes and capacities; Ventilation-perfusion matching; Gas exchange; Oxygen-haemoglobin dissociation curve; Carbon dioxide transport; Control of respiration; Chemoreceptors; High altitude adaptation; Diving physiology; Pulmonary circulation; Dead space"),
       g("Renal and acid-base", "Glomerular filtration; Tubular reabsorption; Countercurrent mechanism; Renin-angiotensin-aldosterone system; Antidiuretic hormone action; Micturition reflex; Acid-base balance; Potassium handling; Sodium balance; Renal clearance; Autoregulation of renal blood flow; Calcium and phosphate handling"),
       g("Gastrointestinal", "Gastric secretion; Pancreatic secretion; Bile secretion and enterohepatic circulation; Intestinal motility; Swallowing; Vomiting reflex; Digestion and absorption; Gastrointestinal hormones; Defaecation reflex; Liver functions"),
       g("Endocrine and reproduction", "Hypothalamic-pituitary axis; Growth hormone; Thyroid hormone synthesis; Cortisol and the stress response; Insulin and glucagon; Calcium homeostasis; Adrenal medulla; Menstrual cycle; Spermatogenesis; Pregnancy hormones; Lactation; Puberty; Menopause; Parathyroid hormone"),
-      g("Neurophysiology", "Somatosensory pathways; Pain pathways; Motor cortex and pyramidal tract; Stretch reflex; Muscle spindle and Golgi tendon organ; Cerebellar function; Basal ganglia circuits; Vestibular system; Vision and the visual pathway; Hearing and cochlear mechanics; Taste and smell; Sleep and EEG; Memory and learning; Speech and language; Autonomic reflexes; Temperature regulation; Hypothalamic functions; Cerebrospinal fluid dynamics"),
+      g("Neurophysiology", "Somatosensory pathways; Pain pathways; Motor cortex and pyramidal tract; Stretch reflex; Cerebellar function; Basal ganglia circuits; Vestibular system; Vision and the visual pathway; Hearing and cochlear mechanics; Taste and smell; Sleep and EEG; Memory and learning; Speech and language; Autonomic reflexes; Temperature regulation; Hypothalamic functions; Cerebrospinal fluid dynamics"),
       g("Special topics", "Muscle contraction; Skeletal muscle energetics; Smooth muscle physiology; Fetal and neonatal physiology; Ageing physiology; Nutrition and energy balance; Exercise physiology; Hunger and thirst regulation; Physiology of stress; Pain modulation"),
     ],
   },
@@ -248,6 +248,31 @@ export const CATALOG_DISCIPLINES: CatalogDiscipline[] = [
       g("Conservative dentistry and endodontics", "Cavity preparation principles; Class I cavity; Class II cavity; Class V cavity; Pulp capping; Root canal treatment; Working length determination; Root canal irrigants; Obturation techniques; Rubber dam isolation; Endodontic emergencies; Tooth bleaching; Dental trauma management; Apexification; Pulpotomy; Post-endodontic restoration; Endodontic surgery"),
       g("Paediatric and preventive dentistry", "Early childhood caries; Behaviour management in children; Pulpotomy in primary teeth; Space maintainers; Stainless steel crowns; Fluoride therapy; Pit and fissure sealing; Dental trauma in children; Oral habits in children; Caries risk assessment; Dental public health; Oral hygiene instructions; Dental fluorosis; Atraumatic restorative treatment"),
       g("Oral radiology", "Intraoral radiographs; Panoramic radiography; Cone beam CT in dentistry; Radiographic errors; Radiation safety in dentistry; Radiographic interpretation of caries; Radiographic interpretation of periapical lesions; Digital radiography"),
+    ],
+  },
+  {
+    id: "oral-physiology", name: "Oral Physiology and Biochemistry", program: "BDS",
+    aspects: ["{e}: normal physiology", "{e}: mechanism step by step", "{e}: regulation and control", "{e}: clinical significance in dentistry", "{e}: worked example"],
+    groups: [
+      g("Oral physiology", "Salivary secretion and its control; Composition and functions of saliva; Mastication and the masticatory muscles; Deglutition; Taste sensation and taste pathway; Pain pathway of the tooth and dentine hypersensitivity; Mandibular movements and the Posselt envelope; Speech production; Swallowing reflex; Muscle contraction and the sliding filament theory; Hearing and the auditory pathway; Calcium and phosphate homeostasis; Thyroid and parathyroid hormones; Vitamin D and bone mineralisation"),
+      g("Oral biochemistry", "Enamel mineralisation and amelogenesis; Dentine and collagen synthesis; Fluoride and fluorapatite; Plaque pH and the Stephan curve; Dental plaque biofilm metabolism; Salivary buffer systems; Bone remodelling and RANKL; Collagen synthesis and vitamin C; Carbohydrate metabolism and caries; Acid-base balance and buffers"),
+    ],
+  },
+  {
+    id: "dental-pharm-micro", name: "Dental Pharmacology and Oral Microbiology", program: "BDS",
+    aspects: ["{e}: mechanism of action", "{e}: clinical uses in dentistry", "{e}: adverse effects and interactions", "{e}: pathogenesis and features", "{e}: prevention and control"],
+    groups: [
+      g("Dental pharmacology", "Local anaesthetics in dentistry; Vasoconstrictors in local anaesthesia; Analgesics for dental pain; NSAIDs after dental extraction; Antibiotics for odontogenic infections; Antibiotic prophylaxis for infective endocarditis; Chlorhexidine mouthwash; Fluoride preparations; Sedation in dentistry; Management of medical emergencies in the dental chair; Drug-induced gingival overgrowth; Xerostomia-causing drugs"),
+      g("Oral microbiology and infection control", "Streptococcus mutans and caries; Dental plaque formation; Periodontal pathogens; Candida albicans in the mouth; Infection control in the dental clinic; Sterilisation of dental instruments; Hepatitis B and the dental team; Dental unit waterline contamination; Odontogenic infection spread; Infective endocarditis after dental procedures"),
+    ],
+  },
+  {
+    id: "systems-extra", name: "Muscle, Special Senses and Endocrine Systems", program: "Both",
+    aspects: ["{e}: structure and organisation", "{e}: mechanism step by step", "{e}: clinical correlation", "{e}: investigations and examination", "{e}: worked example"],
+    groups: [
+      g("Muscle and bone", "Sarcomere and sliding filament theory; Excitation-contraction coupling; Skeletal muscle fibre types; Long bone structure and growth plate; Fracture healing; Osteoporosis; Rickets and osteomalacia"),
+      g("Special senses and reflexes", "Ear anatomy and hearing; Cochlear mechanics; Conductive vs sensorineural hearing loss; Vestibular system and balance; Stretch reflex and the knee jerk; Spinal cord cross-section and tracts; Muscle spindle and Golgi tendon organ; Lower vs upper motor neuron lesions"),
+      g("Endocrine and lymphoid", "Thyroid gland structure and hormone synthesis; Parathyroid glands and calcium control; Graves disease and Hashimoto thyroiditis; Lymph node structure and lymph flow; Cervical lymphadenopathy; Germinal centre reaction"),
     ],
   },
 ];
