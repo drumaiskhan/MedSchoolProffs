@@ -6,6 +6,7 @@ import {
 } from "@workspace/db";
 import { APPLICATION_NAME, CONTENT_TABLES, ensureSchemaIfMissing } from "./fullBackup";
 import { BackupMcqSchema } from "./mcqBackup";
+import { paperQuestionKey, restoreSavedByPaper, snapshotSavedByPaper, type PaperSavedMark } from "./savedMcqMarks";
 
 // ---------------------------------------------------------------------------
 // Past papers backup — its own backup/restore, separate from the MCQ bank
@@ -106,6 +107,8 @@ export function parsePastPaperBackup(raw: unknown): { ok: true; data: ParsedPast
 
 export interface PastPaperRestoreResult {
   mode: "append" | "replace";
+  /** Students' saved MCQs kept across a replace. */
+  savedKept?: number;
   pastPapersRestored: number;
   mcqsRestored: number;
   pastPapersReplaced: number;
@@ -144,6 +147,7 @@ export async function restorePastPaperBackup(data: ParsedPastPaperBackup, mode: 
     // --- replace: wipe what this file covers first (same transaction) ---
     let pastPapersReplaced = 0;
     let mcqsDeleted = 0;
+    let preservedSaves: PaperSavedMark[] = [];
     if (mode === "replace") {
       let victims: number[];
       if (data.scope) {
@@ -159,6 +163,7 @@ export async function restorePastPaperBackup(data: ParsedPastPaperBackup, mode: 
       }
       if (victims.length) {
         const mcqIds = (await tx.select({ id: mcqsTable.id }).from(mcqsTable).where(and(isNotNull(mcqsTable.pastPaperId), inArray(mcqsTable.pastPaperId, victims)))).map((r) => r.id);
+        preservedSaves = await snapshotSavedByPaper(mcqIds, tx as unknown as Parameters<typeof snapshotSavedByPaper>[1]); // students' saved MCQs are deleted with the questions - remember them
         for (let i = 0; i < mcqIds.length; i += 1000) {
           const chunk = mcqIds.slice(i, i + 1000);
           await tx.delete(practiceAnswersTable).where(inArray(practiceAnswersTable.mcqId, chunk));
@@ -197,8 +202,11 @@ export async function restorePastPaperBackup(data: ParsedPastPaperBackup, mode: 
 
     // --- then their questions, pointing at the new paper ids ---
     const usable = data.mcqs.filter((m) => m.pastPaperId != null && paperIdMap.has(m.pastPaperId));
+    const paperById = new Map(data.pastPapers.map((p) => [p.id, p]));
+    const newIdByKey = new Map<string, number>();
     for (let i = 0; i < usable.length; i += INSERT_BATCH_SIZE) {
-      await tx.insert(mcqsTable).values(usable.slice(i, i + INSERT_BATCH_SIZE).map((m) => ({
+      const slice = usable.slice(i, i + INSERT_BATCH_SIZE);
+      const inserted = await tx.insert(mcqsTable).values(slice.map((m) => ({
         question: m.question,
         options: m.options,
         correctAnswer: m.correctAnswer ?? null,
@@ -217,11 +225,17 @@ export async function restorePastPaperBackup(data: ParsedPastPaperBackup, mode: 
         topicId: keep(m.topicId, known.topics),
         pastPaperId: paperIdMap.get(m.pastPaperId as number)!,
         examId: null,
-      })));
+      }))).returning({ id: mcqsTable.id });
+      slice.forEach((m, j) => {
+        const p = paperById.get(m.pastPaperId as number);
+        if (p && inserted[j]) { const k = paperQuestionKey(m.question, p.title, p.examBoard, p.year); if (!newIdByKey.has(k)) newIdByKey.set(k, inserted[j]!.id); }
+      });
     }
+    const savedKept = preservedSaves.length ? await restoreSavedByPaper(preservedSaves, newIdByKey, tx as unknown as Parameters<typeof restoreSavedByPaper>[2]) : 0;
 
     return {
       mode,
+      savedKept,
       pastPapersRestored: paperIdMap.size,
       mcqsRestored: usable.length,
       pastPapersReplaced,

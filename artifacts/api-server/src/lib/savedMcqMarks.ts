@@ -1,5 +1,5 @@
 import { inArray, sql } from "drizzle-orm";
-import { db, mcqsTable, savedMcqsTable, usersTable } from "@workspace/db";
+import { db, mcqsTable, pastPapersTable, savedMcqsTable, usersTable } from "@workspace/db";
 
 // Students' "Saved MCQs" point at question ids. A backup restore in "replace" mode (or a re-import) deletes the old
 // questions and inserts the same questions again with NEW ids - which used to wipe every student's saved list
@@ -91,4 +91,39 @@ export async function restoreSavedMcqsFromBackup(data: Record<string, Array<Reco
   }
   const result = await restoreSavedMarks(marks, db, opts);
   return { ...result, savedInBackup: saved.length, missingStudents, dryRun: !!opts.dryRun, noMatch: result.noMatch + (saved.length - missingStudents - marks.length) };
+}
+
+// ---- Past-paper restore (replace) -----------------------------------------------------------------------------
+// There the papers are re-created too (new paper ids), so a question is recognised by its text + its paper's
+// title/board/year instead of by placement ids.
+export interface PaperSavedMark { userId: number; createdAt: Date | null; key: string }
+export const paperQuestionKey = (question: string, title: string, board: string | null | undefined, year: string | null | undefined): string =>
+  `${normQuestion(question)}|${normQuestion(title)}|${normQuestion(board)}|${normQuestion(year)}`;
+
+export async function snapshotSavedByPaper(mcqIds: number[], exec: Exec = db): Promise<PaperSavedMark[]> {
+  const out: PaperSavedMark[] = [];
+  for (const ids of chunk(mcqIds, 5_000)) {
+    const rows = await exec.select({ userId: savedMcqsTable.userId, createdAt: savedMcqsTable.createdAt, question: mcqsTable.question, title: pastPapersTable.title, board: pastPapersTable.examBoard, year: pastPapersTable.year })
+      .from(savedMcqsTable)
+      .innerJoin(mcqsTable, sql`${savedMcqsTable.mcqId} = ${mcqsTable.id}`)
+      .innerJoin(pastPapersTable, sql`${mcqsTable.pastPaperId} = ${pastPapersTable.id}`)
+      .where(inArray(savedMcqsTable.mcqId, ids));
+    for (const r of rows) out.push({ userId: r.userId, createdAt: r.createdAt ?? null, key: paperQuestionKey(r.question, r.title, r.board, r.year) });
+  }
+  return out;
+}
+
+/** `newIdByKey`: paperQuestionKey -> id of the re-inserted question. Returns how many saves were put back. */
+export async function restoreSavedByPaper(marks: PaperSavedMark[], newIdByKey: Map<string, number>, exec: Exec = db): Promise<number> {
+  const rows: Array<{ userId: number; mcqId: number; createdAt?: Date }> = [];
+  const seen = new Set<string>();
+  for (const m of marks) {
+    const id = newIdByKey.get(m.key);
+    if (id === undefined || seen.has(`${m.userId}:${id}`)) continue;
+    seen.add(`${m.userId}:${id}`);
+    rows.push({ userId: m.userId, mcqId: id, ...(m.createdAt ? { createdAt: m.createdAt } : {}) });
+  }
+  let restored = 0;
+  for (const part of chunk(rows, 1_000)) restored += (await exec.insert(savedMcqsTable).values(part).onConflictDoNothing().returning({ id: savedMcqsTable.id })).length;
+  return restored;
 }
