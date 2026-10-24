@@ -150,7 +150,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
   const [failed, setFailed] = useState<string | null>(null);
   const height = Math.round(widthPx * (size.h / size.w));
   const aspect = size.h / size.w;
-  const inking = inking || mode === 'marker';
+  const inking = mode === 'pen' || mode === 'marker';
 
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
