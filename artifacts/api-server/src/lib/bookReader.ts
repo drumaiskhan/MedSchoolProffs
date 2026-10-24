@@ -17,6 +17,12 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import os from "node:os";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { resolveFileUrl } from "./storage";
 import { logger } from "./logger";
@@ -81,13 +87,14 @@ interface LoadedBook {
   bytes: number;
   pageCount: number;
   sizes: PageSize[] | null;
+  sizesPromise?: Promise<PageSize[]>;
   outline?: OutlineItem[];
   lastUsed: number;
 }
 
 const MAX_CACHE_BYTES = Math.max(50, Number(process.env.BOOK_CACHE_MB) || 200) * 1024 * 1024;
 const MAX_BOOK_BYTES = 300 * 1024 * 1024;
-const IDLE_MS = 20 * 60 * 1000;
+const IDLE_MS = 45 * 60 * 1000;
 const docs = new Map<string, LoadedBook>();
 const inflight = new Map<string, Promise<LoadedBook>>();
 
@@ -110,6 +117,58 @@ export function fileKeyOf(storagePath: string): string {
   return h.toString(36);
 }
 
+// ---- Disk cache of fetched book files ------------------------------------------
+// A Google Drive book used to be downloaded again every time it left the memory cache (idle 20 min, or
+// another book needed the room) - for a big PDF that is many seconds of "loading" before page 1. The
+// bytes now also live in a temp-folder cache (and each book's page sizes next to them), so re-opening
+// is a local file read. Private to the server (never served to anyone), capped, oldest removed first.
+const DISK_DIR = process.env.BOOK_DISK_CACHE_DIR || path.join(os.tmpdir(), "msp-book-cache");
+const DISK_MAX_BYTES = Math.max(200, Number(process.env.BOOK_DISK_CACHE_MB) || 1500) * 1024 * 1024;
+const diskName = (storagePath: string): string => createHash("sha1").update(storagePath).digest("hex");
+const diskPath = (storagePath: string): string => path.join(DISK_DIR, `${diskName(storagePath)}.pdf`);
+const sizesPath = (storagePath: string): string => path.join(DISK_DIR, `${diskName(storagePath)}.sizes.json`);
+
+async function readDisk(storagePath: string): Promise<Uint8Array | null> {
+  try {
+    const file = diskPath(storagePath);
+    const buf = await readFile(file);
+    const now = new Date(); void import("node:fs/promises").then((m) => m.utimes(file, now, now)).catch(() => {});
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  } catch { return null; }
+}
+
+/** Streams the response to a temp file (not into one huge in-memory buffer), then moves it into place. */
+async function writeDiskFromResponse(storagePath: string, res: Response): Promise<Uint8Array> {
+  await mkdir(DISK_DIR, { recursive: true });
+  const final = diskPath(storagePath), tmp = `${final}.${process.pid}.${Date.now()}.part`;
+  if (!res.body) throw new BookUnavailableError("The book file could not be fetched (empty response).");
+  let bytes = 0;
+  const limiter = async function* (src: AsyncIterable<Uint8Array>) { for await (const chunk of src) { bytes += chunk.byteLength; if (bytes > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader."); yield chunk; } };
+  try {
+    await pipeline(Readable.fromWeb(res.body as never), limiter, createWriteStream(tmp));
+    await rename(tmp, final);
+  } catch (err) { await unlink(tmp).catch(() => {}); throw err; }
+  void pruneDisk();
+  const buf = await readFile(final);
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
+let pruning = false;
+async function pruneDisk(): Promise<void> {
+  if (pruning) return; pruning = true;
+  try {
+    const names = await readdir(DISK_DIR).catch(() => [] as string[]);
+    const files: Array<{ f: string; size: number; at: number }> = [];
+    for (const n of names) { if (!n.endsWith(".pdf")) continue; const st = await stat(path.join(DISK_DIR, n)).catch(() => null); if (st) files.push({ f: n, size: st.size, at: st.mtimeMs }); }
+    let total = files.reduce((a, b) => a + b.size, 0);
+    files.sort((a, b) => a.at - b.at);
+    while (total > DISK_MAX_BYTES && files.length > 1) {
+      const old = files.shift()!; total -= old.size;
+      await unlink(path.join(DISK_DIR, old.f)).catch(() => {}); await unlink(path.join(DISK_DIR, old.f.replace(/\.pdf$/, ".sizes.json"))).catch(() => {});
+    }
+  } finally { pruning = false; }
+}
+
 export async function loadBook(storagePath: string): Promise<LoadedBook> {
   const cached = docs.get(storagePath);
   if (cached) { cached.lastUsed = Date.now(); return cached; }
@@ -117,18 +176,20 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
   if (pending) return pending;
 
   const job = (async () => {
-    const url = resolveFileUrl(storagePath);
-    if (!url) throw new BookUnavailableError("This book's file can't be located right now.");
-    const driveId = parseDriveFileId(url);
-    const res = await (driveId ? fetchDriveFile(driveId, 180_000) : fetch(url, { signal: AbortSignal.timeout(120_000) })).catch((err) => { throw new BookUnavailableError(driveId && err instanceof Error ? err.message : `Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
-    if (!res.ok) throw new BookUnavailableError(`The book file could not be fetched (${res.status}).`);
-    const len = Number(res.headers.get("content-length") || 0);
-    if (len > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
-    const buf = new Uint8Array(await res.arrayBuffer());
-    if (buf.byteLength > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
+    let buf = await readDisk(storagePath);
+    if (!buf) {
+      const url = resolveFileUrl(storagePath);
+      if (!url) throw new BookUnavailableError("This book's file can't be located right now.");
+      const driveId = parseDriveFileId(url);
+      const res = await (driveId ? fetchDriveFile(driveId, 180_000) : fetch(url, { signal: AbortSignal.timeout(120_000) })).catch((err) => { throw new BookUnavailableError(driveId && err instanceof Error ? err.message : `Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
+      if (!res.ok) throw new BookUnavailableError(`The book file could not be fetched (${res.status}).`);
+      const len = Number(res.headers.get("content-length") || 0);
+      if (len > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
+      buf = await writeDiskFromResponse(storagePath, res);
+    }
     // "%PDF" may follow a few bytes of junk, per the PDF spec.
     const head = Buffer.from(buf.subarray(0, 1024)).toString("latin1");
-    if (!head.includes("%PDF-")) throw new NotPdfError();
+    if (!head.includes("%PDF-")) { await unlink(diskPath(storagePath)).catch(() => {}); throw new NotPdfError(); }
 
     const pdfjs = await loadPdfjs();
     const task = pdfjs.getDocument({
@@ -143,6 +204,7 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
     const pdf = await task.promise.catch(() => { throw new BookUnavailableError("This PDF couldn't be opened (it may be damaged or password-protected)."); });
     const book: LoadedBook = { key: storagePath, pdf, bytes: buf.byteLength, pageCount: pdf.numPages, sizes: null, lastUsed: Date.now() };
     docs.set(storagePath, book);
+    void getPageSizes(book).catch(() => {}); // measure the pages in the background so opening the reader doesn't wait for it
     await evictIfNeeded();
     return book;
   })().finally(() => inflight.delete(storagePath));
@@ -152,31 +214,50 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
 
 /** Each page's width/height at scale 1, so the reader can lay out placeholders
  * at the right shape before a single image has loaded. */
-export async function getPageSizes(book: LoadedBook): Promise<PageSize[]> {
-  if (book.sizes) return book.sizes;
-  const sizes: PageSize[] = [];
-  for (let i = 1; i <= Math.min(book.pageCount, 3000); i++) {
-    const page = await book.pdf.getPage(i);
-    const v = page.getViewport({ scale: 1 });
-    sizes.push({ w: Math.round(v.width * 100) / 100, h: Math.round(v.height * 100) / 100 });
-    page.cleanup();
-  }
-  book.sizes = sizes;
-  return sizes;
+export function getPageSizes(book: LoadedBook): Promise<PageSize[]> {
+  if (book.sizes) return Promise.resolve(book.sizes);
+  book.sizesPromise ??= (async () => {
+    // Saved from an earlier open of this exact file: no page needs to be touched.
+    try {
+      const saved = JSON.parse(await readFile(sizesPath(book.key), "utf8")) as PageSize[];
+      if (Array.isArray(saved) && saved.length === Math.min(book.pageCount, 3000)) { book.sizes = saved; return saved; }
+    } catch { /* not saved yet */ }
+    const count = Math.min(book.pageCount, 3000);
+    const sizes: PageSize[] = new Array(count);
+    // Measured in parallel batches (one page at a time made a 600-page book wait for 600 round trips).
+    const BATCH = 24;
+    for (let start = 1; start <= count; start += BATCH) {
+      await Promise.all(Array.from({ length: Math.min(BATCH, count - start + 1) }, async (_, k) => {
+        const i = start + k;
+        const page = await book.pdf.getPage(i);
+        const v = page.getViewport({ scale: 1 });
+        sizes[i - 1] = { w: Math.round(v.width * 100) / 100, h: Math.round(v.height * 100) / 100 };
+        page.cleanup();
+      }));
+    }
+    book.sizes = sizes;
+    void mkdir(DISK_DIR, { recursive: true }).then(() => writeFile(sizesPath(book.key), JSON.stringify(sizes))).catch(() => {});
+    return sizes;
+  })().catch((err) => { book.sizesPromise = undefined; throw err; });
+  return book.sizesPromise;
 }
 
 // ---- Rendering -------------------------------------------------------------
 
 // At most a few pages render at once: rendering is CPU-bound and one student
 // scrolling quickly shouldn't starve the API for everyone else.
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = Math.max(2, Math.min(4, Number(process.env.BOOK_RENDER_CONCURRENCY) || os.cpus().length));
 let active = 0;
 const waiters: Array<() => void> = [];
-async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
+/** True when there is spare render capacity right now (used to decide whether to pre-render ahead). */
+export const renderIdle = (): boolean => active === 0 && waiters.length === 0;
+async function withSlot<T>(fn: () => Promise<T>, isCancelled?: () => boolean): Promise<T> {
   if (active >= MAX_CONCURRENT) await new Promise<void>((resolve) => waiters.push(resolve));
+  if (isCancelled?.()) { waiters.shift()?.(); throw new RenderCancelled(); } // the reader scrolled past this page while it queued
   active++;
   try { return await fn(); } finally { active--; waiters.shift()?.(); }
 }
+export class RenderCancelled extends Error { constructor() { super("render cancelled"); } }
 
 export interface Watermark { primary: string; secondary: string }
 
@@ -208,7 +289,7 @@ function drawWatermark(ctx: import("@napi-rs/canvas").SKRSContext2D, w: number, 
   ctx.restore();
 }
 
-export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targetWidth: number, wm: Watermark): Promise<Buffer> {
+export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targetWidth: number, wm: Watermark, isCancelled?: () => boolean): Promise<Buffer> {
   if (pageNumber < 1 || pageNumber > book.pageCount) throw new RangeError("Page out of range");
   const { createCanvas, GlobalFonts } = await loadCanvas();
   ensureFont(GlobalFonts);
@@ -224,11 +305,11 @@ export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targe
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx as never, viewport }).promise;
       drawWatermark(ctx, canvas.width, canvas.height, wm);
-      return await canvas.encode("jpeg", 82);
+      return await canvas.encode("jpeg", 80);
     } finally {
       page.cleanup();
     }
-  });
+  }, isCancelled);
 }
 
 // ---- Word boxes (for highlighting) ------------------------------------------

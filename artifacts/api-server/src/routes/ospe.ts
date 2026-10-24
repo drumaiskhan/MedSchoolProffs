@@ -16,7 +16,8 @@ import {
 } from "@workspace/db";
 import { requireAuth, requireAdmin, requireMembershipFor, isAdminRole } from "../middlewares/auth";
 import { getStudentTargeting, isTargetVisible, notifyTargetedStudents, describeModuleTargeting } from "../lib/contentVisibility";
-import { gradeWrittenAnswer, AiNotConfiguredError } from "../lib/aiExplain";
+import { gradeWrittenAnswer, explainOspeMistake, AiNotConfiguredError } from "../lib/aiExplain";
+import { checkRateLimit } from "../lib/rateLimit";
 import { resolveFileUrl } from "../lib/storage";
 
 const router: IRouter = Router();
@@ -885,6 +886,50 @@ router.get("/ospe/exam-attempts/:id/result", requireAuth, async (req, res): Prom
     totalMarks: Number(attempt.totalMarks), obtainedMarks: exam.showMarks ? Number(attempt.obtainedMarks) : null,
     percentage: exam.showPercentage ? Number(attempt.percentage) : null, passed: attempt.passed, breakdown,
   });
+});
+
+// "Why was this wrong, and how do I write it correctly?" — an AI tutor explanation for one station of a finished
+// attempt. Only after results are released, only when the exam shows correct answers (it reveals the model answer),
+// and only for stations where the student lost marks. Nothing is stored; the page keeps the answer on screen.
+router.post("/ospe/exam-attempts/:id/stations/:stationId/explain", requireAuth, requireMembershipFor("ai_explain"), async (req, res): Promise<void> => {
+  const attemptId = Number(req.params.id), stationId = Number(req.params.stationId);
+  if (!Number.isInteger(attemptId) || !Number.isInteger(stationId)) { res.status(400).json({ error: "Invalid request" }); return; }
+  const [attempt] = await db.select().from(ospeExamAttemptsTable).where(and(eq(ospeExamAttemptsTable.id, attemptId), eq(ospeExamAttemptsTable.userId, req.user!.id)));
+  if (!attempt) { res.status(404).json({ error: "Attempt not found" }); return; }
+  if (attempt.status === "in_progress") { res.status(409).json({ error: "Finish the exam first" }); return; }
+  const [exam] = await db.select().from(ospeExamsTable).where(eq(ospeExamsTable.id, attempt.examId));
+  const released = exam.resultReleaseMode === "manual" ? !!attempt.resultsReleasedAt : exam.resultReleaseMode === "after_end" ? Date.now() > exam.endAt.getTime() : true;
+  if (!released) { res.status(403).json({ error: "Results aren't released yet" }); return; }
+  if (!exam.showCorrectAnswers) { res.status(403).json({ error: "This exam doesn't show correct answers, so explanations aren't available." }); return; }
+
+  const [row] = await db.select({ station: ospeStationsTable }).from(ospeExamStationsTable).innerJoin(ospeStationsTable, eq(ospeExamStationsTable.stationId, ospeStationsTable.id))
+    .where(and(eq(ospeExamStationsTable.examId, attempt.examId), eq(ospeStationsTable.id, stationId)));
+  if (!row) { res.status(404).json({ error: "Station not found" }); return; }
+  const station = row.station;
+  const [answer] = await db.select().from(ospeExamAnswersTable).where(and(eq(ospeExamAnswersTable.attemptId, attemptId), eq(ospeExamAnswersTable.stationId, stationId)));
+  const marks = Number(station.marks);
+  if (station.answerType === "WRITTEN" && !answer?.aiVerdict) { res.status(409).json({ error: "This answer hasn't been graded yet. Tap \"Check for grades\" first." }); return; }
+  const obtained = answer?.marksObtained != null ? Number(answer.marksObtained) : 0;
+  if (obtained >= marks) { res.status(400).json({ error: "You got full marks on this one — nothing to correct." }); return; }
+
+  const limit = checkRateLimit(`ospe-explain:${req.user!.id}`, 30, 10 * 60 * 1000);
+  if (!limit.allowed) { res.status(429).json({ error: "You're asking too quickly. Wait a few minutes and try again." }); return; }
+
+  const labelPoints = (station.labelPoints as Array<{ id: string; label: string }> | null) ?? [];
+  const labelAnswers = (answer?.labelAnswers as Record<string, string> | null) ?? {};
+  try {
+    const explanation = await explainOspeMistake({
+      answerType: station.answerType, title: station.title, instructions: station.instructions,
+      modelAnswer: station.modelAnswer, correctAnswer: station.correctAnswer, options: station.options,
+      selectedAnswer: answer?.selectedAnswer ?? null, writtenAnswer: answer?.writtenAnswer ?? null,
+      labels: station.answerType === "LABELING" ? labelPoints.map((p, i) => ({ n: i + 1, given: labelAnswers[p.id] ?? "", correct: p.label })) : undefined,
+      marks, marksObtained: obtained, gradingFeedback: answer?.aiFeedback ?? null,
+    });
+    res.json(explanation);
+  } catch (err) {
+    if (err instanceof AiNotConfiguredError) { res.status(503).json({ error: err.message }); return; }
+    res.status(502).json({ error: "Couldn't generate an explanation right now. Try again shortly." });
+  }
 });
 
 export default router;

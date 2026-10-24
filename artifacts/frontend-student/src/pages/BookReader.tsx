@@ -21,7 +21,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams } from 'wouter';
 import {
-  ArrowLeft, BookOpen, BoxSelect, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Eraser, EyeOff, Highlighter, List, ListOrdered, PenLine,
+  ArrowLeft, BookOpen, BoxSelect, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Brush, Eraser, EyeOff, Highlighter, List, ListOrdered, PenLine,
   LockKeyhole, Maximize, Minimize, MousePointer2, Save, Search, ShieldCheck, Sun, Moon, Trash2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import {
@@ -31,10 +31,11 @@ import {
 import { BrandSpinner, cn, useFocusMode } from '@/lib/shared';
 import { toast } from '@/hooks/use-toast';
 import { hitWord, inkNear, inkPath, lineRects, simplifyInk, type InkPts, type Rect } from '@/lib/reader-geometry';
-import { colorHex, HIGHLIGHTER_COLORS, isHex, PEN_COLORS, PEN_SIZES } from '@/lib/reader-palette';
+import { clampW, colorHex, EDGE_COLORS, HIGHLIGHTER_COLORS, isHex, MARKER_W, PEN_COLORS, PEN_W } from '@/lib/reader-palette';
+import { clearPageCache, loadPageImage, setReaderFocus } from '@/lib/page-loader';
 import { enableScreenshotGuard, disableScreenshotGuard } from '@/lib/nativeScreenshotGuard';
 
-type Mode = 'read' | 'text' | 'area' | 'pen' | 'erase';
+type Mode = 'read' | 'text' | 'area' | 'pen' | 'marker' | 'erase';
 type Theme = 'light' | 'sepia' | 'night';
 type PanelTab = 'highlights' | 'bookmarks' | 'contents' | 'search';
 type Found = { start: number; end: number; active: boolean };
@@ -47,7 +48,7 @@ const THEMES: Record<Theme, { label: string; filter?: string; room?: string }> =
 const NEXT_THEME: Record<Theme, Theme> = { light: 'sepia', sepia: 'night', night: 'light' };
 
 // Set while two fingers are pinching, so the page layers ignore those touches (no stray strokes / scrolling).
-const readerGesture = { pinching: false };
+const readerGesture = { pinching: false, penDown: false, onStroke: null as null | (() => void) };
 
 const isField = (t: EventTarget | null): boolean => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 const readPref = <T extends string>(key: string, allowed: readonly T[], fallback: T): T => { try { const v = localStorage.getItem(key) as T | null; return v && allowed.includes(v) ? v : fallback; } catch { return fallback; } };
@@ -108,6 +109,35 @@ function useDevtoolsGuard(enabled: boolean): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Pen / marker flyout, laid out like the Microsoft Edge PDF viewer's: a colour grid, a live preview stroke, a thickness slider.
+function PenFlyout({ kind, color, onColor, width, onWidth, range, onClose }: {
+  kind: 'pen' | 'marker'; color: HighlightColor; onColor: (c: HighlightColor) => void; width: number; onWidth: (w: number) => void; range: { min: number; max: number; def: number }; onClose: () => void;
+}) {
+  const hex = colorHex(color);
+  const t = (width - range.min) / (range.max - range.min);
+  const px = Math.max(1.5, width * 900);
+  const light = (h: string) => { const n = parseInt(h.slice(1), 16); return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150; };
+  return <div className="mb-2 rounded-2xl border border-border bg-card p-3 shadow-lg" role="dialog" aria-label={kind === 'pen' ? 'Pen options' : 'Marker options'} data-testid="flyout-pen">
+    <div className="mb-2 flex items-center"><span className="text-xs font-extrabold">Colours</span>
+      <button type="button" onClick={onClose} className="ml-auto grid size-6 place-items-center rounded-md hover:bg-muted" aria-label="Close pen options"><X size={14} /></button></div>
+    <div className="grid grid-cols-6 gap-2" role="group" aria-label="Colours">
+      {EDGE_COLORS.map((c) => { const on = c.hex.toLowerCase() === hex.toLowerCase();
+        return <button key={c.id} type="button" onClick={() => onColor(c.hex)} aria-label={c.label} aria-pressed={on} title={c.label}
+          className={cn('mx-auto grid size-8 place-items-center rounded-full border shadow-sm transition-transform', on ? 'scale-110 border-2 border-foreground ring-2 ring-primary/40' : 'border-black/15 hover:scale-105')} style={{ background: c.hex }} data-testid={`flyout-color-${c.hex.slice(1)}`}>
+          {on && <Check size={14} strokeWidth={3} className={light(c.hex) ? 'text-black/70' : 'text-white'} />}
+        </button>; })}
+    </div>
+    <svg viewBox="0 0 200 36" className="mt-3 h-9 w-full rounded-lg bg-muted/40" aria-hidden="true">
+      <path d="M8 24 C 40 4, 70 4, 100 18 S 160 32, 192 12" fill="none" stroke={hex} strokeWidth={Math.min(px, 22)} strokeLinecap="round" opacity={kind === 'marker' ? 0.5 : 1} />
+    </svg>
+    <div className="mt-3 text-xs font-extrabold">Thickness</div>
+    <input type="range" min={0} max={1} step={0.01} value={Math.min(1, Math.max(0, t))} onChange={(e) => onWidth(clampW(range.min + Number(e.target.value) * (range.max - range.min), range))}
+      className="mt-1 w-full accent-primary" aria-label="Thickness" data-testid="flyout-thickness" />
+    <div className="flex justify-between text-[10px] font-semibold text-muted-foreground"><span>Thin</span><span>Thick</span></div>
+  </div>;
+}
+
+// ---------------------------------------------------------------------------
 
 function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, fingerScroll, onCreate, onOpen, onErase, pageRef }: {
   bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number; fingerScroll: boolean;
@@ -120,6 +150,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
   const [failed, setFailed] = useState<string | null>(null);
   const height = Math.round(widthPx * (size.h / size.w));
   const aspect = size.h / size.w;
+  const inking = inking || mode === 'marker';
 
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
@@ -135,16 +166,17 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
     const want = Math.min(1600, Math.max(600, Math.ceil((widthPx * Math.min(window.devicePixelRatio || 1, 2)) / 100) * 100));
     if (drawnWidth === want) return;
     let cancelled = false;
+    const job = loadPageImage(bookId, pageNo, want);
     (async () => {
       try {
-        const bitmap = await createImageBitmap(await booksApi.pageImage(bookId, pageNo, want));
+        const bitmap = await createImageBitmap(await job.promise);
         if (cancelled) { bitmap.close(); return; }
         canvas.width = bitmap.width; canvas.height = bitmap.height;
         canvas.getContext('2d')?.drawImage(bitmap, 0, 0); bitmap.close();
         setDrawnWidth(want); setFailed(null);
       } catch (err) { if (!cancelled) setFailed(err instanceof ApiRequestError ? err.message : 'This page could not be loaded.'); }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; job.cancel(); };
   }, [near, widthPx, bookId, pageNo, drawnWidth]);
 
   const needWords = near && (mode === 'text' || found.length > 0 || highlights.some((h) => h.kind === 'words'));
@@ -167,10 +199,19 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
   const strokes = useMemo(() => highlights.filter((h) => h.kind === 'ink' && h.ink), [highlights]);
   const strokePaths = useMemo(() => strokes.map((h) => ({ h, d: inkPath(h.ink!.pts, aspect) })), [strokes, aspect]);
   useEffect(() => { if (!inkRef.current) draftRef.current?.setAttribute('d', ''); }, [strokes]); // the saved stroke has appeared: drop the live copy
-  useEffect(() => () => { cancelAnimationFrame(rafRef.current); cancelAnimationFrame(inertiaRef.current); }, []);
+  useEffect(() => () => { cancelAnimationFrame(rafRef.current); cancelAnimationFrame(inertiaRef.current); cancelAnimationFrame(pend.current.raf); }, []);
   const r4 = (n: number) => Math.round(n * 10000) / 10000;
   const eraseAt = (x: number, y: number) => { for (const h of strokes) if (h.id > 0 && h.ink && inkNear(h.ink.pts, x, y, aspect, Math.max(0.012, h.ink.w * 1.5))) onErase(h.id); };
-  const scrollPage = (dx: number, dy: number) => { const sc = boxRef.current?.closest('[data-reader-scroll]') as HTMLElement | null; if (sc && dx) sc.scrollLeft += dx; window.scrollBy(0, dy); };
+  // Finger-drag scrolling is applied once per animation frame (not once per touch event), which is what makes it feel smooth.
+  const pend = useRef({ dx: 0, dy: 0, raf: 0 });
+  const scrollPage = (dx: number, dy: number) => {
+    const q = pend.current; q.dx += dx; q.dy += dy;
+    if (q.raf) return;
+    q.raf = requestAnimationFrame(() => {
+      q.raf = 0; const sc = boxRef.current?.closest('[data-reader-scroll]') as HTMLElement | null;
+      if (sc && q.dx) sc.scrollLeft += q.dx; if (q.dy) window.scrollBy(0, q.dy); q.dx = 0; q.dy = 0;
+    });
+  };
   const measure = () => { const r = boxRef.current!.getBoundingClientRect(); geo.current = { left: r.left, top: r.top, width: r.width || 1, height: r.height || 1, sx: window.scrollX, sy: window.scrollY }; };
   const norm = (cx: number, cy: number) => {
     const g = geo.current; // page position now = position when measured, shifted by how far the window has scrolled since
@@ -189,9 +230,9 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
   };
   const down = (e: React.PointerEvent) => {
     if (mode === 'read') return;
-    if (e.pointerType === 'touch' && readerGesture.pinching) return;
+    if (e.pointerType === 'touch' && (readerGesture.pinching || readerGesture.penDown)) return; // a resting palm must not scroll or draw while the stylus is writing
     // Pen/eraser selected + finger scrolling: a finger drags the page (so you can read and write without switching tools).
-    if ((mode === 'pen' || mode === 'erase') && e.pointerType === 'touch' && fingerScroll) {
+    if ((inking || mode === 'erase') && e.pointerType === 'touch' && fingerScroll) {
       if (!e.isPrimary) return;
       cancelAnimationFrame(inertiaRef.current);
       touchScroll.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), vx: 0, vy: 0 };
@@ -200,7 +241,8 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
     measure();
     const { x, y } = norm(e.clientX, e.clientY);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    if (mode === 'pen') {
+    if (inking) {
+      readerGesture.penDown = true; readerGesture.onStroke?.();
       inkRef.current = [[x, y]]; draftD.current = `M${r4(x)} ${r4(y * aspect)}`;
       draftRef.current?.setAttribute('d', `${draftD.current}l0.0001 0`); return;
     }
@@ -217,7 +259,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
       ts.vx = (dx / dt) * 0.8 + ts.vx * 0.2; ts.vy = (dy / dt) * 0.8 + ts.vy * 0.2; ts.x = e.clientX; ts.y = e.clientY; ts.t = now; return;
     }
     if (mode === 'erase') { if (erasing.current) { const { x, y } = norm(e.clientX, e.clientY); eraseAt(x, y); } return; }
-    if (mode === 'pen') {
+    if (inking) {
       if (!inkRef.current) return;
       const edge = 64; if (e.clientY < edge) window.scrollBy(0, -(edge - e.clientY) * 0.5); else if (e.clientY > window.innerHeight - edge) window.scrollBy(0, (e.clientY - (window.innerHeight - edge)) * 0.5);
       // Coalesced events keep fast pen strokes smooth instead of showing straight jumps.
@@ -245,9 +287,9 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
       return;
     }
     if (mode === 'erase') { erasing.current = false; return; }
-    if (mode === 'pen') {
-      const pts = inkRef.current; inkRef.current = null; cancelAnimationFrame(rafRef.current); rafRef.current = 0;
-      if (pts && pts.length) { onCreate({ kind: 'ink', page: pageNo, ink: { pts: simplifyInk(pts, aspect), w: penWidth }, color }); window.setTimeout(() => { if (!inkRef.current) draftRef.current?.setAttribute('d', ''); }, 1500); }
+    if (inking) {
+      const pts = inkRef.current; inkRef.current = null; readerGesture.penDown = false; cancelAnimationFrame(rafRef.current); rafRef.current = 0;
+      if (pts && pts.length) { onCreate({ kind: 'ink', page: pageNo, ink: { pts: simplifyInk(pts, aspect), w: penWidth, ...(mode === 'marker' ? { hl: true } : {}) }, color }); window.setTimeout(() => { if (!inkRef.current) draftRef.current?.setAttribute('d', ''); }, 1500); }
       return;
     }
     if (!sel) return;
@@ -263,8 +305,8 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
     <canvas ref={canvasRef} className="pointer-events-none block h-full w-full select-none" style={{ WebkitUserSelect: 'none' }} aria-label={`Page ${pageNo}`} />
     {!drawnWidth && !failed && <div className="absolute inset-0 grid place-items-center text-muted-foreground"><BrandSpinner size={22} /></div>}
     {failed && <div className="absolute inset-0 grid place-items-center p-6 text-center text-xs font-semibold text-destructive">{failed}</div>}
-    <div className="absolute inset-0" style={{ touchAction: mode === 'read' ? 'auto' : 'none', cursor: mode === 'text' ? 'text' : mode === 'area' || mode === 'pen' ? 'crosshair' : mode === 'erase' ? 'cell' : 'default', pointerEvents: mode === 'read' ? 'none' : 'auto' }}
-      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { setSel(null); inkRef.current = null; draftRef.current?.setAttribute('d', ''); erasing.current = false; touchScroll.current = null; }} data-testid={`layer-page-${pageNo}`}>
+    <div className="absolute inset-0" style={{ touchAction: mode === 'read' ? 'auto' : 'none', cursor: mode === 'text' ? 'text' : mode === 'area' || inking ? 'crosshair' : mode === 'erase' ? 'cell' : 'default', pointerEvents: mode === 'read' ? 'none' : 'auto' }}
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { setSel(null); inkRef.current = null; readerGesture.penDown = false; draftRef.current?.setAttribute('d', ''); erasing.current = false; touchScroll.current = null; }} data-testid={`layer-page-${pageNo}`}>
       {sel && ('a' in sel ? lineRects(words, Math.min(sel.a, sel.b), Math.max(sel.a, sel.b)).map((r, i) => <div key={i} style={rectStyle(r, { background: 'rgba(80,140,255,.35)' })} />) : <div style={rectStyle(sel.rect, { border: '1.5px dashed #3b82f6', background: 'rgba(80,140,255,.15)' })} />)}
     </div>
     {highlights.map((h) => {
@@ -272,12 +314,12 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
       const rects = h.kind === 'area' ? (h.rect ? [h.rect] : []) : lineRects(words, h.startWord ?? 0, h.endWord ?? 0);
       return rects.map((r, i) => <div key={`${h.id}-${i}`} onClick={() => mode === 'read' && onOpen(h)} style={rectStyle(r, { background: colorHex(h.color), opacity: 0.4, mixBlendMode: 'multiply', pointerEvents: mode === 'read' ? 'auto' : 'none', cursor: 'pointer', borderRadius: 2 })} data-testid={`highlight-${h.id}`} />);
     })}
-    {(strokePaths.length > 0 || mode === 'pen') && <svg viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" style={{ pointerEvents: 'none' }} aria-hidden="true">
+    {(strokePaths.length > 0 || inking) && <svg viewBox={`0 0 1 ${aspect}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" style={{ pointerEvents: 'none' }} aria-hidden="true">
       {strokePaths.map(({ h, d }) => <g key={h.id} style={{ pointerEvents: mode === 'read' ? 'stroke' : 'none', cursor: 'pointer' }} onClick={() => mode === 'read' && onOpen(h)} data-testid={`ink-${h.id}`}>
         <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(h.ink!.w, 0.018)} strokeLinecap="round" strokeLinejoin="round" />
-        <path d={d} fill="none" stroke={colorHex(h.color)} strokeWidth={h.ink!.w} strokeLinecap="round" strokeLinejoin="round" opacity={h.id < 0 ? 0.7 : 1} />
+        <path d={d} fill="none" stroke={colorHex(h.color)} strokeWidth={h.ink!.w} strokeLinecap="round" strokeLinejoin="round" opacity={h.ink!.hl ? 0.42 : h.id < 0 ? 0.7 : 1} style={h.ink!.hl ? { mixBlendMode: 'multiply' } : undefined} />
       </g>)}
-      <path ref={draftRef} fill="none" stroke={colorHex(color)} strokeWidth={penWidth} strokeLinecap="round" strokeLinejoin="round" />
+      <path ref={draftRef} fill="none" stroke={colorHex(color)} strokeWidth={penWidth} strokeLinecap="round" strokeLinejoin="round" opacity={mode === 'marker' ? 0.42 : 1} style={mode === 'marker' ? { mixBlendMode: 'multiply' } : undefined} />
     </svg>}
     {found.map((f, fi) => lineRects(words, f.start, f.end).map((r, i) => <div key={`f-${fi}-${i}`} style={rectStyle(r, { background: f.active ? 'rgba(255,90,0,.55)' : 'rgba(255,170,0,.35)', outline: f.active ? '2px solid rgba(255,90,0,.9)' : undefined, borderRadius: 2, pointerEvents: 'none' })} data-testid="search-hit" />))}
     {bookmarked && <Bookmark size={26} fill="currentColor" className="pointer-events-none absolute right-3 top-0 text-primary drop-shadow" aria-label="Bookmarked" />}
@@ -329,13 +371,21 @@ export default function BookReader() {
   useEffect(() => { try { localStorage.setItem('reader:color', color); } catch { /* private mode / storage blocked */ } }, [color]);
   const [penColor, setPenColor] = useState<HighlightColor>(() => readColor('reader:pen-color', '#1f2937'));
   useEffect(() => { try { localStorage.setItem('reader:pen-color', penColor); } catch { /* storage blocked */ } }, [penColor]);
-  const [penSize, setPenSize] = useState<number>(() => { try { const v = Number(localStorage.getItem('reader:pen-size')); return v >= 0 && v < PEN_SIZES.length && Number.isInteger(v) ? v : 1; } catch { return 1; } });
-  useEffect(() => { try { localStorage.setItem('reader:pen-size', String(penSize)); } catch { /* storage blocked */ } }, [penSize]);
+  const readW = (key: string, r: { min: number; max: number; def: number }): number => { try { const v = parseFloat(localStorage.getItem(key) ?? ''); return clampW(v, r); } catch { return r.def; } };
+  const [penW, setPenW] = useState<number>(() => readW('reader:pen-w', PEN_W));
+  useEffect(() => { try { localStorage.setItem('reader:pen-w', String(penW)); } catch { /* storage blocked */ } }, [penW]);
+  const [markerW, setMarkerW] = useState<number>(() => readW('reader:marker-w', MARKER_W));
+  useEffect(() => { try { localStorage.setItem('reader:marker-w', String(markerW)); } catch { /* storage blocked */ } }, [markerW]);
+  // The Edge-style pen flyout (colours + thickness). Opens when the Pen/Marker is picked, closes when you start writing.
+  const [flyout, setFlyout] = useState(false);
+  useEffect(() => { readerGesture.onStroke = () => setFlyout(false); return () => { readerGesture.onStroke = null; readerGesture.penDown = false; }; }, []);
   const [theme, setTheme] = useState<Theme>(() => readPref<Theme>('reader:theme', ['light', 'sepia', 'night'], 'light'));
   useEffect(() => { try { localStorage.setItem('reader:theme', theme); } catch { /* storage blocked */ } }, [theme]);
   const [zoom, setZoom] = useState(() => { try { const v = parseFloat(localStorage.getItem('reader:zoom') ?? ''); return v >= 0.5 && v <= 3 ? v : 1; } catch { return 1; } });
   useEffect(() => { try { localStorage.setItem('reader:zoom', String(zoom)); } catch { /* storage blocked */ } }, [zoom]);
   const [current, setCurrent] = useState(1);
+  useEffect(() => { setReaderFocus(current); }, [current]);
+  useEffect(() => () => clearPageCache(), []);
   const [panel, setPanel] = useState<PanelTab | null>(null);
   const [active, setActive] = useState<BookHighlight | null>(null);
   const [veiled, setVeiled] = useState(false);
@@ -581,6 +631,7 @@ export default function BookReader() {
       else if (k === 'b') actions.current.bookmark();
       else if (k === '/') { e.preventDefault(); actions.current.openSearch(); }
       else if (k === 'p') actions.current.tool('pen');
+      else if (k === 'm') actions.current.tool('marker');
       else if (k === 'h') actions.current.tool('text');
       else if (k === 'e') actions.current.tool('erase');
     };
@@ -647,14 +698,14 @@ export default function BookReader() {
 
     <div ref={roomRef} data-reader-scroll className="overflow-x-auto rounded-xl px-1 pb-48 pt-3" style={{ background: THEMES[theme].room, overscrollBehaviorX: 'contain' }}>
      <div style={{ minWidth: widthPx }}>
-      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={PEN_SIZES[penSize].w} fingerScroll={fingerScroll}
+      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={mode === 'marker' ? markerW : penW} fingerScroll={fingerScroll}
         onCreate={(h) => addRef.current.mutate(h)} onOpen={setActive} onErase={eraseInk} pageRef={(el) => { pageEls.current[i] = el; }} />)}
      </div>
     </div>
 
     {/* Annotation dock: big, labelled tools pinned to the bottom of the screen so the Pen and Highlighter are always one tap away. */}
     {!active && <div className="fixed inset-x-0 bottom-3 z-30 mx-auto w-[calc(100%-1.5rem)] max-w-xl rounded-3xl border border-border bg-card/95 p-2 shadow-2xl backdrop-blur" data-testid="dock-annotate">
-      {(mode === 'pen' || mode === 'text' || mode === 'area') && (() => {
+      {(mode === 'text' || mode === 'area') && (() => {
         const isPen = mode === 'pen'; const palette = isPen ? PEN_COLORS : HIGHLIGHTER_COLORS; const cur = isPen ? penColor : color; const setCur = isPen ? setPenColor : setColor;
         const custom = !palette.some((c) => c.id === cur);
         return <div className="mb-2 rounded-2xl bg-muted/50 p-2">
@@ -668,23 +719,18 @@ export default function BookReader() {
               {custom && <Check size={14} className="text-black/70" strokeWidth={3} />}
             </label>
           </div>
-          {isPen && <div className="mt-2 flex items-center gap-1.5" role="group" aria-label="Pen thickness">
-            <span className="mr-1 text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Size</span>
-            {PEN_SIZES.map((z) => <button key={z.id} type="button" onClick={() => setPenSize(z.id)} aria-pressed={penSize === z.id} aria-label={`${z.label} pen`} title={z.label}
-              className={cn('grid h-8 w-12 place-items-center rounded-xl border', penSize === z.id ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-muted')} data-testid={`button-pen-size-${z.id}`}>
-              <span className="block w-7 rounded-full" style={{ height: Math.max(2, Math.round(z.w * 900)), background: colorHex(penColor) }} />
-            </button>)}
-          </div>}
         </div>;
       })()}
-      {(mode === 'pen' || mode === 'erase') && <div className="mb-2 flex items-center gap-1.5 rounded-2xl bg-muted/50 px-2 py-1.5" role="group" aria-label="What a finger does">
+      {(mode === 'pen' || mode === 'marker') && flyout && <PenFlyout kind={mode} color={mode === 'pen' ? penColor : color} onColor={mode === 'pen' ? setPenColor : setColor}
+        width={mode === 'pen' ? penW : markerW} onWidth={mode === 'pen' ? setPenW : setMarkerW} range={mode === 'pen' ? PEN_W : MARKER_W} onClose={() => setFlyout(false)} />}
+      {(mode === 'pen' || mode === 'marker' || mode === 'erase') && <div className="mb-2 flex items-center gap-1.5 rounded-2xl bg-muted/50 px-2 py-1.5" role="group" aria-label="What a finger does">
         <span className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Finger</span>
         {([['auto', 'Auto'], ['scroll', 'Scroll'], ['draw', 'Draw']] as const).map(([v, l]) => <button key={v} type="button" onClick={() => setTouchPref(v)} aria-pressed={touchPref === v} className={cn('rounded-lg px-2.5 py-1 text-[11px] font-extrabold', touchPref === v ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground/80 hover:bg-muted')} data-testid={`button-touch-${v}`}>{l}</button>)}
         <span className="ml-auto truncate text-[10px] font-semibold text-muted-foreground">{fingerScroll ? 'Finger scrolls · pen writes' : 'Finger writes'}</span>
       </div>}
-      <div className="grid grid-cols-5 gap-1" role="toolbar" aria-label="Reader tools">
-        {([['read', MousePointer2, 'Read', null], ['pen', PenLine, 'Pen', penColor], ['text', Highlighter, 'Highlight', color], ['area', BoxSelect, 'Area', color], ['erase', Eraser, 'Eraser', null]] as const).map(([m, Icon, label, chip]) =>
-          <button key={m} type="button" onClick={() => setMode(m)} aria-pressed={mode === m} title={`${label}${m === 'pen' ? ' (P)' : m === 'text' ? ' (H)' : m === 'erase' ? ' (E)' : ''}`}
+      <div className="grid grid-cols-6 gap-1" role="toolbar" aria-label="Reader tools">
+        {([['read', MousePointer2, 'Read', null], ['pen', PenLine, 'Pen', penColor], ['marker', Brush, 'Marker', color], ['text', Highlighter, 'Highlight', color], ['area', BoxSelect, 'Area', color], ['erase', Eraser, 'Eraser', null]] as const).map(([m, Icon, label, chip]) =>
+          <button key={m} type="button" onClick={() => { if (m === 'pen' || m === 'marker') { if (mode === m) setFlyout((f) => !f); else { setMode(m); setFlyout(true); } } else { setMode(m); setFlyout(false); } }} aria-pressed={mode === m} title={`${label}${m === 'pen' ? ' (P)' : m === 'marker' ? ' (M)' : m === 'text' ? ' (H)' : m === 'erase' ? ' (E)' : ''}`}
             className={cn('relative flex flex-col items-center gap-0.5 rounded-2xl px-1 py-2 text-[11px] font-extrabold transition-colors', mode === m ? 'bg-primary text-primary-foreground shadow-md' : 'text-foreground/80 hover:bg-muted')} data-testid={`button-mode-${m}`}>
             <Icon size={20} />{label}
             {chip && <span className="absolute right-2 top-1.5 size-2.5 rounded-full border border-white shadow" style={{ background: colorHex(chip) }} />}

@@ -262,7 +262,7 @@ export interface BookOutlineItem { title: string; page: number; depth: number }
 export interface BookSearchHit { page: number; start: number; end: number }
 // A colour is one of the original names (older highlights) or a "#rrggbb" hex.
 export type HighlightColor = string;
-export interface BookInk { pts: Array<[number, number]>; w: number }
+export interface BookInk { pts: Array<[number, number]>; w: number; /** freehand highlighter: drawn translucent and multiplied over the page */ hl?: boolean }
 export interface BookHighlight { id: number; page: number; kind: 'words' | 'area' | 'ink'; startWord: number | null; endWord: number | null; rect: { x: number; y: number; w: number; h: number } | null; ink?: BookInk | null; color: HighlightColor; note: string | null; createdAt: string }
 export type NewBookHighlight =
   | { kind: 'words'; page: number; startWord: number; endWord: number; color?: HighlightColor; note?: string | null }
@@ -274,9 +274,9 @@ export const booksApi = {
   pageWords: (id: number, page: number) => request<{ page: number; words: WordBox[] }>(`/books/${id}/pages/${page}/words`),
   // Fetched with the session cookie and drawn straight onto a <canvas>; no
   // object URL is kept, so there's nothing to "save image as".
-  pageImage: async (id: number, page: number, width: number): Promise<Blob> => {
+  pageImage: async (id: number, page: number, width: number, signal?: AbortSignal): Promise<Blob> => {
     const { credentials, authHeaders } = await authInit();
-    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials, headers: authHeaders, cache: 'no-store' });
+    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials, headers: authHeaders, cache: 'no-store', signal });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || `Request failed (${res.status})`, data);
@@ -421,6 +421,8 @@ export const ospeApi = {
   // repeatedly, already-graded stations are skipped server-side.
   grade: (attemptId: number) => request<{ ok: true; graded: number; pending: number; obtainedMarks: number; percentage: number }>(`/ospe/exam-attempts/${attemptId}/grade`, { method: 'POST' }),
   result: (attemptId: number) => request<OspeExamResult>(`/ospe/exam-attempts/${attemptId}/result`),
+  /** AI tutor: why this station lost marks and how to write it correctly. */
+  explainMistake: (attemptId: number, stationId: number) => request<{ whatWentWrong: string; howToWrite: string; tip: string }>(`/ospe/exam-attempts/${attemptId}/stations/${stationId}/explain`, { method: 'POST' }),
 };
 
 export const studentsAdminApi = {
@@ -894,9 +896,16 @@ export const aiMcqMakerApi = {
 };
 
 export interface SolvedMcq { answer: string; answerIndex: number; confidence: 'high' | 'medium' | 'low'; explanation: string; optionExplanations: string[]; keyPoint: string; caveat: string }
-/** AI MCQ Solver — paste any MCQ you're unsure about, get the best answer with an explanation. */
+export interface SolvedMcqFromPhoto extends SolvedMcq { question: string; options: string[] }
+export interface SolverChatTurn { role: 'student' | 'tutor'; text: string }
+/** AI MCQ Solver — paste (or photograph) any MCQ you're unsure about, get the best answer with an explanation, then ask follow-ups. */
 export const aiMcqSolverApi = {
   solve: (body: { question: string; options: string[] }) => request<SolvedMcq>('/ai/mcq-solver', { method: 'POST', body: JSON.stringify(body) }),
+  /** Any layout: the AI works out the question and options from the raw text, then solves it. */
+  solveText: (raw: string) => request<SolvedMcqFromPhoto>('/ai/mcq-solver/text', { method: 'POST', body: JSON.stringify({ raw }) }),
+  solveImage: (images: Array<{ mime: 'image/jpeg'; data: string }>) => request<SolvedMcqFromPhoto>('/ai/mcq-solver/image', { method: 'POST', body: JSON.stringify({ images }) }),
+  followUp: (body: { question: string; options: string[]; answer: string; explanation?: string; history: SolverChatTurn[]; message: string }) =>
+    request<{ reply: string }>('/ai/mcq-solver/followup', { method: 'POST', body: JSON.stringify(body) }),
 };
 
 /** Header search palette. */

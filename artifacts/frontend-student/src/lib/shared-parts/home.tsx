@@ -160,4 +160,9 @@ export const AI_VISUALIZER_EXAMPLES = [
   'Nephron: how GFR changes with afferent and efferent arteriolar resistance.',
   'Action potential in a neuron: change Na+ and K+ conductance and watch the voltage trace.',
   'Compare Type 1 and Type 2 diabetes mellitus: onset, mechanism, key features and treatment.',
+  'Dental caries: change plaque pH after sugar and watch demineralisation vs remineralisation (Stephan curve) on the tooth.',
+  'Tooth numbering: FDI vs Universal on the upper and lower arches, with tooth types colour-coded.',
+  'Temporomandibular joint: open the mouth and see condyle translation, the disc and the lateral pterygoid.',
+  'Sliding filament theory: contract a sarcomere and watch the H zone and I band shrink while the A band stays constant.',
+  'Hearing: how sound travels from the eardrum through the ossicles to the cochlea, and where conductive vs sensorineural loss occurs.',
 ];

@@ -1,0 +1,3 @@
+# v106 - reader pen flyout + speed
+
+Pen/marker/eraser live in `frontend-student/src/pages/BookReader.tsx` (PageViewBase handles pointer events; PenFlyout is the Edge-style panel). Strokes are saved as `kind:'ink'` rows (`ink:{pts,w,hl?}`); `hl` = freehand highlighter. Pages come from `lib/page-loader.ts` (queue + abort + blob LRU) -> `GET /books/:id/pages/:p/image` -> `bookReader.ts` (loadBook: memory cache -> temp-dir disk cache -> Drive/URL fetch). Env knobs: BOOK_CACHE_MB, BOOK_DISK_CACHE_MB, BOOK_DISK_CACHE_DIR, BOOK_IMAGE_CACHE_MB, BOOK_RENDER_CONCURRENCY. The disk cache is a temp folder: on hosts with an ephemeral disk it is rebuilt after each deploy/restart (first open per book is slow again), but survives memory eviction and idle time. Never served to anyone.
