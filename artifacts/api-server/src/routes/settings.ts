@@ -24,6 +24,10 @@ const EDITABLE_KEYS = [
   // side. Shown on /site-content so both the student app and the public
   // footer can render a "Chat on WhatsApp" button.
   "SUPPORT_WHATSAPP",
+  // Where students download the mobile app (e.g. a GitHub Releases link to the
+  // APK). https only, blank hides the "Download the app" card on the student
+  // Membership page. Public via /site-content.
+  "APP_DOWNLOAD_URL",
   "PLATFORM_NAME",
   "PLATFORM_TAGLINE",
   "DEFAULT_CURRENCY",
@@ -390,6 +394,13 @@ router.patch("/admin/settings", requireAdmin, async (req, res): Promise<void> =>
   if (deviceLimit !== undefined && deviceLimit.trim() !== "" && parseDeviceLimit(deviceLimit) === null) {
     res.status(400).json({ error: `Default device limit must be a whole number from 0 (unlimited) to ${MAX_DEVICES_CEILING}.` });
     return;
+  }
+  const appDownloadUrl = parsed.data.APP_DOWNLOAD_URL;
+  if (appDownloadUrl !== undefined && appDownloadUrl.trim() !== "") {
+    let ok = false;
+    try { const u = new URL(appDownloadUrl.trim()); ok = u.protocol === "https:"; } catch { ok = false; }
+    if (!ok) { res.status(400).json({ error: "App download link must be a full https:// link (e.g. your GitHub release link)." }); return; }
+    parsed.data.APP_DOWNLOAD_URL = appDownloadUrl.trim();
   }
   const achievementConfig = parsed.data.ACHIEVEMENT_CONFIG;
   if (achievementConfig !== undefined && achievementConfig.trim() !== "") {

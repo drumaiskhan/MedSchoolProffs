@@ -11,7 +11,7 @@ import {
   Flag, Trophy, MessageSquare, Landmark, Copy, QrCode, User as UserIcon, Mail, Phone, Hash,
   GraduationCap, Eye, EyeOff, Smartphone, UploadCloud, ImageOff,
   RotateCcw, ThumbsUp, ThumbsDown, CheckCheck, ClipboardCheck, AlertTriangle, Link2 as LinkIcon, Lightbulb,
-  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity
+  LayoutGrid, Presentation, Wand2, Crown, Globe, Star, Activity, Download
 } from 'lucide-react';
 import { applyThemeVars } from '@/lib/theme';
 import {
@@ -55,6 +55,8 @@ import { Badge, EmptyState, PAYMENT_METHODS, PaymentDestinationCard, SectionHead
 
 function Payments() {
   const plansQ = useListMembershipPlans();
+  const siteQ = useQuery({ queryKey: ['site-content'], queryFn: siteContentApi.get, staleTime: 5 * 60_000 });
+  const appDownloadUrl = (siteQ.data?.APP_DOWNLOAD_URL || '').trim();
   const payQ = useListPayments();
   const paymentDetails = useQuery({ queryKey: ['payment-details'], queryFn: publicApi.paymentDetails });
   const dashboard = useGetStudentDashboard();
@@ -116,6 +118,11 @@ function Payments() {
 
   return <div className="max-w-5xl"><SectionHeader eyebrow="Membership" title="Access that fits your semester" description="Choose a plan, pay, and upload your proof — we activate your account after review." />
   <div className="mb-6"><MembershipPass payments={payments} /></div>
+  {/^https:\/\//i.test(appDownloadUrl) && <a href={appDownloadUrl} target="_blank" rel="noopener noreferrer" className="group mb-6 flex items-center gap-4 rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-card to-card p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md sm:p-5" data-testid="link-download-app">
+    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow"><Smartphone size={22} /></span>
+    <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-foreground">Download the app</span><span className="mt-0.5 block text-xs text-muted-foreground">Get MedSchoolProffs on your phone — practise MCQs anywhere. Opens the download page on GitHub.</span></span>
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-bold text-primary-foreground transition group-hover:opacity-90"><Download size={14} /> Download</span>
+  </a>}
   {!showForm ? <div className="rounded-2xl border border-dashed border-border bg-card p-6 text-center"><p className="text-xs text-muted-foreground">{isActive ? "Your access is active. Renewing early? You can submit a new payment any time." : 'Choose a plan and submit your payment to activate access.'}</p><button onClick={() => setShowForm(true)} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-extrabold text-primary-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md" data-testid="button-show-payment-form">{isActive ? 'Renew / change plan' : 'Choose a plan & pay'}</button></div> : <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]"><div>
     <div className="mb-3 text-xs font-bold text-muted-foreground">Choose your access</div>
     <div className="grid gap-3 sm:grid-cols-2">{plans.map((p, i) => <TiltDiv key={p.id} style={vars({ '--tilt': 5, '--i': Math.min(i, 8) })}><button type="button" aria-pressed={selectedPlan === p.id} onClick={() => setSelectedPlan(p.id)} className="plan-3d group h-full" data-testid={`button-plan-${p.id}`}>

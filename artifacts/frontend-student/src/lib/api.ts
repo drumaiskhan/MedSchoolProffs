@@ -201,6 +201,8 @@ export interface SiteContent {
   SEO_TITLE: string; SEO_DESCRIPTION: string;
   SOCIAL_FACEBOOK: string; SOCIAL_YOUTUBE: string; SOCIAL_LINKEDIN: string; SOCIAL_INSTAGRAM: string;
   CONTACT_EMAIL: string; CONTACT_LOCATION: string; SUPPORT_HOURS: string; COPYRIGHT_NOTICE: string; SUPPORT_WHATSAPP: string;
+  /** Mobile app download link set by the admin (https). Blank = card hidden. */
+  APP_DOWNLOAD_URL?: string;
   AI_VISUALIZER_ENABLED: string;
   /** "false" = AI MCQ Maker hidden/blocked; anything else = on. */
   AI_MCQ_MAKER_ENABLED?: string;

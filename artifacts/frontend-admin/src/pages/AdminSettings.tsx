@@ -183,6 +183,9 @@ function AdminSettings() {
               <Field label="WhatsApp support number" hint='Country code + number, digits only. Students get a "Chat on WhatsApp" button that opens this number.'>
                 <TextInput value={values.SUPPORT_WHATSAPP || ''} onChange={(e) => set('SUPPORT_WHATSAPP', e.target.value.replace(/[^\d+]/g, ''))} placeholder="e.g. 923001234567" data-testid="input-support-whatsapp" />
               </Field>
+              <Field label="App download link" hint='Paste your GitHub release (or direct APK) link. Students see a "Download the app" card on their Membership page. Leave blank to hide it.' className="sm:col-span-2">
+                <TextInput type="url" value={values.APP_DOWNLOAD_URL || ''} onChange={(e) => set('APP_DOWNLOAD_URL', e.target.value.trim())} placeholder="https://github.com/your-name/your-repo/releases/latest" data-testid="input-app-download-url" />
+              </Field>
               <Field label="Tagline" className="sm:col-span-2"><TextInput value={values.PLATFORM_TAGLINE || ''} onChange={(e) => set('PLATFORM_TAGLINE', e.target.value)} data-testid="input-platform-tagline" /></Field>
               <Field label="Platform description" hint="Shown in the site footer. Contact email, location, social links and SEO live on the Site content page." className="sm:col-span-2">
                 <TextArea value={values.PLATFORM_DESCRIPTION || ''} onChange={(e) => set('PLATFORM_DESCRIPTION', e.target.value)} data-testid="input-platform-description" />

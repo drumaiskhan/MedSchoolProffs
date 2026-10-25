@@ -25,6 +25,8 @@ const SITE_CONTENT_KEYS = [
   "CONTACT_EMAIL",
   "CONTACT_LOCATION",
   "SUPPORT_WHATSAPP",
+  // Mobile app download link (GitHub etc.) — shown on the student Membership page.
+  "APP_DOWNLOAD_URL",
   "SUPPORT_HOURS",
   "COPYRIGHT_NOTICE",
   "FEATURES_LIST",
