@@ -9,7 +9,7 @@
 //    "save image as") so scrolling back, zooming back or switching theme is instant.
 import { booksApi } from '@/lib/api';
 
-type Job = { key: string; bookId: number; page: number; width: number; resolve: (b: Blob) => void; reject: (e: unknown) => void; ctrl: AbortController; waiters: number; started: boolean };
+type Job = { key: string; bookId: number; page: number; width: number; freeKey: string | null; resolve: (b: Blob) => void; reject: (e: unknown) => void; ctrl: AbortController; waiters: number; started: boolean };
 
 const MAX_PARALLEL = 3;
 const CACHE_MAX_ENTRIES = 40;
@@ -46,7 +46,7 @@ function pump(): void {
     const job = queue.splice(bi, 1)[0];
     if (job.ctrl.signal.aborted) { jobs.delete(job.key); continue; }
     job.started = true; running++;
-    booksApi.pageImage(job.bookId, job.page, job.width, job.ctrl.signal)
+    booksApi.pageImage(job.bookId, job.page, job.width, job.ctrl.signal, job.freeKey)
       .then((blob) => { remember(job.key, blob); job.resolve(blob); })
       .catch((e) => job.reject(e))
       .finally(() => { running--; jobs.delete(job.key); pump(); });
@@ -54,7 +54,7 @@ function pump(): void {
 }
 
 /** Resolves with the page picture. Call the returned `cancel` when the page is no longer needed. */
-export function loadPageImage(bookId: number, page: number, width: number): { promise: Promise<Blob>; cancel: () => void } {
+export function loadPageImage(bookId: number, page: number, width: number, freeKey: string | null = null): { promise: Promise<Blob>; cancel: () => void } {
   const key = keyOf(bookId, page, width);
   const hit = cache.get(key);
   if (hit) { remember(key, hit); return { promise: Promise.resolve(hit), cancel: () => {} }; }
@@ -64,7 +64,7 @@ export function loadPageImage(bookId: number, page: number, width: number): { pr
     let resolve!: (b: Blob) => void, reject!: (e: unknown) => void;
     const promise = new Promise<Blob>((res, rej) => { resolve = res; reject = rej; });
     promise.catch(() => {}); // a cancelled job must not log "unhandled rejection"
-    job = { key, bookId, page, width, resolve, reject, ctrl, waiters: 0, started: false };
+    job = { key, bookId, page, width, freeKey, resolve, reject, ctrl, waiters: 0, started: false };
     (job as Job & { promise: Promise<Blob> }).promise = promise;
     jobs.set(key, job); queue.push(job); pump();
   }

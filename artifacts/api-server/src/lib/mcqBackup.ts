@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { buildScopeWhere, resolveModuleIdsForScope, targetingMatchesScope, BACKUP_SCOPE_LEVELS, BACKUP_PROGRAMS, type BackupScope } from "./backupScope";
 import { deleteMcqsEverywhere } from "./mcqCascade";
+import { snapshotSavedMarks, restoreSavedMarks, type SavedMark } from "./savedMcqMarks";
 import { logger } from "./logger";
 
 // ---------------------------------------------------------------------------
@@ -386,6 +387,8 @@ export interface McqRestoreSummary {
   };
   examLinks: number;
   deletedFirst: number;
+  /** Students' saved MCQs that were kept across a replace (re-attached to the re-inserted questions). */
+  savedKept?: number;
   warnings: string[];
 }
 
@@ -582,10 +585,15 @@ async function runStructureRestore(exec: Exec, file: ParsedMcqBackupFile, mode: 
 
   // --- replace: wipe what the backup's scope covers ------------------------------
   let idsToDelete: number[] = [];
+  let preservedSaves: SavedMark[] = [];
   if (mode === "replace") {
     idsToDelete = await collectIdsToReplace(exec, file, { blockMap, moduleMap, subjectMap, topicMap, paperMap, examMap });
     summary.deletedFirst = idsToDelete.length;
-    if (!dryRun) await deleteMcqsEverywhere(idsToDelete, exec);
+    if (!dryRun) {
+      // Students' saved MCQs would be deleted with the questions - remember them and put them back after the re-insert.
+      preservedSaves = await snapshotSavedMarks(idsToDelete, exec);
+      await deleteMcqsEverywhere(idsToDelete, exec);
+    }
   }
   const deleting = new Set(idsToDelete);
 
@@ -654,6 +662,12 @@ async function runStructureRestore(exec: Exec, file: ParsedMcqBackupFile, mode: 
       if (rows.length !== batch.length) throw new Error("Database returned an unexpected number of ids while restoring questions");
       batch.forEach((b, j) => { if (b.old != null) oldToNew.set(b.old, rows[j]!.id); });
     }
+  }
+
+  if (!dryRun && preservedSaves.length) {
+    const kept = await restoreSavedMarks(preservedSaves, exec);
+    summary.savedKept = kept.restored;
+    if (kept.noMatch) summary.warnings.push(`${kept.noMatch} saved question${kept.noMatch === 1 ? '' : 's'} of students are not in this backup any more, so they could not be kept.`);
   }
 
   // --- exam <-> question links ---------------------------------------------------

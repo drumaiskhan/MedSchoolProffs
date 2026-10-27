@@ -592,7 +592,7 @@ function Practice() {
     else { next.add(current.id); reportFlag.mutate({ mcqId: current.id, reason: 'Flagged during practice session' }); }
     return next;
   });
-  const isSaved = (id: number) => id in savedOverride ? savedOverride[id] : !!savedQ.data?.some((x) => x.mcqId === id);
+  const isSaved = (id: number) => id in savedOverride ? savedOverride[id] : !!savedQ.data?.some((x) => x.mcqId === id && x.source !== 'flagged');
   const saveQuestion = () => {
     const id = current.id; const save = !isSaved(id);
     setSavedOverride((prev) => ({ ...prev, [id]: save }));

@@ -20,6 +20,11 @@ function SavedMcqs() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['saved-mcqs'] }); toast({ title: 'Removed from saved' }); },
     onError: (err: unknown) => toast({ title: 'Could not remove this', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
   });
+  const keep = useMutation({
+    mutationFn: (mcqId: number) => savedMcqsApi.create(mcqId),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['saved-mcqs'] }); toast({ title: 'Kept in Saved MCQs' }); },
+    onError: (err: unknown) => toast({ title: 'Could not save this', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
+  });
   const q = term.trim().toLowerCase();
   const visible = (saved.data || []).filter((s) => !q || `${s.question ?? ''} ${s.path ?? ''}`.toLowerCase().includes(q));
   const attemptable = visible.filter((s) => !s.mcqDeleted);
@@ -29,11 +34,11 @@ function SavedMcqs() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="line-clamp-3 text-sm font-bold" data-testid={`text-saved-mcq-question-${s.id}`}>{s.question ?? `This question is no longer available (MCQ #${s.mcqId}).`}</p>
-          <p className="mt-1 text-[11px] text-muted-foreground">Saved {new Date(s.createdAt).toLocaleDateString()}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{s.source === 'flagged' ? <span className="mr-1.5 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-extrabold text-amber-600">Flagged</span> : null}{s.source === 'flagged' ? 'Flagged' : 'Saved'} {new Date(s.createdAt).toLocaleDateString()}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button onClick={() => navigate(`/practice?mcqId=${s.mcqId}`)} disabled={s.mcqDeleted} title={s.mcqDeleted ? 'This question no longer exists' : undefined} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40" data-testid={`button-attempt-saved-${s.id}`}>Attempt</button>
-          <button onClick={() => remove.mutate(s.id)} disabled={remove.isPending} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive disabled:opacity-50" data-testid={`button-unsave-${s.id}`}>Remove</button>
+          {s.source === 'flagged' ? <button onClick={() => keep.mutate(s.mcqId)} disabled={keep.isPending || s.mcqDeleted} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold disabled:opacity-50" data-testid={`button-keep-saved-${s.mcqId}`}>Keep in saved</button> : <button onClick={() => remove.mutate(s.id)} disabled={remove.isPending} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-destructive disabled:opacity-50" data-testid={`button-unsave-${s.id}`}>Remove</button>}
         </div>
       </div>
     </div>
@@ -50,7 +55,8 @@ function SavedMcqs() {
       <HierarchyTree<SavedMcq> items={visible} unit="question" testIdPrefix="saved-mcq-tree" expandAll={!!q} ungroupedLabel="Removed questions"
         place={(s) => (s.mcqDeleted ? null : s)} mcqIds={(s) => (s.mcqDeleted ? [] : [s.mcqId])} renderItem={renderItem} />
       {saved.isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
-      {!saved.isLoading && !saved.data?.length && <EmptyState icon={Star} title="No saved questions yet" body="Tap Save on a question during practice and it will appear here, filed by block, module, subject and topic." />}
+      {saved.isError && <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 text-sm" data-testid="saved-mcq-error"><p className="font-bold">Could not load your saved questions.</p><p className="mt-1 text-xs text-muted-foreground">They are not lost - this is a connection or server problem.</p><button onClick={() => saved.refetch()} className="mt-3 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-foreground" data-testid="button-retry-saved-mcqs">Try again</button></div>}
+      {!saved.isLoading && !saved.isError && !saved.data?.length && <EmptyState icon={Star} title="No saved questions yet" body="Tap Save on a question during practice and it will appear here, filed by block, module, subject and topic." />}
     </div>
   </div>;
 }

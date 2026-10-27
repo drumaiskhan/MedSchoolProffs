@@ -201,6 +201,8 @@ export interface SiteContent {
   SEO_TITLE: string; SEO_DESCRIPTION: string;
   SOCIAL_FACEBOOK: string; SOCIAL_YOUTUBE: string; SOCIAL_LINKEDIN: string; SOCIAL_INSTAGRAM: string;
   CONTACT_EMAIL: string; CONTACT_LOCATION: string; SUPPORT_HOURS: string; COPYRIGHT_NOTICE: string; SUPPORT_WHATSAPP: string;
+  /** Mobile app download link set by the admin (https). Blank = card hidden. */
+  APP_DOWNLOAD_URL?: string;
   AI_VISUALIZER_ENABLED: string;
   /** "false" = AI MCQ Maker hidden/blocked; anything else = on. */
   AI_MCQ_MAKER_ENABLED?: string;
@@ -274,9 +276,10 @@ export const booksApi = {
   pageWords: (id: number, page: number) => request<{ page: number; words: WordBox[] }>(`/books/${id}/pages/${page}/words`),
   // Fetched with the session cookie and drawn straight onto a <canvas>; no
   // object URL is kept, so there's nothing to "save image as".
-  pageImage: async (id: number, page: number, width: number, signal?: AbortSignal): Promise<Blob> => {
+  // freeKey is set only for FREE books: their pictures carry no personal watermark, so the browser may keep them (instant on revisit).
+  pageImage: async (id: number, page: number, width: number, signal?: AbortSignal, freeKey?: string | null): Promise<Blob> => {
     const { credentials, authHeaders } = await authInit();
-    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}`, { credentials, headers: authHeaders, cache: 'no-store', signal });
+    const res = await fetch(`${API_BASE}/books/${id}/pages/${page}/image?w=${width}${freeKey ? `&v=${encodeURIComponent(freeKey)}` : ''}`, { credentials, headers: authHeaders, cache: freeKey ? 'default' : 'no-store', signal });
     if (!res.ok) {
       const data = await res.json().catch(() => null);
       throw new ApiRequestError(res.status, (data && data.error) || `Request failed (${res.status})`, data);
@@ -471,7 +474,7 @@ export interface NotebookEntry extends Placement { id: number; userId: number; m
 export interface SessionProgress { kind?: 'progress'; topicId?: number; pastPaperId?: number; mcqIds: number[]; answers: Record<string, string | null>; index: number; mode: 'timed' | 'untimed'; remainingSeconds?: number; answered?: number; total?: number }
 export interface SavedSession extends Placement { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string; updatedAt?: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; blockName?: string | null; moduleName?: string | null; subjectName?: string | null; topicName?: string | null; blockOrder?: number | null; moduleOrder?: number | null; subjectOrder?: number | null; topicOrder?: number | null; mcqDeleted: boolean }
-export interface SavedMcq extends Placement { id: number; userId: number; mcqId: number; createdAt: string; question: string | null; path: string | null; mcqDeleted: boolean }
+export interface SavedMcq extends Placement { source?: 'saved' | 'flagged'; id: number; userId: number; mcqId: number; createdAt: string; question: string | null; path: string | null; mcqDeleted: boolean }
 export interface FeedbackEntry { id: number; userId: number | null; category: string; message: string; status: 'open' | 'replied' | 'reviewed'; rating: number | null; featured: boolean; createdAt: string; user: { name: string; email: string } | null }
 export interface FeedbackReply { id: number; feedbackId: number; authorId: number; authorRole: 'admin' | 'student'; message: string; createdAt: string }
 export interface MyFeedbackEntry extends FeedbackEntry { replies: FeedbackReply[] }

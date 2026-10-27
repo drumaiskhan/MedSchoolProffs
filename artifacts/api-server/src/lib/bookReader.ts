@@ -23,10 +23,11 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveFileUrl } from "./storage";
 import { logger } from "./logger";
 import { fetchDriveFile, parseDriveFileId } from "./driveLink";
+import { cpanelGet, cpanelName, isCpanelPath } from "./cpanelFiles";
 
 // ---- pdf.js (lazy: only loaded the first time someone opens a book) --------
 
@@ -93,7 +94,10 @@ interface LoadedBook {
 }
 
 const MAX_CACHE_BYTES = Math.max(50, Number(process.env.BOOK_CACHE_MB) || 200) * 1024 * 1024;
-const MAX_BOOK_BYTES = 300 * 1024 * 1024;
+// Largest book the reader will open. Big files (BOOK_FROM_DISK_MB and up) are NOT loaded into memory: pdf.js reads
+// the pieces it needs straight from the server's disk copy, so a 500 MB book costs little RAM.
+const MAX_BOOK_BYTES = Math.max(50, Number(process.env.BOOK_MAX_MB) || 700) * 1024 * 1024;
+const FROM_DISK_BYTES = Math.max(50, Number(process.env.BOOK_FROM_DISK_MB) || 150) * 1024 * 1024;
 const IDLE_MS = 45 * 60 * 1000;
 const docs = new Map<string, LoadedBook>();
 const inflight = new Map<string, Promise<LoadedBook>>();
@@ -138,7 +142,7 @@ async function readDisk(storagePath: string): Promise<Uint8Array | null> {
 }
 
 /** Streams the response to a temp file (not into one huge in-memory buffer), then moves it into place. */
-async function writeDiskFromResponse(storagePath: string, res: Response): Promise<Uint8Array> {
+async function writeDiskFromResponse(storagePath: string, res: Response): Promise<number> {
   await mkdir(DISK_DIR, { recursive: true });
   const final = diskPath(storagePath), tmp = `${final}.${process.pid}.${Date.now()}.part`;
   if (!res.body) throw new BookUnavailableError("The book file could not be fetched (empty response).");
@@ -149,8 +153,16 @@ async function writeDiskFromResponse(storagePath: string, res: Response): Promis
     await rename(tmp, final);
   } catch (err) { await unlink(tmp).catch(() => {}); throw err; }
   void pruneDisk();
-  const buf = await readFile(final);
-  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  return (await stat(final)).size;
+}
+
+async function diskSize(storagePath: string): Promise<number | null> {
+  try { return (await stat(diskPath(storagePath))).size; } catch { return null; }
+}
+async function diskHead(storagePath: string): Promise<string> {
+  const { open } = await import("node:fs/promises");
+  const fh = await open(diskPath(storagePath), "r");
+  try { const b = Buffer.alloc(1024); const { bytesRead } = await fh.read(b, 0, 1024, 0); return b.subarray(0, bytesRead).toString("latin1"); } finally { await fh.close(); }
 }
 
 let pruning = false;
@@ -176,24 +188,35 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
   if (pending) return pending;
 
   const job = (async () => {
-    let buf = await readDisk(storagePath);
-    if (!buf) {
-      const url = resolveFileUrl(storagePath);
-      if (!url) throw new BookUnavailableError("This book's file can't be located right now.");
-      const driveId = parseDriveFileId(url);
-      const res = await (driveId ? fetchDriveFile(driveId, 180_000) : fetch(url, { signal: AbortSignal.timeout(120_000) })).catch((err) => { throw new BookUnavailableError(driveId && err instanceof Error ? err.message : `Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
+    let size = await diskSize(storagePath);
+    if (size === null) {
+      let res: Response;
+      if (isCpanelPath(storagePath)) {
+        // Big book kept on cPanel (see lib/cpanelFiles.ts): fetched once with the server's secret, then kept on this server's disk.
+        res = await cpanelGet(cpanelName(storagePath)).catch((err) => { throw new BookUnavailableError(`Could not reach the cPanel storage (${err instanceof Error ? err.message : "network error"}).`); });
+        if (res.status === 404) throw new BookUnavailableError("This book's file is missing from the cPanel storage. Upload it again from Admin -> Books.");
+      } else {
+        const url = resolveFileUrl(storagePath);
+        if (!url) throw new BookUnavailableError("This book's file can't be located right now.");
+        const driveId = parseDriveFileId(url);
+        res = await (driveId ? fetchDriveFile(driveId, 180_000) : fetch(url, { signal: AbortSignal.timeout(120_000) })).catch((err) => { throw new BookUnavailableError(driveId && err instanceof Error ? err.message : `Could not fetch the book file (${err instanceof Error ? err.message : "network error"}).`); });
+      }
       if (!res.ok) throw new BookUnavailableError(`The book file could not be fetched (${res.status}).`);
       const len = Number(res.headers.get("content-length") || 0);
       if (len > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
-      buf = await writeDiskFromResponse(storagePath, res);
+      size = await writeDiskFromResponse(storagePath, res);
     }
+    if (size > MAX_BOOK_BYTES) throw new BookUnavailableError("This book file is too large for the secure reader.");
     // "%PDF" may follow a few bytes of junk, per the PDF spec.
-    const head = Buffer.from(buf.subarray(0, 1024)).toString("latin1");
-    if (!head.includes("%PDF-")) { await unlink(diskPath(storagePath)).catch(() => {}); throw new NotPdfError(); }
+    if (!(await diskHead(storagePath)).includes("%PDF-")) { await unlink(diskPath(storagePath)).catch(() => {}); throw new NotPdfError(); }
+    // Small books are held in memory; big ones are read from the disk copy piece by piece.
+    const fromDisk = size > FROM_DISK_BYTES;
+    const buf = fromDisk ? null : await readDisk(storagePath);
+    if (!fromDisk && !buf) throw new BookUnavailableError("The book file could not be read.");
 
     const pdfjs = await loadPdfjs();
     const task = pdfjs.getDocument({
-      data: buf,
+      ...(buf ? { data: buf } : { url: pathToFileURL(diskPath(storagePath)) }), // big books: read from the disk copy as pdf.js needs it
       standardFontDataUrl: pdfjsAssetDir("standard_fonts"),
       cMapUrl: pdfjsAssetDir("cmaps"),
       cMapPacked: true,
@@ -202,7 +225,7 @@ export async function loadBook(storagePath: string): Promise<LoadedBook> {
       verbosity: 0,
     });
     const pdf = await task.promise.catch(() => { throw new BookUnavailableError("This PDF couldn't be opened (it may be damaged or password-protected)."); });
-    const book: LoadedBook = { key: storagePath, pdf, bytes: buf.byteLength, pageCount: pdf.numPages, sizes: null, lastUsed: Date.now() };
+    const book: LoadedBook = { key: storagePath, pdf, bytes: buf ? buf.byteLength : 16 * 1024 * 1024, pageCount: pdf.numPages, sizes: null, lastUsed: Date.now() };
     docs.set(storagePath, book);
     void getPageSizes(book).catch(() => {}); // measure the pages in the background so opening the reader doesn't wait for it
     await evictIfNeeded();
@@ -289,7 +312,7 @@ function drawWatermark(ctx: import("@napi-rs/canvas").SKRSContext2D, w: number, 
   ctx.restore();
 }
 
-export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targetWidth: number, wm: Watermark, isCancelled?: () => boolean): Promise<Buffer> {
+export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targetWidth: number, wm: Watermark | null, isCancelled?: () => boolean): Promise<Buffer> {
   if (pageNumber < 1 || pageNumber > book.pageCount) throw new RangeError("Page out of range");
   const { createCanvas, GlobalFonts } = await loadCanvas();
   ensureFont(GlobalFonts);
@@ -304,7 +327,7 @@ export async function renderPageJpeg(book: LoadedBook, pageNumber: number, targe
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx as never, viewport }).promise;
-      drawWatermark(ctx, canvas.width, canvas.height, wm);
+      if (wm) drawWatermark(ctx, canvas.width, canvas.height, wm);
       return await canvas.encode("jpeg", 80);
     } finally {
       page.cleanup();

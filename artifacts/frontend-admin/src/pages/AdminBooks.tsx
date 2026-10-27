@@ -33,7 +33,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
+import { authApi, academicApi, settingsApi, uploadFile, uploadBigBook, BIG_BOOK_BYTES, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
 
 // Round 3, item 10 (performance) — same over-fetching fix as the student
 // app (see its App.tsx for the full rationale): `new QueryClient()` with no
@@ -68,6 +68,7 @@ function AdminBooks() {
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [driveLink, setDriveLink] = useState('');
   const [cover, setCover] = useState<File | null>(null);
   const [isFree, setIsFree] = useState(false);
@@ -85,11 +86,14 @@ function AdminBooks() {
       if (!file && !link) throw new Error('Choose a PDF to upload or paste a Google Drive link');
       if (link && !/^https?:\/\/(drive|docs)\.google\.com\//i.test(link)) throw new Error('That is not a Google Drive link. In Drive: right-click the PDF -> Share -> Copy link.');
       // A Drive link is used as-is (the server reads the PDF from Drive); otherwise the PDF is uploaded to storage.
-      const uploaded = link ? { storagePath: link } : await uploadFile(file!, 'book');
+      // PDFs of 200 MB or more are sent in pieces to the cPanel storage; smaller ones go to Cloudinary as before.
+      const big = !link && file!.size >= BIG_BOOK_BYTES;
+      const uploaded = link ? { storagePath: link } : big ? await uploadBigBook(file!, setUploadPct) : await uploadFile(file!, 'book');
+      setUploadPct(null);
       let coverPath: string | undefined;
       if (cover) {
         coverPath = (await uploadFile(cover, 'book')).storagePath;
-      } else if (file && !link && file.type === 'application/pdf') {
+      } else if (file && !link && !big && file.type === 'application/pdf') {
         // Auto-thumbnail: admin didn't supply a cover, so render page 1 of
         // the PDF itself instead of leaving the card blank. Best-effort —
         // if it fails for any reason, the book still saves, just without a
@@ -99,8 +103,8 @@ function AdminBooks() {
       }
       return booksAdminApi.create({ title: title.trim(), author: author.trim() || undefined, programTargetKind: degree || null, yearTargetNumber: studyYearToNumber(degree, studyYear) ?? null, storagePath: uploaded.storagePath, coverImagePath: coverPath, isFree, price: isFree ? null : (price ? Number(price) : null), currency: isFree ? null : currency });
     },
-    onSuccess: () => { invalidate(); setOpen(false); setTitle(''); setAuthor(''); setFile(null); setDriveLink(''); setCover(null); setDegree(''); setStudyYear(''); setIsFree(false); setPrice(''); toast({ title: 'Book added', description: 'Now visible to students.' }); },
-    onError: (err: unknown) => toast({ title: 'Could not add book', description: err instanceof ApiRequestError ? err.message : err instanceof Error ? err.message : 'Something went wrong.', variant: 'destructive' }),
+    onSuccess: () => { setUploadPct(null); invalidate(); setOpen(false); setTitle(''); setAuthor(''); setFile(null); setDriveLink(''); setCover(null); setDegree(''); setStudyYear(''); setIsFree(false); setPrice(''); toast({ title: 'Book added', description: 'Now visible to students.' }); },
+    onError: (err: unknown) => { setUploadPct(null); toast({ title: 'Could not add book', description: err instanceof ApiRequestError ? err.message : err instanceof Error ? err.message : 'Something went wrong.', variant: 'destructive' }); },
   });
   const update = useMutation({
     mutationFn: ({ id, body }: { id: number; body: Parameters<typeof booksAdminApi.update>[1] }) => booksAdminApi.update(id, body),
@@ -156,8 +160,8 @@ function AdminBooks() {
       <p className="text-[11px] text-muted-foreground">{isFree ? 'Visible to every logged-in student, regardless of membership.' : 'Requires an active membership. Price shown here is informational only — students still get access through membership, not a separate purchase.'}</p>
       <div className="grid gap-2 sm:grid-cols-2"><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{file ? file.name : 'Choose PDF'}<input type="file" accept="application/pdf" disabled={!!driveLink.trim()} onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-file" /></label><label className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-dashed border-border px-3 text-xs font-bold text-muted-foreground"><UploadCloud size={14} />{cover ? cover.name : 'Cover image (optional)'}<input type="file" accept="image/*" onChange={(e) => setCover(e.target.files?.[0] ?? null)} className="hidden" data-testid="input-book-cover" /></label></div>
       <div><input value={driveLink} onChange={(e) => setDriveLink(e.target.value)} disabled={!!file} placeholder="…or paste a Google Drive link to the PDF (large books)" className="h-10 w-full rounded-xl border border-border bg-background px-3 text-xs disabled:opacity-50" data-testid="input-book-drive-link" />
-        <p className="mt-1 text-[11px] text-muted-foreground">In Google Drive: right-click the PDF → Share → General access → <b>Anyone with the link</b> (Viewer) → Copy link. Students read it in the app's secure reader; they never get the Drive link for paid books. No size limit from Cloudinary applies. A cover image is optional (upload one above).</p></div>
-      <button type="submit" disabled={create.isPending || !title.trim() || (!file && !driveLink.trim())} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-submit-book">{create.isPending ? 'Uploading…' : 'Add book'}</button>
+        <p className="mt-1 text-[11px] text-muted-foreground">In Google Drive: right-click the PDF → Share → General access → <b>Anyone with the link</b> (Viewer) → Copy link. Students read it in the app's secure reader; they never get the Drive link for paid books. No size limit from Cloudinary applies. A cover image is optional (upload one above). PDFs of 200 MB or more can also be uploaded directly with "Choose PDF": they are stored on your cPanel disk (needs the file bridge installed - see /cpanel-filebridge/README.md).</p></div>
+      <button type="submit" disabled={create.isPending || !title.trim() || (!file && !driveLink.trim())} className="rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid="button-submit-book">{create.isPending ? (uploadPct !== null ? `Uploading ${Math.round(uploadPct * 100)}%…` : 'Uploading…') : 'Add book'}</button>
     </form>}
     {/* Grouped by Degree (MBBS/BDS) then Year, same classification Past
         papers and Pre-Proffs exams use — a book with no program/year set

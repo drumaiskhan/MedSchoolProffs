@@ -201,12 +201,14 @@ router.delete("/saved-sessions/:id", requireAuth, async (req, res): Promise<void
 // ---------------------------------------------------------------------------
 
 router.get("/saved-mcqs", requireAuth, async (req, res): Promise<void> => {
-  const rows = await db.select({
-    saved: savedMcqsTable,
+  // Everything the student saved OR flagged is listed here (a flagged question that was never saved is tagged
+  // source: "flagged" and gets a negative id), so questions a student marked never look "gone".
+  const pick = {
     question: mcqsTable.question,
     topicName: topicsTable.name, subjectName: subjectsTable.name, moduleName: modulesTable.name, blockName: blocksTable.name,
     topicOrder: topicsTable.displayOrder, subjectOrder: subjectsTable.displayOrder, moduleOrder: modulesTable.displayOrder, blockOrder: blocksTable.displayOrder,
-  }).from(savedMcqsTable)
+  };
+  const savedRows = await db.select({ saved: savedMcqsTable, ...pick }).from(savedMcqsTable)
     .leftJoin(mcqsTable, eq(savedMcqsTable.mcqId, mcqsTable.id))
     .leftJoin(topicsTable, eq(mcqsTable.topicId, topicsTable.id))
     .leftJoin(subjectsTable, eq(subjectsTable.id, sql`coalesce(${topicsTable.subjectId}, ${mcqsTable.subjectId})`))
@@ -214,14 +216,28 @@ router.get("/saved-mcqs", requireAuth, async (req, res): Promise<void> => {
     .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
     .where(eq(savedMcqsTable.userId, req.user!.id))
     .orderBy(desc(savedMcqsTable.createdAt));
-  res.json(rows.map((r) => ({
-    ...r.saved,
+  const flaggedRows = await db.select({ flag: flaggedMcqsTable, ...pick }).from(flaggedMcqsTable)
+    .leftJoin(mcqsTable, eq(flaggedMcqsTable.mcqId, mcqsTable.id))
+    .leftJoin(topicsTable, eq(mcqsTable.topicId, topicsTable.id))
+    .leftJoin(subjectsTable, eq(subjectsTable.id, sql`coalesce(${topicsTable.subjectId}, ${mcqsTable.subjectId})`))
+    .leftJoin(modulesTable, eq(modulesTable.id, sql`coalesce(${subjectsTable.moduleId}, ${mcqsTable.moduleId})`))
+    .leftJoin(blocksTable, eq(modulesTable.blockId, blocksTable.id))
+    .where(eq(flaggedMcqsTable.userId, req.user!.id))
+    .orderBy(desc(flaggedMcqsTable.createdAt));
+  const place = (r: typeof savedRows[number] | typeof flaggedRows[number]) => ({
     question: r.question,
     path: [r.blockName, r.moduleName, r.subjectName, r.topicName].filter(Boolean).join(" \u203a ") || null,
     blockName: r.blockName ?? null, moduleName: r.moduleName ?? null, subjectName: r.subjectName ?? null, topicName: r.topicName ?? null,
     blockOrder: r.blockOrder ?? null, moduleOrder: r.moduleOrder ?? null, subjectOrder: r.subjectOrder ?? null, topicOrder: r.topicOrder ?? null,
     mcqDeleted: r.question === null,
-  })));
+  });
+  const savedIds = new Set(savedRows.map((r) => r.saved.mcqId));
+  res.json([
+    ...savedRows.map((r) => ({ ...r.saved, source: "saved" as const, ...place(r) })),
+    ...flaggedRows.filter((r) => !savedIds.has(r.flag.mcqId)).map((r) => ({
+      id: -r.flag.id, userId: r.flag.userId, mcqId: r.flag.mcqId, createdAt: r.flag.createdAt, updatedAt: r.flag.updatedAt, source: "flagged" as const, ...place(r),
+    })),
+  ]);
 });
 
 router.post("/saved-mcqs", requireAuth, async (req, res): Promise<void> => {

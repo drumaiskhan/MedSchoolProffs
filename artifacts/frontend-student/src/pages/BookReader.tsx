@@ -139,8 +139,8 @@ function PenFlyout({ kind, color, onColor, width, onWidth, range, onClose }: {
 
 // ---------------------------------------------------------------------------
 
-function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, fingerScroll, onCreate, onOpen, onErase, pageRef }: {
-  bookId: number; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number; fingerScroll: boolean;
+function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookmarked, theme, mode, color, penWidth, fingerScroll, freeKey, onCreate, onOpen, onErase, pageRef }: {
+  bookId: number; freeKey: string | null; pageNo: number; size: { w: number; h: number }; widthPx: number; highlights: BookHighlight[]; found: Found[]; bookmarked: boolean; theme: Theme; mode: Mode; color: HighlightColor; penWidth: number; fingerScroll: boolean;
   onCreate: (h: NewBookHighlight) => void; onOpen: (h: BookHighlight) => void; onErase: (id: number) => void; pageRef: (el: HTMLDivElement | null) => void;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -150,7 +150,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
   const [failed, setFailed] = useState<string | null>(null);
   const height = Math.round(widthPx * (size.h / size.w));
   const aspect = size.h / size.w;
-  const inking = inking || mode === 'marker';
+  const inking = mode === 'pen' || mode === 'marker';
 
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
@@ -166,7 +166,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
     const want = Math.min(1600, Math.max(600, Math.ceil((widthPx * Math.min(window.devicePixelRatio || 1, 2)) / 100) * 100));
     if (drawnWidth === want) return;
     let cancelled = false;
-    const job = loadPageImage(bookId, pageNo, want);
+    const job = loadPageImage(bookId, pageNo, want, freeKey);
     (async () => {
       try {
         const bitmap = await createImageBitmap(await job.promise);
@@ -177,7 +177,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
       } catch (err) { if (!cancelled) setFailed(err instanceof ApiRequestError ? err.message : 'This page could not be loaded.'); }
     })();
     return () => { cancelled = true; job.cancel(); };
-  }, [near, widthPx, bookId, pageNo, drawnWidth]);
+  }, [near, widthPx, bookId, pageNo, drawnWidth, freeKey]);
 
   const needWords = near && (mode === 'text' || found.length > 0 || highlights.some((h) => h.kind === 'words'));
   const wordsQ = useQuery({ queryKey: ['book-words', bookId, pageNo], queryFn: () => booksApi.pageWords(bookId, pageNo), enabled: needWords, staleTime: Infinity, gcTime: 5 * 60_000 });
@@ -330,7 +330,7 @@ function PageViewBase({ bookId, pageNo, size, widthPx, highlights, found, bookma
 const sameList = <T,>(a: T[], b: T[], eq: (x: T, y: T) => boolean): boolean => a === b || (a.length === b.length && a.every((v, i) => eq(v, b[i])));
 // Re-render a page only when something about THAT page changed (a stroke on page 40 no longer repaints all 900 pages).
 // Callback props are deliberately ignored: they are stable (setState / refs / mutation.mutate).
-const PageView = memo(PageViewBase, (p, n) => p.bookId === n.bookId && p.pageNo === n.pageNo && p.size.w === n.size.w && p.size.h === n.size.h && p.widthPx === n.widthPx
+const PageView = memo(PageViewBase, (p, n) => p.bookId === n.bookId && p.freeKey === n.freeKey && p.pageNo === n.pageNo && p.size.w === n.size.w && p.size.h === n.size.h && p.widthPx === n.widthPx
   && p.bookmarked === n.bookmarked && p.theme === n.theme && p.mode === n.mode && p.color === n.color && p.penWidth === n.penWidth && p.fingerScroll === n.fingerScroll
   && sameList(p.highlights, n.highlights, (a, b) => a === b) && sameList(p.found, n.found, (a, b) => a.start === b.start && a.end === b.end && a.active === b.active));
 
@@ -353,17 +353,13 @@ export default function BookReader() {
   const guarded = info.data ? !info.data.isFree : true;
 
   const [mode, setMode] = useState<Mode>('read');
-  // Finger behaviour while the Pen/Eraser is selected: 'auto' = a finger scrolls once a stylus has been used on this device,
-  // otherwise it draws; 'scroll' / 'draw' force it. (A stylus or mouse always draws.)
+  // Finger behaviour while the Pen/Eraser is selected: 'auto' and 'scroll' = a finger scrolls the page,
+  // 'draw' = a finger writes. (A stylus or mouse always draws.)
   const [touchPref, setTouchPref] = useState<'auto' | 'scroll' | 'draw'>(() => readPref<'auto' | 'scroll' | 'draw'>('reader:touch', ['auto', 'scroll', 'draw'], 'auto'));
   useEffect(() => { try { localStorage.setItem('reader:touch', touchPref); } catch { /* storage blocked */ } }, [touchPref]);
-  const [stylus, setStylus] = useState(false);
-  useEffect(() => {
-    const f = (e: PointerEvent) => { if (e.pointerType === 'pen') setStylus(true); };
-    window.addEventListener('pointerdown', f, true); window.addEventListener('pointerover', f, true);
-    return () => { window.removeEventListener('pointerdown', f, true); window.removeEventListener('pointerover', f, true); };
-  }, []);
-  const fingerScroll = touchPref === 'scroll' || (touchPref === 'auto' && stylus);
+  // 'auto' now always lets a finger scroll (a stylus or mouse still writes); pick 'Draw' to write with a finger.
+  // (It used to wait until a stylus was detected, and that detection re-rendered every page in the middle of the first stroke.)
+  const fingerScroll = touchPref !== 'draw';
   // Remembers the last color picked so returning to any book keeps it,
   // instead of resetting to yellow every time.
   const readColor = (key: string, fallback: string): string => { try { const v = localStorage.getItem(key); return v && (isHex(v) || ['yellow', 'green', 'pink', 'blue'].includes(v)) ? v : fallback; } catch { return fallback; } };
@@ -505,8 +501,11 @@ export default function BookReader() {
     const onScroll = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const mid = window.innerHeight / 2; let best = 1, bestD = Infinity;
-        pageEls.current.forEach((el, i) => { if (!el) return; const r = el.getBoundingClientRect(); const d = r.top <= mid && r.bottom >= mid ? 0 : Math.min(Math.abs(r.top - mid), Math.abs(r.bottom - mid)); if (d < bestD) { bestD = d; best = i + 1; } });
+        // Pages are stacked top to bottom, so binary-search the first page whose bottom edge is below the middle of the screen
+        // (about 10 measurements instead of one per page of the book on every scroll frame).
+        const mid = window.innerHeight / 2, els = pageEls.current; let lo = 0, hi = els.length - 1, pick = Math.max(0, els.length - 1);
+        while (lo <= hi) { const m = (lo + hi) >> 1, el = els[m]; if (!el) { hi = m - 1; continue; } if (el.getBoundingClientRect().bottom >= mid) { pick = m; hi = m - 1; } else lo = m + 1; }
+        const best = pick + 1;
         setCurrent(best); pendingRef.current = best;
         window.clearTimeout(saveT); saveT = window.setTimeout(() => commit(best), 1200);
       });
@@ -698,7 +697,7 @@ export default function BookReader() {
 
     <div ref={roomRef} data-reader-scroll className="overflow-x-auto rounded-xl px-1 pb-48 pt-3" style={{ background: THEMES[theme].room, overscrollBehaviorX: 'contain' }}>
      <div style={{ minWidth: widthPx }}>
-      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={mode === 'marker' ? markerW : penW} fingerScroll={fingerScroll}
+      {d.pages.map((size, i) => <PageView key={i} bookId={bookId} freeKey={d.isFree ? d.fileKey : null} pageNo={i + 1} size={size} widthPx={widthPx} highlights={byPage.get(i + 1) ?? []} found={foundByPage.get(i + 1) ?? []} bookmarked={bookmarkPages.has(i + 1)} theme={theme} mode={mode} color={mode === 'pen' ? penColor : color} penWidth={mode === 'marker' ? markerW : penW} fingerScroll={fingerScroll}
         onCreate={(h) => addRef.current.mutate(h)} onOpen={setActive} onErase={eraseInk} pageRef={(el) => { pageEls.current[i] = el; }} />)}
      </div>
     </div>

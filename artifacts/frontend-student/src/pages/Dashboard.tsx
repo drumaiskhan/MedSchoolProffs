@@ -27,6 +27,7 @@ import {
   membershipView, resumeAction, type QuickTile,
 } from '@/components/dashboard/DashCards';
 import { openMistakes } from '@/lib/study';
+import { WeeklyChart, SubjectDonut, DailyChart, SessionScoresChart } from '@/components/dashboard/StudentCharts';
 import { HERO_RANGE, heroMessage, localDayKey, weekDays, type AnalyticsRange } from '@/components/dashboard/dash-utils';
 
 const SITE_CONTENT_STALE_MS = 5 * 60 * 1000;
@@ -144,6 +145,18 @@ function Dashboard() {
         <MembershipCard view={membership} />
       </div>
     </div>
+
+    {focus.data && <section className="dash-section" data-testid="section-insights">
+      <SectionHeader eyebrow="Performance" title="Insights" action={<Link href="/progress" className="dash-link" data-testid="link-insights-progress">Full analysis <ArrowRight size={13} /></Link>} />
+      <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+        <WeeklyChart improvement={focus.data.improvement} />
+        <SubjectDonut bySubject={focus.data.bySubject} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <DailyChart streak={streak.data} />
+        <SessionScoresChart sessions={focus.data.recentSessions} />
+      </div>
+    </section>}
 
     <div className="dash-row-2">
       <section className="dash-section">

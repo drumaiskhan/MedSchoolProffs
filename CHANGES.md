@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## v106 — Book reader: Edge-style pen + smoother, faster pages (Google Drive books)
 - **Pen like the Microsoft Edge PDF viewer.** Tap Pen (or press P) and a flyout opens: 6x5 colour grid, live preview stroke and a continuous **Thickness** slider (Thin -> Thick). It closes the moment you start writing; tap Pen again to reopen it. New **Marker** tool (M): a freehand highlighter (translucent, multiplies over the text) with its own colour and thickness. Colour and thickness are remembered. (`PenFlyout` in `pages/BookReader.tsx`, `EDGE_COLORS`/`PEN_W`/`MARKER_W` in `lib/reader-palette.ts`; marker strokes are ordinary ink strokes with `hl: true`, accepted by `routes/book-reader.ts`.)
 - **Scroll and write without switching tools.** With the pen selected, mouse wheel / trackpad scroll as normal, and a finger scrolls while the stylus writes (Finger: Auto/Scroll/Draw unchanged). New palm rejection: touches are ignored while a stroke is being drawn, and finger-drag scrolling is applied once per frame so it no longer stutters.
@@ -13,9 +12,6 @@
 - Tests: `node tests/integration/05-figure-library.mjs` (ids, tags, notes, unsafe content, prompt->figure selection and no false matches).
 - Existing saved widgets are untouched. To regenerate BDS widgets with the new figures, bump `LIBRARY_VERSION` (this clears every saved widget, so it was left alone). Not run against a live AI provider.
 
-=======
-<<<<<<< HEAD
->>>>>>> c37c5b74ec7d9872b8f840fe57db07c8abc65bd1
 ## v104 — OSPE/OSCE results: "Why was this wrong? Show me how to write it"
 - Every station where a student lost marks (written, MCQ or labelling) now has a **Why was this wrong? Show me how to write it** button on the result page. It opens an AI tutor explanation with three parts: **Why you lost marks** (specific to the student's own answer: what was wrong, vague or missing), **How to write it correctly** (the answer as a top student would write it in the exam, as short dash-points for written answers; correct option or labels with a one-line reason for MCQ/labelling) and an **Exam tip**.
 - New `POST /ospe/exam-attempts/:id/stations/:stationId/explain` (`routes/ospe.ts`). Safeguards: the attempt must be the student's own and finished, results must be released, and the exam must have "show correct answers" on (the explanation uses the model answer); full-mark stations and ungraded written answers are refused; uses the existing "Ask AI" membership feature; 30 per 10 minutes per student. Nothing is stored (no schema change). The AI is told to stay consistent with the model answer, and the student's text is fenced as data (prompt-injection safe).
@@ -41,11 +37,6 @@
 - **Save to My notebook:** one tap saves the question, options, answer, explanation, per-option reasons and take-home point as a notebook note (uses the existing notebook API; Saved MCQs is keyed to question-bank items so it can't hold custom questions).
 - Not run against a live AI provider here.
 
-<<<<<<< HEAD
-=======
-=======
->>>>>>> 7ffca6aeae01139b6c012d9413fb8e00812f4c4f
->>>>>>> c37c5b74ec7d9872b8f840fe57db07c8abc65bd1
 ## v100 — NEW: AI MCQ Solver
 - New student page **AI MCQ Solver** (`/ai-mcq-solver`, in the Study desk menu). The student pastes any MCQ they're unsure about (question, then each option on its own line as A. / B. / (c) ...; options on one line also work) and gets: the best answer, a 3-6 sentence explanation, why every option is right or wrong, a one-line "remember this" point, and a confidence label (high / fairly sure / not sure). Flawed or ambiguous questions are flagged with a caveat instead of a confident guess. The last question + answer survive a refresh (sessionStorage).
 - Backend: `POST /ai/mcq-solver` (`routes/ai-mcq-solver.ts`), using the existing AI provider setup (Admin -> Platform settings -> AI, with backups), the same "Ask AI" membership feature (`ai_explain`, so trial/membership rules apply), 20 requests per 10 minutes per student, one automatic retry on malformed AI output. No schema change, no new setting.

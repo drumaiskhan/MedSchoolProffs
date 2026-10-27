@@ -95,26 +95,31 @@ router.get("/books/:id/pages/:page/image", requireAuth, async (req, res): Promis
   const daily = checkRateLimit(`bookpage-day:${req.user!.id}:${bookId}`, 6000, 24 * 60 * 60 * 1000);
   if (!burst.allowed || !daily.allowed) { res.status(429).json({ error: "Too many pages requested. Slow down and try again shortly." }); return; }
   const width = Math.min(1600, Math.max(600, Number(req.query.w) || 1000));
-  const keyFor = (pg: number) => `${req.user!.id}:${bookId}:${fileKeyOf(access.book.storagePath)}:${pg}:${Math.round(width / 100)}`;
+  const free = !!access.book.isFree;
+  // Free books carry no per-student watermark, so one render is shared by everybody (and by the browser's own cache).
+  const keyFor = (pg: number) => `${free ? "free" : req.user!.id}:${bookId}:${fileKeyOf(access.book.storagePath)}:${pg}:${Math.round(width / 100)}`;
   // The reader aborts the request when a page scrolls out of range; skip the render if nobody is waiting any more.
   let gone = false; res.on("close", () => { if (!res.writableEnded) gone = true; });
   try {
     let buf = cacheGet(keyFor(page));
     if (!buf) {
       const book = await loadBook(access.book.storagePath);
-      buf = await renderPageJpeg(book, page, width, await watermarkFor(req.user!.id), () => gone);
+      buf = await renderPageJpeg(book, page, width, free ? null : await watermarkFor(req.user!.id), () => gone);
       cachePut(keyFor(page), buf);
     }
-    res.set({ "Content-Type": "image/jpeg", "Cache-Control": NO_STORE, Pragma: "no-cache", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" }).send(buf);
+    res.set({ "Content-Type": "image/jpeg", "Cache-Control": free ? "private, max-age=604800" : NO_STORE, ...(free ? {} : { Pragma: "no-cache" }), "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" }).send(buf);
     // Read-ahead: while the reader looks at this page, quietly draw the next one so it is ready when they scroll.
     // Only when the server is otherwise idle, so it never slows down anyone's visible pages.
-    const next = page + 1;
-    if (!gone && renderIdle() && !cacheGet(keyFor(next))) {
+    const ahead = free ? [page + 1, page + 2] : [page + 1];
+    if (!gone && renderIdle() && ahead.some((n) => !cacheGet(keyFor(n)))) {
       void (async () => {
         try {
           const book = await loadBook(access.book.storagePath);
-          if (next > book.pageCount || !renderIdle()) return;
-          cachePut(keyFor(next), await renderPageJpeg(book, next, width, await watermarkFor(req.user!.id)));
+          const wm = free ? null : await watermarkFor(req.user!.id);
+          for (const next of ahead) {
+            if (next > book.pageCount || !renderIdle()) return;
+            if (!cacheGet(keyFor(next))) cachePut(keyFor(next), await renderPageJpeg(book, next, width, wm));
+          }
         } catch { /* read-ahead is best effort */ }
       })();
     }
