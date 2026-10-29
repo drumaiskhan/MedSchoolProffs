@@ -79,7 +79,18 @@ function Practice() {
   const paidMember = dashboardQ.data?.membershipStatus === 'ACTIVE';
   const baseQ = useListMcqs(studySet ? { mcqId: -1 } : mcqId ? { mcqId } : pastPaperId ? { pastPaperId } : topicId ? { topicId } : undefined);
   const setQ = useQuery({ queryKey: ['study-set', studySet, studyCount, studyIds.join(',')], queryFn: () => buildStudySet(studySet!, studyCount, studyIds), enabled: !!studySet, staleTime: Infinity, gcTime: 0 });
-  const q = studySet ? setQ : baseQ;
+  // Subject-wise past-paper attempt: ?pastPaperId=5&subject=pathology&subject=pharmacology
+  // narrows the paper to the questions tagged with those subjects (keys come from
+  // GET /past-papers/:id/subjects, chosen on the paper's detail page).
+  const subjectKeys = pastPaperId && !studySet && !mcqId ? params.getAll('subject').filter(Boolean) : [];
+  const subjectFilterOn = subjectKeys.length > 0;
+  const subjectsQ = useQuery({ queryKey: ['past-paper-subjects', pastPaperId], queryFn: () => pastPapersApi.subjects(pastPaperId!), enabled: subjectFilterOn, staleTime: 60_000 });
+  const filteredData = (() => {
+    if (!subjectFilterOn || !baseQ.data || !subjectsQ.data) return undefined;
+    const allowed = new Set(subjectsQ.data.subjects.filter((s) => subjectKeys.includes(s.key)).flatMap((s) => s.mcqIds));
+    return baseQ.data.filter((m) => allowed.has(m.id));
+  })();
+  const q = studySet ? setQ : subjectFilterOn ? { ...baseQ, data: filteredData, isLoading: baseQ.isLoading || subjectsQ.isLoading } as unknown as typeof baseQ : baseQ;
   const [index, setIndex] = useState(0);
   // Every answer picked so far, keyed by mcq id — lets the student jump
   // freely between questions (via the number grid or Prev/Next) without
@@ -207,7 +218,7 @@ function Practice() {
   const progressOn = useRef(false);            // true only while a resumable session is being played
   const progressChain = useRef<Promise<unknown>>(Promise.resolve()); // serialises PUT/DELETE so a late save can't resurrect a finished session
   const resumeHydrated = useRef(false);
-  const canResume = !!(topicId || pastPaperId) && !studySet && !mcqId;
+  const canResume = !!(topicId || pastPaperId) && !studySet && !mcqId && !subjectFilterOn;
   const buildProgress = (): SessionProgress | null => {
     if (!canResume || !orderedMcqs?.length || !mode) return null;
     const ans: Record<string, string | null> = {};
@@ -431,7 +442,7 @@ function Practice() {
             </div>
           </div>}
           {(() => {
-            const info = (topicId && resumeData.byTopic.get(topicId)) || (pastPaperId && resumeData.byPaper.get(pastPaperId)) || null;
+            const info = subjectFilterOn ? null : (topicId && resumeData.byTopic.get(topicId)) || (pastPaperId && resumeData.byPaper.get(pastPaperId)) || null;
             if (!info) return null;
             return <div className="mb-5 flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/[0.07] p-3.5" data-testid="banner-resume-session">
               <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground"><Play size={15} fill="currentColor" /></div>

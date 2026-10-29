@@ -36,6 +36,7 @@ import {
 import { createDeviceSession, DeviceLimitError, revokeAllForUser, revokeByTokenId } from "../lib/deviceSessions";
 import { sendEmail, otpEmailHtml, resetPasswordEmailHtml, welcomeEmailHtml } from "../lib/email";
 import { logger } from "../lib/logger";
+import { kickPastPaperSortingOnLogin } from "../lib/paperTopics";
 import { checkRateLimit } from "../lib/rateLimit";
 import { requireAuth } from "../middlewares/auth";
 import { expireIfLapsed, releaseLegacyTrialBan } from "../lib/trial";
@@ -476,6 +477,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     throw err;
   }
   await db.update(usersTable).set({ failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() }).where(eq(usersTable.id, user.id));
+  kickPastPaperSortingOnLogin();
   res.json({ token, user: await userPublicView(user) });
 });
 

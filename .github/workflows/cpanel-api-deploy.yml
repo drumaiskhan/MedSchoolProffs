@@ -48,81 +48,70 @@ jobs:
           pnpm install --no-frozen-lockfile
           pnpm run build:api
 
-      # 5. EMBED DEPLOYMENT VERSION
-      - name: Embed GitHub commit and deployment version
+      # 5. EMBED DEPLOYMENT METADATA
+      - name: Embed deployment metadata
+        env:
+          DEPLOY_COMMIT: ${{ github.sha }}
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
+          set -euo pipefail
+
           python3 - <<'PY'
           import os
           from pathlib import Path
           from datetime import datetime, timezone
 
-          bundle = Path(
-              "artifacts/api-server/dist/index.mjs"
-          )
+          bundle = Path("artifacts/api-server/dist/index.mjs")
 
           if not bundle.is_file():
               raise SystemExit("API bundle not found.")
 
           content = bundle.read_text(encoding="utf-8")
 
-          commit = os.environ["GITHUB_SHA"]
-
-          deployed_at = (
-              datetime.now(timezone.utc)
-              .isoformat(timespec="seconds")
-              .replace("+00:00", "Z")
-          )
-
-          deployment_id = (
-              os.environ["GITHUB_RUN_ID"]
-              + "-"
-              + os.environ["GITHUB_RUN_ATTEMPT"]
-          )
-
           replacements = {
-              "__DEPLOY_COMMIT__": commit,
-              "__DEPLOYED_AT__": deployed_at,
-              "__DEPLOY_RUN_ID__": deployment_id,
+              "__DEPLOY_COMMIT__": os.environ["DEPLOY_COMMIT"],
+              "__DEPLOYED_AT__": datetime.now(timezone.utc)
+                  .isoformat(timespec="seconds")
+                  .replace("+00:00", "Z"),
+              "__DEPLOY_RUN_ID__": (
+                  os.environ["DEPLOY_RUN_ID"]
+                  + "-"
+                  + os.environ["DEPLOY_RUN_ATTEMPT"]
+              ),
           }
 
           for placeholder, value in replacements.items():
               if placeholder not in content:
                   raise SystemExit(
-                      f"Missing placeholder: {placeholder}"
+                      f"Missing deployment placeholder: {placeholder}"
                   )
 
-              content = content.replace(
-                  placeholder,
-                  value
-              )
+              content = content.replace(placeholder, value)
 
-          bundle.write_text(
-              content,
-              encoding="utf-8"
-          )
+          bundle.write_text(content, encoding="utf-8")
 
-          print("Deployment metadata embedded.")
-          print(f"Commit: {commit}")
-          print(f"Deployment ID: {deployment_id}")
+          print("Deployment metadata embedded successfully.")
+          print("Commit:", replacements["__DEPLOY_COMMIT__"])
+          print("Deployment:", replacements["__DEPLOY_RUN_ID__"])
           PY
 
-      # 6. VERIFY API BUILD
+      # 6. VERIFY BUILD
       - name: Verify API build
         run: |
           set -euo pipefail
 
-          test -s artifacts/api-server/dist/index.mjs
+          BUNDLE="artifacts/api-server/dist/index.mjs"
 
-          ls -lh artifacts/api-server/dist/index.mjs
+          test -s "$BUNDLE"
+          ls -lh "$BUNDLE"
 
-          if grep -q "__DEPLOY_COMMIT__" \
-            artifacts/api-server/dist/index.mjs; then
-
-            echo "::error::Deployment metadata missing."
+          if grep -qE '__DEPLOY_COMMIT__|__DEPLOYED_AT__|__DEPLOY_RUN_ID__' "$BUNDLE"; then
+            echo "::error::Unreplaced deployment metadata remains."
             exit 1
           fi
 
-          echo "API build verified."
+          echo "API bundle verified."
 
       # 7. SAVE RECOVERY ARTIFACT
       - name: Save API build
@@ -133,40 +122,37 @@ jobs:
           retention-days: 7
 
       # 8. VALIDATE FTP SETTINGS
-      - name: Validate FTP configuration
+      - name: Validate FTPS configuration
         env:
           FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
           set -euo pipefail
 
-          if [ -z "${FTP_HOST}" ]; then
-            echo "::error::Set CPANEL_FTP_HOST to the verified FTPS hostname."
+          if [ -z "${FTP_HOST:-}" ]; then
+            echo "::error::CPANEL_FTP_HOST secret is missing."
             exit 1
           fi
 
-          if [ -z "${FTP_PASSWORD}" ]; then
-            echo "::error::CPANEL_FTP_PASSWORD is missing."
+          if [ -z "${FTP_PASSWORD:-}" ]; then
+            echo "::error::CPANEL_FTP_PASSWORD secret is missing."
             exit 1
           fi
 
-          if [[ "${FTP_HOST}" == *"://"* || \
-                "${FTP_HOST}" == *"/"* ]]; then
-            echo "::error::FTP host must be a hostname only."
+          if [[ "$FTP_HOST" == *"://"* || "$FTP_HOST" == *"/"* || "$FTP_HOST" == *":"* ]]; then
+            echo "::error::FTP_HOST must contain only the hostname."
             exit 1
           fi
 
-          echo "FTP configuration supplied."
+          echo "FTPS configuration supplied."
 
-      # 9. VERIFY FTP CONNECTION
+      # 9. VERIFY FTPS LOGIN
       - name: Verify secure FTP login
         env:
           FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
           set -euo pipefail
-
-          echo "Checking secure FTPS authentication..."
 
           curl \
             --fail \
@@ -183,15 +169,15 @@ jobs:
 
           echo "FTPS login successful."
 
-      # 10. DEPLOY API
-      - name: Deploy index.mjs to cPanel
+      # 10. DEPLOY THE BUNDLE TO THE ACTIVE STARTUP PATH
+      - name: Deploy API bundle
         env:
           FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
           FTP_PASSWORD: ${{ secrets.CPANEL_FTP_PASSWORD }}
         run: |
           set -euo pipefail
 
-          echo "Uploading API build..."
+          echo "Uploading compiled API to dist/index.mjs..."
 
           curl \
             --fail \
@@ -204,11 +190,11 @@ jobs:
             --max-time 180 \
             --user "${FTP_USER}:${FTP_PASSWORD}" \
             --upload-file artifacts/api-server/dist/index.mjs \
-            "ftp://${FTP_HOST}/index.mjs"
+            "ftp://${FTP_HOST}/dist/index.mjs"
 
-          echo "API uploaded successfully."
+          echo "API bundle uploaded."
 
-      # 11. RESTART CPANEL APPLICATION
+      # 11. RESTART PASSENGER
       - name: Restart cPanel API
         env:
           FTP_HOST: ${{ secrets.CPANEL_FTP_HOST }}
@@ -216,11 +202,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Deployment: ${GITHUB_SHA}" > restart.txt
-          echo "Run: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> restart.txt
-          echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> restart.txt
+          {
+            echo "Deployment: ${GITHUB_SHA}"
+            echo "Run: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > restart.txt
 
-          echo "Requesting Passenger restart..."
+          echo "Uploading Passenger restart signal..."
 
           curl \
             --fail \
@@ -235,27 +223,26 @@ jobs:
             --upload-file restart.txt \
             "ftp://${FTP_HOST}/tmp/restart.txt"
 
-          echo "Restart signal uploaded."
+          echo "Passenger restart signal uploaded."
 
       # 12. WAIT FOR RESTART
       - name: Wait for API restart
         run: sleep 15
 
-      # 13. VERIFY DEPLOYED API VERSION
-      - name: Verify production API version
+      # 13. VERIFY THE ACTUAL PRODUCTION VERSION
+      - name: Verify deployed API version
         shell: bash
         run: |
           set -euo pipefail
 
-          EXPECTED_COMMIT="$GITHUB_SHA"
+          EXPECTED_COMMIT="${GITHUB_SHA}"
           EXPECTED_DEPLOYMENT="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-          echo "Expected commit: $EXPECTED_COMMIT"
-          echo "Expected deployment: $EXPECTED_DEPLOYMENT"
+          echo "Expected commit: ${EXPECTED_COMMIT}"
+          echo "Expected deployment: ${EXPECTED_DEPLOYMENT}"
 
           for attempt in {1..12}; do
-
-            echo "Verification attempt $attempt/12"
+            echo "Verification attempt ${attempt}/12"
 
             if RESPONSE=$(curl \
               --fail \
@@ -267,44 +254,43 @@ jobs:
               -H "Cache-Control: no-cache" \
               "${HEALTH_URL}?deployment=${EXPECTED_DEPLOYMENT}"); then
 
-              echo "$RESPONSE"
+              echo "${RESPONSE}"
 
-              if echo "$RESPONSE" | jq -e \
-                --arg commit "$EXPECTED_COMMIT" \
-                --arg deployment "$EXPECTED_DEPLOYMENT" \
+              if echo "${RESPONSE}" | jq -e \
+                --arg commit "${EXPECTED_COMMIT}" \
+                --arg deployment "${EXPECTED_DEPLOYMENT}" \
                 '
                   .status == "ok" and
                   .version == $commit and
                   .deploymentId == $deployment
-                ' >/dev/null; then
+                ' > /dev/null; then
 
-                echo "API deployment verified."
+                echo "Production API deployment verified."
                 exit 0
               fi
 
-              echo "Waiting for new deployment..."
+              echo "The API is responding, but the expected version is not active."
 
             else
-              echo "API not ready yet."
+              echo "The API is not ready yet."
             fi
 
             if (( attempt < 12 )); then
               sleep 10
             fi
-
           done
 
           echo "::error::Production API version verification failed."
           exit 1
 
-      # 14. DEPLOYMENT SUCCESS
+      # 14. DEPLOYMENT SUMMARY
       - name: Deployment completed
         run: |
           echo "======================================"
           echo "MedSchoolProffs API Deployment"
           echo "Status: VERIFIED"
-          echo "Server: 162.55.6.159"
+          echo "Server: ${FTP_IP}"
           echo "API: https://site.medschoolproffs.live"
-          echo "Commit: $GITHUB_SHA"
-          echo "Deployment: $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "Commit: ${GITHUB_SHA}"
+          echo "Deployment: ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "======================================"

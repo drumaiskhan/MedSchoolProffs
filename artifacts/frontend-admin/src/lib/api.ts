@@ -168,7 +168,7 @@ export interface McqImportProfile { id: number; name: string; questionPattern: s
 // It's a suggestion only; no review UI reads/edits it yet and commit
 // doesn't act on it (no module/subject/topic gets created or matched from
 // it) — see AI_HANDOFF_ENRICHED_IMPORT.md for wiring this up.
-export interface McqCandidate { question: string; options: string[]; correctAnswer: string | null; explanation: string | null; optionExplanations: (string | null)[] | null; reference: string | null; hint: string | null; needsReview: boolean; rawBlock?: string; difficulty: 'easy' | 'moderate' | 'hard'; suggestedPath?: { block: string | null; module: string | null; subject: string | null; topic: string | null } | null }
+export interface McqCandidate { question: string; options: string[]; correctAnswer: string | null; explanation: string | null; optionExplanations: (string | null)[] | null; reference: string | null; hint: string | null; needsReview: boolean; rawBlock?: string; difficulty: 'easy' | 'moderate' | 'hard'; subjectId?: number | null; suggestedPath?: { block: string | null; module: string | null; subject: string | null; topic: string | null } | null }
 export interface McqParseResult { fileName: string; totalFound: number; needsReviewCount: number; candidates: McqCandidate[] }
 
 export interface FlashcardCandidate { front: string; back: string; needsReview: boolean; rawBlock?: string }
@@ -1102,6 +1102,9 @@ export const pastPapersApi = {
   removePermanent: (id: number) => request<{ ok: true }>(`/past-papers/${id}/permanent`, { method: 'DELETE' }),
   attachMcqs: (id: number, mcqIds: number[]) => request<{ ok: true }>(`/past-papers/${id}/mcqs`, { method: 'POST', body: JSON.stringify({ mcqIds }) }),
   backfillYearTargeting: () => request<{ fixed: number; skipped: number }>('/past-papers/backfill-year-targeting', { method: 'POST' }),
+  // AI topic sorting — one chunk (~45 questions) per call; the screen loops until remaining is 0.
+  topicSorting: () => request<{ pending: number; papers: Array<{ id: number; title: string; pending: number }> }>('/admin/past-papers/topic-sorting'),
+  classify: (id: number, redo = false) => request<{ classified: number; remaining: number; topics: number }>(`/admin/past-papers/${id}/classify`, { method: 'POST', body: JSON.stringify({ redo }) }),
 };
 
 export const notebookApi = {

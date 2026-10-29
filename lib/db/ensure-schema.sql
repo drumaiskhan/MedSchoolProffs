@@ -695,6 +695,7 @@ ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS explanation_status TEXT NOT NULL D
 -- Round 3, item 4b: short student-facing hint field (see ensureSchema.ts).
 ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS hint TEXT;
 ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS exam_id INTEGER;
+ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS paper_subject TEXT;
 
 ALTER TABLE med_ai_visualizer_logs ADD COLUMN IF NOT EXISTS raw_response TEXT;
 

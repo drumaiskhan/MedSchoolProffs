@@ -665,9 +665,14 @@ export const publicApi = {
   paymentDetails: () => request<PaymentDetails>('/payment-details'),
 };
 
+export interface PastPaperSubject { key: string; name: string; count: number; mcqIds: number[] }
+export interface PastPaperSubjects { total: number; subjects: PastPaperSubject[]; /** questions the AI has not sorted into a topic yet */ pending?: number; /** true while the AI is sorting them in the background */ classifying?: boolean }
+
 export const pastPapersApi = {
   list: (level?: string) => request<PastPaper[]>(`/past-papers${level ? `?level=${encodeURIComponent(level)}` : ''}`),
   mcqs: (id: number) => request<unknown[]>(`/past-papers/${id}/mcqs`),
+  // Subject-wise breakdown of a paper: [{ key, name, count, mcqIds }], "General" last.
+  subjects: (id: number) => request<PastPaperSubjects>(`/past-papers/${id}/subjects`),
   create: (body: Partial<PastPaper>) => request<PastPaper>('/past-papers', { method: 'POST', body: JSON.stringify(body) }),
   update: (id: number, body: Partial<PastPaper>) => request<PastPaper>(`/past-papers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   archive: (id: number) => request<{ ok: true }>(`/past-papers/${id}`, { method: 'DELETE' }),

@@ -1,10 +1,12 @@
 import { Router, type IRouter } from "express";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, pastPapersTable, mcqsTable, auditLogsTable, usersTable } from "@workspace/db";
+import { db, pastPapersTable, mcqsTable, subjectsTable, auditLogsTable, usersTable } from "@workspace/db";
 import { requireAdmin, requireAuth, requireMembershipFor, isAdminRole } from "../middlewares/auth";
 import { deleteMcqsEverywhere } from "../lib/mcqCascade";
 import { getStudentTargeting, isTargetVisible, notifyTargetedStudents } from "../lib/contentVisibility";
+import { classifyPaperChunk, classifyPaperInBackground, countPending, isClassifying, papersWithPending } from "../lib/paperTopics";
+import { AiNotConfiguredError } from "../lib/aiExplain";
 
 const router: IRouter = Router();
 
@@ -72,6 +74,74 @@ router.get("/past-papers", async (req, res): Promise<void> => {
   )).orderBy(pastPapersTable.displayOrder);
   const scoped = isAdmin || !req.user ? rows : rows.filter((row) => isTargetVisible(row.programTargetKind, row.yearTargetNumber, targeting));
   res.json(await paperViews(scoped));
+});
+
+// Topic-wise breakdown of one paper (published questions only) — feeds the
+// "Comprehensive Assessment (All Topics)" dropdown. A question's topic is, in order:
+// the subject an admin tagged it with (mcqs.subjectId), else the label the AI gave it
+// (mcqs.paperSubject), else a single "General" bucket. Same-named topics merge. Each
+// bucket lists its mcq ids so the practice screen can attempt just those questions.
+// Questions still waiting for a label are sorted by the AI in the background (existing
+// papers sort themselves the first time anyone opens them); `classifying` tells the
+// client to re-fetch shortly.
+router.get("/past-papers/:id/subjects", requireAuth, requireMembershipFor("past_papers"), async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid past paper id" }); return; }
+  const rows = await db
+    .select({ id: mcqsTable.id, subjectId: mcqsTable.subjectId, paperSubject: mcqsTable.paperSubject, sortOrder: mcqsTable.sortOrder })
+    .from(mcqsTable)
+    .where(and(eq(mcqsTable.pastPaperId, id), eq(mcqsTable.status, "published")))
+    .orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, mcqsTable.id);
+  const subjectIds = Array.from(new Set(rows.map((r) => r.subjectId).filter((v): v is number => v != null)));
+  const nameById = new Map<number, string>();
+  if (subjectIds.length) {
+    const subs = await db.select({ id: subjectsTable.id, name: subjectsTable.name }).from(subjectsTable).where(inArray(subjectsTable.id, subjectIds));
+    for (const s of subs) nameById.set(s.id, s.name.trim());
+  }
+  const GENERAL = "__general";
+  const buckets = new Map<string, { key: string; name: string; mcqIds: number[] }>();
+  let pending = 0;
+  for (const r of rows) {
+    const tagged = r.subjectId != null ? nameById.get(r.subjectId) : undefined;
+    const ai = r.paperSubject?.trim();
+    const name = tagged || (ai && ai.toLowerCase() !== "general" ? ai : undefined);
+    if (!tagged && !ai) pending++;
+    const key = name ? name.toLowerCase() : GENERAL;
+    let b = buckets.get(key);
+    if (!b) { b = { key, name: name ?? "General", mcqIds: [] }; buckets.set(key, b); }
+    b.mcqIds.push(r.id);
+  }
+  if (pending > 0) classifyPaperInBackground(id);
+  const subjects = Array.from(buckets.values())
+    .map((b) => ({ ...b, count: b.mcqIds.length }))
+    // "General" always last; otherwise biggest topic first, then A–Z.
+    .sort((a, b) => (a.key === GENERAL ? 1 : 0) - (b.key === GENERAL ? 1 : 0) || b.count - a.count || a.name.localeCompare(b.name));
+  res.json({ total: rows.length, subjects, pending, classifying: pending > 0 && isClassifying(id) });
+});
+
+// ---- Admin: AI topic sorting -------------------------------------------------
+// Which papers still have unsorted questions (drives the "Sort all with AI" button).
+router.get("/admin/past-papers/topic-sorting", requireAdmin, async (_req, res): Promise<void> => {
+  const papers = await papersWithPending();
+  res.json({ papers, pending: papers.reduce((n, p) => n + p.pending, 0) });
+});
+
+// Sorts one chunk (~45 questions) of ONE paper and reports what is left; the admin
+// screen calls it repeatedly, so no single request runs long enough to hit a gateway
+// timeout. { redo: true } re-sorts questions that already have an AI label.
+router.post("/admin/past-papers/:id/classify", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid past paper id" }); return; }
+  const redo = req.body?.redo === true;
+  try {
+    if (redo) await db.update(mcqsTable).set({ paperSubject: null }).where(and(eq(mcqsTable.pastPaperId, id), isNull(mcqsTable.subjectId)));
+    const r = await classifyPaperChunk(id, { limit: 45 });
+    if (r.subjects.length === 0) { res.status(400).json({ error: "No subjects exist yet to sort into — add modules/subjects first." }); return; }
+    res.json({ classified: r.classified, remaining: r.remaining, topics: r.subjects.length });
+  } catch (err) {
+    if (err instanceof AiNotConfiguredError) { res.status(400).json({ error: err.message }); return; }
+    res.status(502).json({ error: err instanceof Error ? err.message : "AI sorting failed" });
+  }
 });
 
 router.get("/past-papers/:id/mcqs", requireAuth, requireMembershipFor("past_papers"), async (req, res): Promise<void> => {
@@ -212,6 +282,8 @@ router.post("/past-papers/:id/mcqs", requireAdmin, async (req, res): Promise<voi
   for (const mcqId of parsed.data.mcqIds) {
     await db.update(mcqsTable).set({ pastPaperId: paperId }).where(eq(mcqsTable.id, mcqId));
   }
+  // New questions in this paper → let the AI sort them into topics (background).
+  if ((await countPending(paperId)) > 0) classifyPaperInBackground(paperId);
   res.json({ ok: true });
 });
 

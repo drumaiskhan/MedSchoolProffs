@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { db, mcqImportProfilesTable, mcqsTable, examQuestionsTable, auditLogsTable } from "@workspace/db";
+import { db, mcqImportProfilesTable, mcqsTable, subjectsTable, examQuestionsTable, auditLogsTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { extractFileContent } from "../lib/fileExtraction";
 import { extractMcqsFromText, extractMcqsFromRows, DEFAULT_IMPORT_PATTERNS, type ImportPatternSet } from "../lib/mcqParser";
@@ -10,6 +10,7 @@ import { dbErrorMessage } from "../lib/dbErrors";
 import { getSetting } from "../lib/settings";
 import { generateExplanation, generateHint, classifyDifficulty } from "../lib/aiExplain";
 import { logger } from "../lib/logger";
+import { classifyPaperInBackground } from "../lib/paperTopics";
 
 const router: IRouter = Router();
 
@@ -150,6 +151,9 @@ const CommitBody = z.object({
     // had it silently dropped here. Optional + defaulted so old clients
     // that don't send it yet still work.
     difficulty: z.enum(["easy", "moderate", "hard"]).optional(),
+    // Per-question subject (used by past-paper import, where one paper mixes
+    // several subjects). Overrides the batch-level subjectId for this row.
+    subjectId: z.number().int().positive().nullable().optional(),
   })).min(1).max(2000),
 }).refine(
   (data) => !!data.pastPaperId || !!data.examId || (!!data.moduleId && !!data.subjectId && !!data.topicId),
@@ -214,8 +218,19 @@ router.post("/admin/mcq-import/commit", requireAdmin, async (req, res): Promise<
   const data = parsed.data;
 
   try {
+    // Per-question subject overrides: resolve each subject's module once so
+    // the question stays consistent in the Module > Subject tree.
+    const overrideIds = Array.from(new Set(data.mcqs.map((m) => m.subjectId).filter((v): v is number => v != null)));
+    const moduleBySubject = new Map<number, number>();
+    if (overrideIds.length) {
+      const subs = await db.select({ id: subjectsTable.id, moduleId: subjectsTable.moduleId }).from(subjectsTable).where(inArray(subjectsTable.id, overrideIds));
+      for (const s of subs) moduleBySubject.set(s.id, s.moduleId);
+    }
     const rows = await db.insert(mcqsTable).values(
-      data.mcqs.map((mcq) => ({
+      data.mcqs.map((mcq) => {
+        const own = mcq.subjectId != null && moduleBySubject.has(mcq.subjectId) ? mcq.subjectId : null;
+        const sameAsBatch = own == null || own === data.subjectId;
+        return {
         question: mcq.question,
         options: mcq.options,
         correctAnswer: mcq.correctAnswer ?? null,
@@ -227,12 +242,13 @@ router.post("/admin/mcq-import/commit", requireAdmin, async (req, res): Promise<
         difficulty: mcq.difficulty ?? "moderate",
         status: data.status,
         source: "import" as const,
-        moduleId: data.moduleId ?? null,
-        subjectId: data.subjectId ?? null,
-        topicId: data.topicId ?? null,
+        moduleId: (sameAsBatch ? data.moduleId : moduleBySubject.get(own!)) ?? null,
+        subjectId: (sameAsBatch ? data.subjectId : own) ?? null,
+        topicId: sameAsBatch ? (data.topicId ?? null) : null,
         pastPaperId: data.pastPaperId ?? null,
         examId: data.examId ?? null,
-      })),
+        };
+      }),
     ).returning({ id: mcqsTable.id });
 
     // Questions attached directly to an exam are automatically added to
@@ -243,6 +259,9 @@ router.post("/admin/mcq-import/commit", requireAdmin, async (req, res): Promise<
         rows.map((r, i) => ({ examId: data.examId!, mcqId: r.id, displayOrder: i })),
       ).onConflictDoNothing();
     }
+
+    // Questions imported into a past paper get sorted into topics by the AI in the background.
+    if (data.pastPaperId && rows.length) classifyPaperInBackground(data.pastPaperId);
 
     await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "MCQS_BULK_IMPORTED", entity: "mcq", metadata: JSON.stringify({ count: rows.length, moduleId: data.moduleId ?? null, pastPaperId: data.pastPaperId ?? null, examId: data.examId ?? null }) });
 

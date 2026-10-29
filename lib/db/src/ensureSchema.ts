@@ -743,6 +743,7 @@ ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS hint TEXT;
 -- way they already attach to a past paper (past_paper_id) — imported
 -- exam questions no longer need a module/subject/topic home either.
 ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS exam_id INTEGER;
+ALTER TABLE med_mcqs ADD COLUMN IF NOT EXISTS paper_subject TEXT;
 
 -- med_ai_visualizer_logs: raw (truncated/invalid) AI response text, kept
 -- for admin diagnosis of generation failures. Added after the table's

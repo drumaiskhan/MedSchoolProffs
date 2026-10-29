@@ -1,0 +1,14 @@
+{
+  "name": "medschoolproffs-cpanel-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node app.cjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
+    "nodemailer": "^10.0.15",
+    "pdfjs-dist": "4.10.38"
+  }
+}

@@ -832,6 +832,12 @@ export function PastPaperUploader({ pastPaperId, onImported }: { pastPaperId: nu
   const [subjectId, setSubjectId] = useState('');
   const topicsQ = useListTopics(subjectId ? { subjectId: Number(subjectId) } : undefined);
   const [topicId, setTopicId] = useState('');
+  // Every subject (with its module) so each question in a mixed paper can be
+  // filed under its own subject — students attempt a paper subject-wise.
+  const allSubjectsQ = useListSubjects();
+  const allSubjects = allSubjectsQ.data ?? [];
+  const moduleNameById = new Map(modules.map((m) => [m.id, m.name] as const));
+  const subjectLabel = (s: { id: number; name: string; moduleId: number }) => `${s.name}${moduleNameById.get(s.moduleId) ? ` · ${moduleNameById.get(s.moduleId)}` : ''}`;
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -853,7 +859,17 @@ export function PastPaperUploader({ pastPaperId, onImported }: { pastPaperId: nu
   const parseFile = async () => {
     if (!file) return;
     setParsing(true); setParseError(null);
-    try { setCandidates((await mcqImportApi.parse(file)).candidates); }
+    try {
+      const found = (await mcqImportApi.parse(file)).candidates;
+      // Pre-fill each question's subject when the file's own subject label
+      // matches exactly ONE subject name (ambiguous names are left for the admin).
+      setCandidates(found.map((c) => {
+        const want = c.suggestedPath?.subject?.trim().toLowerCase();
+        if (!want || c.subjectId) return c;
+        const hits = allSubjects.filter((s) => s.name.trim().toLowerCase() === want);
+        return hits.length === 1 ? { ...c, subjectId: hits[0].id } : c;
+      }));
+    }
     catch (err) { setParseError(err instanceof ApiRequestError ? err.message : 'Could not parse this file.'); }
     finally { setParsing(false); }
   };
@@ -872,11 +888,13 @@ export function PastPaperUploader({ pastPaperId, onImported }: { pastPaperId: nu
     <div className="mt-2 flex flex-wrap items-center gap-2"><input type="file" accept=".txt,.csv,.xlsx,.xls,.pdf,.docx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="flex-1 rounded-lg border border-dashed border-border bg-background px-2 py-2 text-xs" data-testid={`input-paper-file-${pastPaperId}`} /><button disabled={!file || parsing} onClick={parseFile} className="rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground disabled:opacity-50" data-testid={`button-parse-paper-${pastPaperId}`}>{parsing ? 'Reading…' : 'Parse file'}</button></div>
     {parseError && <p className="mt-2 text-[11px] font-semibold text-destructive">{parseError}</p>}
     {candidates.length > 0 && <div className="mt-3 space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold"><span>{candidates.length} questions found · {candidates.filter((c) => c.needsReview).length} need review</span><button disabled={commit.isPending} onClick={importAll} className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground disabled:opacity-50" data-testid={`button-import-paper-${pastPaperId}`}>{commit.isPending ? 'Importing…' : `Import ${candidates.length} questions`}</button></div>
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted/40 p-2.5 text-xs"><span className="font-bold text-muted-foreground">Subject for all questions:</span><select value="" onChange={(e) => { const v = e.target.value; if (v) setCandidates((prev) => prev.map((c) => ({ ...c, subjectId: v === 'none' ? null : Number(v) }))); }} className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs" data-testid={`select-paper-subject-all-${pastPaperId}`}><option value="">Choose to apply to every question…</option><option value="none">Clear all subjects</option>{allSubjects.map((s) => <option key={s.id} value={s.id}>{subjectLabel(s)}</option>)}</select><span className="w-full text-[11px] text-muted-foreground">{candidates.filter((c) => c.subjectId).length} of {candidates.length} tagged · students can attempt this paper subject by subject.</span></div>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold"><span>{candidates.length} questions found · {candidates.filter((c) => c.needsReview).length} need review</span><button disabled={commit.isPending} onClick={importAll} className="rounded-lg bg-primary px-3 py-1.5 text-[11px] font-extrabold text-primary-foreground disabled:opacity-50" data-testid={`button-import-paper-${pastPaperId}`}>{commit.isPending ? 'Importing…' : `Import ${candidates.length} questions`}</button></div>
       <div className="max-h-96 space-y-2 overflow-y-auto pr-1">{candidates.map((c, i) => <div key={i} className={cn('rounded-xl border bg-card p-3', c.needsReview ? 'border-accent' : 'border-border')} data-testid={`card-paper-candidate-${i}`}>
         <div className="flex items-center justify-between"><span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold', c.needsReview ? 'bg-accent/20 text-accent-text' : 'bg-primary/15 text-primary')}>{c.needsReview ? 'Needs review' : 'Looks good'}</span><button onClick={() => removeCandidate(i)} className="text-[11px] font-bold text-destructive" data-testid={`button-remove-paper-candidate-${i}`}>Remove</button></div>
         <textarea value={c.question} onChange={(e) => updateCandidate(i, { question: e.target.value })} className="mt-2 min-h-12 w-full rounded-lg border border-border bg-background p-2 text-xs" data-testid={`input-paper-candidate-question-${i}`} />
         <SuggestedPathHint path={c.suggestedPath} />
+        <div className="mt-2 flex items-center gap-2"><span className="text-[11px] font-bold text-muted-foreground">Subject:</span><select value={c.subjectId ?? ''} onChange={(e) => updateCandidate(i, { subjectId: e.target.value ? Number(e.target.value) : null })} className="h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs" data-testid={`select-paper-candidate-subject-${i}`}><option value="">{subjectId ? 'Same as the default above' : 'No subject (General)'}</option>{allSubjects.map((s) => <option key={s.id} value={s.id}>{subjectLabel(s)}</option>)}</select></div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">{[0, 1, 2, 3, 4].map((oi) => <input key={oi} value={c.options[oi] || ''} onChange={(e) => { const opts = [...c.options]; opts[oi] = e.target.value; updateCandidate(i, { options: opts }); }} placeholder={`Option ${String.fromCharCode(65 + oi)}${oi === 4 ? ' (optional)' : ''}`} className="h-8 rounded-lg border border-border bg-background px-2 text-xs" data-testid={`input-paper-candidate-option-${i}-${oi}`} />)}</div>
         <div className="mt-2 flex items-center gap-2"><span className="text-[11px] font-bold text-muted-foreground">Correct:</span><select value={c.correctAnswer ?? ''} onChange={(e) => updateCandidate(i, { correctAnswer: e.target.value || null })} className="h-8 flex-1 rounded-lg border border-border bg-background px-2 text-xs" data-testid={`select-paper-candidate-answer-${i}`}><option value="">Not set</option>{c.options.map((opt, oi) => opt && <option key={oi} value={opt}>{String.fromCharCode(65 + oi)}. {opt.slice(0, 40)}</option>)}</select></div>
         <div className="mt-2 flex items-center gap-2"><span className="text-[11px] font-bold text-muted-foreground">Difficulty:</span><DifficultyPicker value={c.difficulty} onChange={(v) => updateCandidate(i, { difficulty: v })} testId={`button-paper-candidate-difficulty-${i}`} /></div>

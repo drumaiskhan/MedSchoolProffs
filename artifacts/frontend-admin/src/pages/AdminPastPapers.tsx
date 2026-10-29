@@ -107,6 +107,62 @@ function PastPaperBackupPanel({ papers }: { papers: Array<{ id: number; title: s
   </div>;
 }
 
+// AI topic sorting. Students pick "All Topics" or one topic on a paper; the AI labels every
+// question for that. New questions are sorted automatically after import, and an old paper
+// sorts itself the first time a student opens it — this panel just lets the admin do all of
+// them now (or re-sort). Works in small chunks so no single request runs long.
+function TopicSortingPanel() {
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; paper: string } | null>(null);
+  const status = useQuery({ queryKey: ['admin-past-paper-topic-sorting'], queryFn: () => pastPapersApi.topicSorting() });
+  const pending = status.data?.pending ?? 0;
+
+  async function sortAll(redo: boolean) {
+    setRunning(true);
+    try {
+      const fresh = await pastPapersApi.topicSorting();
+      let papers = fresh.papers;
+      if (redo) {
+        const all = await pastPapersApi.list();
+        papers = all.filter((p) => p.mcqCount > 0).map((p) => ({ id: p.id, title: p.title, pending: p.mcqCount }));
+      }
+      const total = papers.reduce((n, p) => n + p.pending, 0);
+      let done = 0;
+      for (const p of papers) {
+        let again = redo;
+        for (let guard = 0; guard < 200; guard++) {
+          setProgress({ done, total, paper: p.title });
+          const r = await pastPapersApi.classify(p.id, again);
+          again = false; // only the first call of a re-sort clears the old labels
+          done += r.classified;
+          if (r.remaining === 0 || r.classified === 0) break;
+        }
+      }
+      toast({ title: 'Topics sorted', description: `${done.toLocaleString()} question${done === 1 ? '' : 's'} sorted into topics by AI.` });
+    } catch (err) {
+      toast({ title: 'AI sorting stopped', description: err instanceof ApiRequestError ? err.message : 'Check Platform settings → AI, then try again.', variant: 'destructive' });
+    } finally {
+      setRunning(false); setProgress(null);
+      status.refetch();
+    }
+  }
+
+  return <div className="mb-5 rounded-2xl border border-border bg-card p-4 md:p-5" data-testid="panel-past-paper-topic-sorting">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-sm font-extrabold"><Sparkles size={16} className="text-primary" /> AI topic sorting</div>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">The AI puts every past-paper question under a topic (Pathology, Pharmacology…) so students can attempt "All Topics" or just one. New papers are sorted automatically; old ones sort themselves when first opened.</p>
+        <p className="mt-1 text-xs font-bold text-foreground/80">{status.isLoading ? 'Checking…' : pending > 0 ? `${pending.toLocaleString()} question${pending === 1 ? '' : 's'} waiting to be sorted` : 'All questions are sorted'}</p>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => sortAll(false)} disabled={running || pending === 0} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid="button-sort-topics-ai">{running ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {running ? 'Sorting…' : 'Sort all with AI'}</button>
+        <button type="button" onClick={() => { if (window.confirm('Re-sort EVERY past-paper question from scratch with AI?')) sortAll(true); }} disabled={running} className="rounded-xl border border-border px-4 py-2.5 text-xs font-extrabold text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="button-resort-topics-ai">Re-sort all</button>
+      </div>
+    </div>
+    {progress && <div className="mt-3 text-xs font-bold text-primary">Sorting “{progress.paper}” · {progress.done.toLocaleString()} / {progress.total.toLocaleString()}</div>}
+  </div>;
+}
+
 function AdminPastPapers() {
   const papers = useQuery({ queryKey: ['admin-past-papers'], queryFn: () => pastPapersApi.list() });
   const create = useMutation({ mutationFn: pastPapersApi.create, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-past-papers'] }) });
@@ -165,6 +221,7 @@ function AdminPastPapers() {
   const grouped = groupByDegreeYear(papers.data || [], paperDegree, paperStudyYear, paperStudyYearSortKey);
 
   return <div><SectionHeader eyebrow="Content" title="Past papers" action={<div className="flex gap-2"><button onClick={() => backfillYearTargeting.mutate()} disabled={backfillYearTargeting.isPending} className="inline-flex items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-xs font-extrabold text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="button-backfill-paper-year-targeting" title="Fix old papers whose Level label (e.g. &quot;MBBS - 1st Year&quot;) was never turned into real year/degree targeting, so they show up for every year">{backfillYearTargeting.isPending ? 'Checking…' : 'Fix year targeting'}</button><button onClick={() => setOpen(true)} className="btn-pop inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-extrabold text-primary-foreground shadow-sm" data-testid="button-create-paper"><Plus size={15} /> Add paper</button></div>} />
+    <TopicSortingPanel />
     <PastPaperBackupPanel papers={(papers.data ?? []).map((p) => ({ id: p.id, title: p.title }))} />
     <datalist id="past-paper-college-options">{collegeOptions.map((c) => <option key={c} value={c} />)}</datalist>
     {open && <form onSubmit={(e) => { e.preventDefault(); if (!formDegree || !formStudyYear) { toast({ title: 'Degree and year required', description: 'Pick both so this paper only shows to the right students — leaving them blank is what made First Year papers show up for Third Year.', variant: 'destructive' }); return; } const f = new FormData(e.currentTarget); const programId = f.get('programId') ? Number(f.get('programId')) : undefined; const academicYearId = f.get('academicYearId') ? Number(f.get('academicYearId')) : undefined; const level = String(f.get('level') || '') || composedLevel; create.mutate({ title: String(f.get('title')), examBoard: String(f.get('examBoard') || ''), year: String(f.get('year') || ''), level, programId, academicYearId, programTargetKind: formDegree || null, yearTargetNumber: studyYearToNumber(formDegree, formStudyYear) ?? null, active: true }, { onSuccess: resetForm }); }} className="mb-5 grid gap-3 rounded-2xl border border-primary/30 bg-primary/10 p-4 sm:p-5 md:grid-cols-4">

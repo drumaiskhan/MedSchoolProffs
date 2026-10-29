@@ -423,6 +423,11 @@ export const mcqsTable = pgTable("med_mcqs", {
   subjectId: integer("subject_id"),
   topicId: integer("topic_id"),
   pastPaperId: integer("past_paper_id"),
+  // AI-assigned topic/subject label for a PAST-PAPER question (e.g. "Pathology").
+  // Kept apart from subjectId on purpose: subjectId is curriculum placement and
+  // feeds the main question bank, so tagging paper questions with it would leak
+  // them into subject practice. NULL = not sorted yet (the AI sorts it on its own).
+  paperSubject: text("paper_subject"),
   examId: integer("exam_id"),
   // Manual/shuffled position in lists. NULL = never shuffled (falls back to
   // newest-first). Set by POST /admin/mcqs/shuffle-sequence so the admin can

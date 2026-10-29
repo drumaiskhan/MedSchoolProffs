@@ -58,7 +58,7 @@ import { TiltAnchor, hueFromKey, vars } from '@/lib/tilt';
 function PastPaperCard({ paper, index }: { paper: PastPaper; index: number }) {
   const hours = pastPaperEstimatedHours(paper.mcqCount);
   const hue = hueFromKey(paper.examBoard || 'paper');
-  return <TiltAnchor href={`/practice?pastPaperId=${paper.id}`} testId={`card-paper-${paper.id}`} className="cu-ospe-card group" style={vars({ '--h': hue, '--i': Math.min(index, 11), '--tilt': 6 })}>
+  return <TiltAnchor href={`/past-papers/${paper.id}`} testId={`card-paper-${paper.id}`} className="cu-ospe-card group" style={vars({ '--h': hue, '--i': Math.min(index, 11), '--tilt': 6 })}>
     <span className="cu-ospe-card__glow" aria-hidden="true" />
     <span className="cu-ospe-card__top">
       <span className="cu-ospe-card__icon"><FileStack size={20} /></span>

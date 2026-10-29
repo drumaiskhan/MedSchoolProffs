@@ -797,6 +797,33 @@ export async function runPrompt(prompt: string, maxTokens = 400, jsonMode: JsonM
   throw new Error(`All configured AI providers failed:\n${failures.join("\n")}`);
 }
 
+/**
+ * Runs the same prompt on TWO different configured providers at the same time and
+ * returns every answer that came back (1 or 2 entries). Used where a second opinion
+ * matters (past-paper topic sorting). Prefers two different provider companies
+ * (e.g. Gemini + OpenAI) over two keys of the same company. With only one provider
+ * configured it returns that single answer; with none it throws AiNotConfiguredError.
+ */
+export async function runPromptOnTwo(prompt: string, maxTokens = 400, jsonMode: JsonMode = false): Promise<Array<{ label: string; text: string }>> {
+  const candidates = await resolveProviders();
+  if (!candidates.length) throw new AiNotConfiguredError();
+  const first = candidates[0];
+  const second = candidates.find((c) => c !== first && c.provider !== first.provider) ?? candidates.find((c) => c !== first);
+  const chosen = second ? [first, second] : [first];
+  const settled = await Promise.allSettled(chosen.map((c) => aiRunOptions.run({}, () => runOnProvider(c, prompt, maxTokens, jsonMode))));
+  const out: Array<{ label: string; text: string }> = [];
+  const failures: string[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") out.push({ label: chosen[i].label, text: r.value });
+    else failures.push(`${chosen[i].label}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+  });
+  if (!out.length) {
+    // Both picked providers failed — fall back to the normal one-at-a-time failover.
+    return [{ label: "failover", text: await runPrompt(prompt, maxTokens, jsonMode) }];
+  }
+  return out;
+}
+
 // 700 (up from the old 400) gives a reasoning-capable model enough headroom
 // that its invisible "thinking" doesn't crowd out the ~150-word answer the
 // prompt asks for — see NO_REASONING_INSTRUCTION and runPrompt's retry
