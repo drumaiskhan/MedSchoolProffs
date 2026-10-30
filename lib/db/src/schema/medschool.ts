@@ -428,6 +428,9 @@ export const mcqsTable = pgTable("med_mcqs", {
   // feeds the main question bank, so tagging paper questions with it would leak
   // them into subject practice. NULL = not sorted yet (the AI sorts it on its own).
   paperSubject: text("paper_subject"),
+  // Which version of the sorting rules produced paper_subject (see CLASSIFY_VERSION in api-server lib/paperTopics.ts).
+  // A label from an older version is re-checked automatically.
+  paperSubjectVer: integer("paper_subject_ver"),
   examId: integer("exam_id"),
   // Manual/shuffled position in lists. NULL = never shuffled (falls back to
   // newest-first). Set by POST /admin/mcqs/shuffle-sequence so the admin can
@@ -619,6 +622,9 @@ export const pastPapersTable = pgTable("med_past_papers", {
   // Null means "all programs" / "all years" on that axis, same convention.
   programTargetKind: text("program_target_kind"),
   yearTargetNumber: integer("year_target_number"),
+  // Optional: the curriculum Block this paper belongs to. The AI topic sorter only picks from that block's own
+  // subjects. NULL = auto-detect (block name in the title, else the block of already-tagged questions).
+  blockId: integer("block_id"),
   active: boolean("active").notNull().default(true),
   archived: boolean("archived").notNull().default(false),
   displayOrder: integer("display_order").notNull().default(0),

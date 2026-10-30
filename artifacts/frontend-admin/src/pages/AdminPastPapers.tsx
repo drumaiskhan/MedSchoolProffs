@@ -33,7 +33,7 @@ import { toast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, pastPaperBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
+import { blockAdminApi, authApi, academicApi, settingsApi, uploadFile, resolveUploadUrl, ApiRequestError, publicApi, pastPapersApi, notebookApi, savedSessionsApi, flaggedMcqsApi, feedbackApi, analyticsApi, mcqImportApi, flashcardImportApi, mcqBackupApi, pastPaperBackupApi, studentsAdminApi, paymentsAdminApi, membershipPlansAdminApi, mcqAdminApi, subjectAdminApi, topicAdminApi, flashcardsAdminApi, flashcardsAiApi, booksAdminApi, notificationsApi, siteContentApi, teamApi, moduleAdminApi, blockAdminApi, examsAdminApi, examsApi, explanationsApi, auditApi, DEFAULT_IMPORT_PATTERNS, STUDENT_STATUSES, type Institution, type Program, type AcademicYear, type Batch, type PastPaper, type NotebookEntry, type SavedSession, type FlaggedMcq, type FeedbackEntry, type McqCandidate, type FlashcardCandidate, type StudentDetail, type SiteContent, type TeamMember, TEAM_CATEGORIES, TEAM_CATEGORY_LABELS, type TeamCategory, type AdminModule, type AdminBlock, type AdminSubject, type AdminTopic, type AdminFlashcard, type GeneratedFlashcard, type AdminMcqRow, type AdminBook, type AdminExam, type StudentExam, type ExamAttemptRow, type ExamStartResponse, type ExamResult, type Exam, type ExplanationStatus, type BankAccount, type PaymentMethodConfig, aiVisualizerAdminApi, type AiVisualizerLogEntry, type AuditLogEntry } from '@/lib/api';
 
 // Round 3, item 10 (performance) — same over-fetching fix as the student
 // app (see its App.tsx for the full rationale): `new QueryClient()` with no
@@ -163,6 +163,61 @@ function TopicSortingPanel() {
   </div>;
 }
 
+// Per-paper AI sorting: shows the Block this paper is sorted within (and lets the admin set it), the subjects the AI may
+// use, the current label counts, and sorts / re-sorts just this paper.
+function PaperSortPanel({ paper, onSetBlock }: { paper: PastPaper; onSetBlock: (blockId: number | null) => void }) {
+  const [running, setRunning] = useState(false);
+  const [note, setNote] = useState('');
+  const info = useQuery({ queryKey: ['admin-paper-topic-info', paper.id], queryFn: () => pastPapersApi.topicInfo(paper.id), refetchInterval: (q) => (q.state.data?.classifying ? 4000 : false) });
+  const blocksQ = useQuery({ queryKey: ['admin-blocks-all'], queryFn: () => blockAdminApi.listAll(), staleTime: 60_000 });
+  const d = info.data;
+  const sourceLabel = d?.block ? (d.block.source === 'set' ? 'set by you' : d.block.source === 'title' ? 'found in the title' : 'from its tagged questions') : '';
+
+  async function run(redo: boolean) {
+    setRunning(true); setNote('');
+    try {
+      let done = 0; let again = redo;
+      for (let guard = 0; guard < 200; guard++) {
+        const r = await pastPapersApi.classify(paper.id, again);
+        again = false; done += r.classified;
+        setNote(`Sorted ${done.toLocaleString()} so far…`);
+        if (r.remaining === 0 || r.classified === 0) break;
+      }
+      toast({ title: 'Paper sorted', description: `${done.toLocaleString()} question${done === 1 ? '' : 's'} sorted by AI.` });
+    } catch (err) {
+      toast({ title: 'AI sorting stopped', description: err instanceof ApiRequestError ? err.message : 'Check Platform settings → AI, then try again.', variant: 'destructive' });
+    } finally {
+      setRunning(false); setNote('');
+      info.refetch(); queryClient.invalidateQueries({ queryKey: ['admin-past-paper-topic-sorting'] });
+    }
+  }
+
+  return <div className="space-y-3" data-testid={`panel-paper-sort-${paper.id}`}>
+    <div className="flex flex-wrap items-center gap-2 text-sm font-extrabold"><Sparkles size={15} className="text-primary" /> AI topic sorting for this paper</div>
+    {info.isLoading ? <p className="text-xs text-muted-foreground">Checking…</p> : d && <>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,18rem)_1fr]">
+        <label className="block text-xs font-bold text-muted-foreground">Sort within block
+          <select value={d.blockId ?? ''} onChange={(e) => onSetBlock(e.target.value ? Number(e.target.value) : null)} disabled={running} className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground" data-testid={`select-paper-block-${paper.id}`}>
+            <option value="">Auto-detect{d.blockId == null && d.block ? ` (${d.block.name})` : ''}</option>
+            {(blocksQ.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+          <span className="mt-1 block text-[11px] font-medium">{d.block ? `Using ${d.block.name} — ${sourceLabel}.` : 'No block found — using every subject for this paper\'s degree and year.'} Changing it re-checks this paper.</span>
+        </label>
+        <div className="text-xs text-muted-foreground"><div className="font-bold">The AI may only choose from ({d.subjects.length})</div><div className="mt-1 flex flex-wrap gap-1.5">{d.subjects.length === 0 ? <span>No subjects found.</span> : d.subjects.map((n) => <span key={n} className="rounded-full border border-border bg-background px-2.5 py-0.5 text-[11px] font-semibold text-foreground">{n}</span>)}</div></div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold">
+        {d.labels.map((l) => <span key={l.label} className={cn('rounded-full px-2.5 py-1', l.label === 'Not sorted yet' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-primary/10 text-primary')}>{l.label} · {l.n}</span>)}
+        {d.adminTagged > 0 && <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">Tagged by you · {d.adminTagged}</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => run(false)} disabled={running || d.pending === 0} className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-extrabold text-primary-foreground disabled:opacity-50" data-testid={`button-sort-paper-${paper.id}`}>{running ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} {d.pending > 0 ? `Sort ${d.pending.toLocaleString()} waiting` : 'All sorted'}</button>
+        <button type="button" onClick={() => { if (window.confirm(`Re-sort every question of "${paper.title}" from scratch with AI? Questions you tagged yourself are kept.`)) run(true); }} disabled={running || d.total === 0} className="rounded-xl border border-border px-4 py-2 text-xs font-extrabold text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid={`button-resort-paper-${paper.id}`}>Re-sort this paper</button>
+        {(note || d.classifying) && <span className="text-xs font-bold text-primary">{note || 'AI is sorting in the background…'}</span>}
+      </div>
+    </>}
+  </div>;
+}
+
 function AdminPastPapers() {
   const papers = useQuery({ queryKey: ['admin-past-papers'], queryFn: () => pastPapersApi.list() });
   const create = useMutation({ mutationFn: pastPapersApi.create, onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-past-papers'] }) });
@@ -185,6 +240,7 @@ function AdminPastPapers() {
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [sortingId, setSortingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [formProgramId, setFormProgramId] = useState('');
   const [formDegree, setFormDegree] = useState('');
@@ -290,11 +346,13 @@ function AdminPastPapers() {
           <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:gap-4"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-info/15 text-info"><FileStack size={17} /></div><div className="min-w-[160px] flex-1"><div className="text-sm font-bold">{p.title}</div><div className="mt-1 text-xs text-muted-foreground">{[p.examBoard, p.year, p.level].filter(Boolean).join(' · ')} · {p.mcqCount} MCQs linked</div></div><div className="flex flex-wrap items-center gap-2">
             <button onClick={() => setViewingId(viewingId === p.id ? null : p.id)} className={cn('btn-pop inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold', viewingId === p.id ? 'bg-primary/10 text-primary' : 'border border-border text-muted-foreground hover:bg-muted')} data-testid={`button-view-paper-questions-${p.id}`}><CircleHelp size={12} /> View questions</button>
             <button onClick={() => setUploadingId(uploadingId === p.id ? null : p.id)} className={cn('btn-pop inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold', uploadingId === p.id ? 'bg-primary/10 text-primary' : 'border border-border text-muted-foreground hover:bg-muted')} data-testid={`button-upload-paper-${p.id}`}><UploadCloud size={12} /> Upload questions</button>
+            <button onClick={() => setSortingId(sortingId === p.id ? null : p.id)} className={cn('btn-pop inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold', sortingId === p.id ? 'bg-primary/10 text-primary' : 'border border-border text-muted-foreground hover:bg-muted')} data-testid={`button-sort-topics-${p.id}`}><Sparkles size={12} /> AI topics</button>
             <button onClick={() => setEditingId(editingId === p.id ? null : p.id)} className={cn('btn-pop inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold', editingId === p.id ? 'bg-primary/10 text-primary' : 'border border-border text-muted-foreground hover:bg-muted')} data-testid={`button-edit-paper-${p.id}`}><Pencil size={12} /> Edit</button>
             <button onClick={() => toggle.mutate({ id: p.id, active: !p.active })} className={cn('btn-pop rounded-lg px-3 py-1.5 text-[11px] font-bold', p.active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground')} data-testid={`button-toggle-paper-${p.id}`}>{p.active ? 'Published' : 'Hidden'}</button>
             <button onClick={() => setDeletingId(p.id)} className="btn-pop rounded-lg p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" data-testid={`button-delete-paper-${p.id}`}><Trash2 size={15} /></button>
           </div></div>
           {editingId === p.id && <div className="mt-4 border-t border-border pt-4"><PastPaperEditForm paper={p} saving={update.isPending} collegeOptions={collegeOptions} onCancel={() => setEditingId(null)} onSave={(body) => update.mutate({ id: p.id, body }, { onSuccess: () => setEditingId(null) })} /></div>}
+          {sortingId === p.id && <div className="mt-4 border-t border-border pt-4"><PaperSortPanel paper={p} onSetBlock={(blockId) => update.mutate({ id: p.id, body: { blockId } }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-paper-topic-info', p.id] }) })} /></div>}
           {viewingId === p.id && <div className="mt-4 border-t border-border pt-4"><PastPaperQuestionsList pastPaperId={p.id} /></div>}
           {uploadingId === p.id && <div className="mt-4 border-t border-border pt-4"><PastPaperUploader pastPaperId={p.id} onImported={() => setUploadingId(null)} /></div>}
         </div>)}</div>

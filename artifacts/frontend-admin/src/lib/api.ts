@@ -871,7 +871,7 @@ export const fullBackupApi = {
 // scripts/mysql-restore CLI tool, never of api-server itself). See
 // AdminDatabaseBackup.tsx's top-of-file comment for the full story.
 
-export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; archived?: boolean; displayOrder: number; mcqCount: number; programId: number | null; academicYearId: number | null; programTargetKind: string | null; yearTargetNumber: number | null }
+export interface PastPaper { id: number; title: string; examBoard: string; year: string; level: string; active: boolean; archived?: boolean; displayOrder: number; mcqCount: number; programId: number | null; academicYearId: number | null; programTargetKind: string | null; yearTargetNumber: number | null; blockId?: number | null }
 export interface NotebookEntry { id: number; userId: number; mcqId: number | null; title: string; content: string; createdAt: string; updatedAt: string }
 export interface SavedSession { id: number; userId: number; name: string; config: Record<string, unknown>; createdAt: string }
 export interface FlaggedMcq { id: number; userId: number; mcqId: number; reason: string; status: 'open' | 'resolved'; createdAt: string; question: string | null; path: string | null; mcqDeleted: boolean }
@@ -1093,6 +1093,7 @@ export const publicApi = {
   paymentDetails: () => request<PaymentDetails>('/payment-details'),
 };
 
+export interface PaperTopicInfo { total: number; pending: number; adminTagged: number; classifying: boolean; blockId: number | null; block: { id: number; name: string; source: 'set' | 'title' | 'questions' } | null; subjects: string[]; labels: Array<{ label: string; n: number }> }
 export const pastPapersApi = {
   list: (level?: string) => request<PastPaper[]>(`/past-papers${level ? `?level=${encodeURIComponent(level)}` : ''}`),
   mcqs: (id: number) => request<unknown[]>(`/past-papers/${id}/mcqs`),
@@ -1104,6 +1105,7 @@ export const pastPapersApi = {
   backfillYearTargeting: () => request<{ fixed: number; skipped: number }>('/past-papers/backfill-year-targeting', { method: 'POST' }),
   // AI topic sorting — one chunk (~45 questions) per call; the screen loops until remaining is 0.
   topicSorting: () => request<{ pending: number; papers: Array<{ id: number; title: string; pending: number }> }>('/admin/past-papers/topic-sorting'),
+  topicInfo: (id: number) => request<PaperTopicInfo>(`/admin/past-papers/${id}/topic-info`),
   classify: (id: number, redo = false) => request<{ classified: number; remaining: number; topics: number }>(`/admin/past-papers/${id}/classify`, { method: 'POST', body: JSON.stringify({ redo }) }),
 };
 

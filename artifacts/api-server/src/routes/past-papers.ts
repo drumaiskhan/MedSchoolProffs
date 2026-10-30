@@ -5,7 +5,7 @@ import { db, pastPapersTable, mcqsTable, subjectsTable, auditLogsTable, usersTab
 import { requireAdmin, requireAuth, requireMembershipFor, isAdminRole } from "../middlewares/auth";
 import { deleteMcqsEverywhere } from "../lib/mcqCascade";
 import { getStudentTargeting, isTargetVisible, notifyTargetedStudents } from "../lib/contentVisibility";
-import { classifyPaperChunk, classifyPaperInBackground, countPending, isClassifying, papersWithPending } from "../lib/paperTopics";
+import { CLASSIFY_VERSION, candidateSubjects, resolvePaperBlock, classifyPaperChunk, classifyPaperInBackground, countPending, isClassifying, papersWithPending } from "../lib/paperTopics";
 import { AiNotConfiguredError } from "../lib/aiExplain";
 
 const router: IRouter = Router();
@@ -88,7 +88,7 @@ router.get("/past-papers/:id/subjects", requireAuth, requireMembershipFor("past_
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid past paper id" }); return; }
   const rows = await db
-    .select({ id: mcqsTable.id, subjectId: mcqsTable.subjectId, paperSubject: mcqsTable.paperSubject, sortOrder: mcqsTable.sortOrder })
+    .select({ id: mcqsTable.id, subjectId: mcqsTable.subjectId, paperSubject: mcqsTable.paperSubject, paperSubjectVer: mcqsTable.paperSubjectVer, sortOrder: mcqsTable.sortOrder })
     .from(mcqsTable)
     .where(and(eq(mcqsTable.pastPaperId, id), eq(mcqsTable.status, "published")))
     .orderBy(sql`${mcqsTable.sortOrder} ASC NULLS LAST`, mcqsTable.id);
@@ -105,7 +105,7 @@ router.get("/past-papers/:id/subjects", requireAuth, requireMembershipFor("past_
     const tagged = r.subjectId != null ? nameById.get(r.subjectId) : undefined;
     const ai = r.paperSubject?.trim();
     const name = tagged || (ai && ai.toLowerCase() !== "general" ? ai : undefined);
-    if (!tagged && !ai) pending++;
+    if (!tagged && (!ai || r.paperSubjectVer !== CLASSIFY_VERSION)) pending++;
     const key = name ? name.toLowerCase() : GENERAL;
     let b = buckets.get(key);
     if (!b) { b = { key, name: name ?? "General", mcqIds: [] }; buckets.set(key, b); }
@@ -126,6 +126,37 @@ router.get("/admin/past-papers/topic-sorting", requireAdmin, async (_req, res): 
   res.json({ papers, pending: papers.reduce((n, p) => n + p.pending, 0) });
 });
 
+// Per-paper view for the admin: which Block the AI will sort this paper within (and why), the subjects it may
+// use, and how the questions are currently labelled.
+router.get("/admin/past-papers/:id/topic-info", requireAdmin, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid past paper id" }); return; }
+  const [paper] = await db.select({ blockId: pastPapersTable.blockId }).from(pastPapersTable).where(eq(pastPapersTable.id, id));
+  if (!paper) { res.status(404).json({ error: "Past paper not found" }); return; }
+  const [block, candidates, pending, rows] = await Promise.all([
+    resolvePaperBlock(id),
+    candidateSubjects(id),
+    countPending(id),
+    db.select({ tagged: sql<boolean>`${mcqsTable.subjectId} is not null`, label: mcqsTable.paperSubject, n: sql<number>`count(*)::int` })
+      .from(mcqsTable).where(eq(mcqsTable.pastPaperId, id)).groupBy(sql`${mcqsTable.subjectId} is not null`, mcqsTable.paperSubject),
+  ]);
+  const total = rows.reduce((n, r) => n + Number(r.n), 0);
+  const labels = new Map<string, number>();
+  let adminTagged = 0;
+  for (const r of rows) {
+    if (r.tagged) { adminTagged += Number(r.n); continue; }
+    const k = r.label?.trim() || "Not sorted yet";
+    labels.set(k, (labels.get(k) ?? 0) + Number(r.n));
+  }
+  res.json({
+    total, pending, adminTagged, classifying: isClassifying(id),
+    blockId: paper.blockId ?? null,
+    block: block ? { id: block.id, name: block.name, source: block.source } : null,
+    subjects: candidates.map((c) => c.name),
+    labels: [...labels.entries()].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n),
+  });
+});
+
 // Sorts one chunk (~45 questions) of ONE paper and reports what is left; the admin
 // screen calls it repeatedly, so no single request runs long enough to hit a gateway
 // timeout. { redo: true } re-sorts questions that already have an AI label.
@@ -134,7 +165,7 @@ router.post("/admin/past-papers/:id/classify", requireAdmin, async (req, res): P
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid past paper id" }); return; }
   const redo = req.body?.redo === true;
   try {
-    if (redo) await db.update(mcqsTable).set({ paperSubject: null }).where(and(eq(mcqsTable.pastPaperId, id), isNull(mcqsTable.subjectId)));
+    if (redo) await db.update(mcqsTable).set({ paperSubject: null, paperSubjectVer: null }).where(and(eq(mcqsTable.pastPaperId, id), isNull(mcqsTable.subjectId)));
     const r = await classifyPaperChunk(id, { limit: 45 });
     if (r.subjects.length === 0) { res.status(400).json({ error: "No subjects exist yet to sort into — add modules/subjects first." }); return; }
     res.json({ classified: r.classified, remaining: r.remaining, topics: r.subjects.length });
@@ -172,6 +203,7 @@ const PaperBody = z.object({
   // axis, same convention as Modules/Blocks.
   programTargetKind: z.string().max(40).nullable().optional(),
   yearTargetNumber: z.number().int().min(1).max(6).nullable().optional(),
+  blockId: z.number().int().positive().nullable().optional(), // which Block the AI sorts this paper's questions within (null = auto-detect)
   active: z.boolean().optional(),
   archived: z.boolean().optional(),
   displayOrder: z.number().int().optional(),
@@ -225,6 +257,11 @@ router.patch("/past-papers/:id", requireAdmin, async (req, res): Promise<void> =
     ...(yearTargetNumber !== undefined ? { yearTargetNumber } : {}),
   }).where(eq(pastPapersTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Past paper not found" }); return; }
+  // Moving a paper to another Block (or retitling it) changes which subjects its questions may use: re-check the AI labels.
+  if (parsed.data.blockId !== undefined || parsed.data.title !== undefined) {
+    await db.update(mcqsTable).set({ paperSubjectVer: null }).where(and(eq(mcqsTable.pastPaperId, row.id), isNull(mcqsTable.subjectId)));
+    classifyPaperInBackground(row.id);
+  }
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "PAST_PAPER_UPDATED", entity: "past_paper", entityId: row.id });
 
   // Only fires the auto-notification on the false → true transition (a

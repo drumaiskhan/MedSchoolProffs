@@ -305,6 +305,32 @@ function Practice() {
     if (!info || !resumeFrom(info)) toast({ title: "Couldn't restore that session", description: 'It may have been finished or removed. Starting fresh.' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeId, mcqs.length, resumeData.isLoading, mode, finished]);
+  // Merged past-paper page (pages/PastPaperDetail.tsx) sends ?go=1 plus the chosen options: begin straight away,
+  // skipping the setup screen. Options: diff=easy|moderate|hard, n=<count>|all, timer=timed|untimed, min=<minutes>, shuffle=1.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current || params.get('go') !== '1' || !pastPaperId || studySet || mcqId || resumeId) return;
+    if (mode || finished || q.isLoading || !mcqs.length || trialUsageQ.isLoading) return;
+    autoStarted.current = true;
+    const diff = params.get('diff');
+    const pool = diff ? mcqs.filter((m) => (m.difficulty || 'moderate').toLowerCase() === diff) : mcqs;
+    const nParam = params.get('n');
+    const want = nParam === 'all' || !nParam ? pool.length : Math.max(1, Math.floor(Number(nParam)) || pool.length);
+    const trialCapNow = trialLimited ? (trialUsage!.remaining ?? 0) : null;
+    const size = Math.min(want, pool.length, trialCapNow !== null ? trialCapNow : Infinity);
+    if (size <= 0) return; // nothing to start (e.g. trial cap used up) — the normal setup screen explains it
+    const picked = randomSample(pool, size);
+    const timedRun = params.get('timer') !== 'untimed';
+    const mins = Math.max(1, Math.floor(Number(params.get('min'))) || size);
+    setOrderedMcqs(params.get('shuffle') === '1' ? shuffleArray(picked) : picked);
+    setPendingMode(timedRun ? 'timed' : 'untimed');
+    setMode(timedRun ? 'timed' : 'untimed');
+    setRemainingSeconds(timedRun ? mins * 60 : 0);
+    setTimerTotal(timedRun ? mins * 60 : 0);
+    sessionStartRef.current = Date.now();
+    progressOn.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mcqs.length, q.isLoading, mode, finished, trialUsageQ.isLoading]);
   // Auto-save progress shortly after every answer / question change.
   const answeredNow = Object.values(answers).filter((v) => v != null).length;
   useEffect(() => {
