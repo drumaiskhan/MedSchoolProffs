@@ -816,7 +816,7 @@ export const fullBackupApi = {
     }
     const disposition = res.headers.get('content-disposition') || '';
     const filenameMatch = disposition.match(/filename="([^"]+)"/);
-    const blob = await res.blob();
+    const blob = await res.blob().catch((err: unknown) => { throw new ApiRequestError(0, 'The download was interrupted before the whole backup arrived (the server stopped sending). Try again; if it keeps happening, check the API server logs / memory limit.', { originalError: err instanceof Error ? err.message : String(err) }); });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

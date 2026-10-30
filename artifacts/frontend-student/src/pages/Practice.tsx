@@ -143,6 +143,8 @@ function Practice() {
   // stays stable across answers/prev/next even if shuffle is on. null before
   // a session starts, meaning "use the server order".
   const [orderedMcqs, setOrderedMcqs] = useState<Mcq[] | null>(null);
+  // Past papers never show the old setup screen (the paper's own page is the setup); set only if auto-start was impossible (e.g. trial cap used up).
+  const [autoStartFailed, setAutoStartFailed] = useState(false);
   const mcqs: Mcq[] = q.data ?? [];
   const activeMcqs = orderedMcqs ?? mcqs;
   const current = activeMcqs[index];
@@ -281,7 +283,7 @@ function Practice() {
     finishSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trialRemainingNow, trialLimited, finished, mode, answeredCount]);
-  const restartSession = () => { progressOn.current = false; setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setVisitedIds(new Set()); setTimerTotal(0); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); setCustomCount(''); askAi.reset(); };
+  const restartSession = () => { autoStarted.current = false; progressOn.current = false; setIndex(0); setAnswers({}); setFlaggedIds(new Set()); setVisitedIds(new Set()); setTimerTotal(0); setPanel(null); setPaused(false); setFinished(false); setMode(null); setRemainingSeconds(0); setPendingMode('timed'); setCustomMinutes(null); setOrderedMcqs(null); setSelectedDifficulty('all'); setCountMode('20'); setCustomCount(''); setAutoStartFailed(false); askAi.reset(); };
   // Starting a session from the (long) setup screen used to leave the page scrolled down to the
   // question navigator. Land on the first question instead.
   useEffect(() => {
@@ -309,16 +311,22 @@ function Practice() {
   // skipping the setup screen. Options: diff=easy|moderate|hard, n=<count>|all, timer=timed|untimed, min=<minutes>, shuffle=1.
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (autoStarted.current || params.get('go') !== '1' || !pastPaperId || studySet || mcqId || resumeId) return;
-    if (mode || finished || q.isLoading || !mcqs.length || trialUsageQ.isLoading) return;
+    // Past papers never show the setup screen: with or without go=1 they begin immediately
+    // (defaults: every question, timed at 1 min/question — or resume saved progress for this paper).
+    if (autoStarted.current || !pastPaperId || studySet || mcqId || resumeId) return;
+    if (mode || finished || q.isLoading || !mcqs.length || trialUsageQ.isLoading || resumeData.isLoading) return;
     autoStarted.current = true;
+    if (params.get('go') !== '1' && !subjectFilterOn) {
+      const saved = resumeData.byPaper.get(pastPaperId);
+      if (saved && resumeFrom(saved)) return;
+    }
     const diff = params.get('diff');
     const pool = diff ? mcqs.filter((m) => (m.difficulty || 'moderate').toLowerCase() === diff) : mcqs;
     const nParam = params.get('n');
     const want = nParam === 'all' || !nParam ? pool.length : Math.max(1, Math.floor(Number(nParam)) || pool.length);
     const trialCapNow = trialLimited ? (trialUsage!.remaining ?? 0) : null;
     const size = Math.min(want, pool.length, trialCapNow !== null ? trialCapNow : Infinity);
-    if (size <= 0) return; // nothing to start (e.g. trial cap used up) — the normal setup screen explains it
+    if (size <= 0) { setAutoStartFailed(true); return; } // nothing to start (e.g. trial cap used up) — fall back to the setup screen, which explains it
     const picked = randomSample(pool, size);
     const timedRun = params.get('timer') !== 'untimed';
     const mins = Math.max(1, Math.floor(Number(params.get('min'))) || size);
@@ -330,7 +338,7 @@ function Practice() {
     sessionStartRef.current = Date.now();
     progressOn.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mcqs.length, q.isLoading, mode, finished, trialUsageQ.isLoading]);
+  }, [mcqs.length, q.isLoading, mode, finished, trialUsageQ.isLoading, resumeData.isLoading]);
   // Auto-save progress shortly after every answer / question change.
   const answeredNow = Object.values(answers).filter((v) => v != null).length;
   useEffect(() => {
@@ -364,6 +372,9 @@ function Practice() {
   if (finished) {
     return <div className="max-w-6xl"><SectionHeader eyebrow="Daily practice" title="Session complete" /><PracticeResultCard mcqs={activeMcqs} answers={answers} onRestart={restartSession} onRedoWrong={redoWrong} backHref={pastPaperId ? '/past-papers' : '/blocks'} backLabel={pastPaperId ? 'Back to past papers' : 'Back to blocks'} /></div>;
   }
+
+  // Past paper: go straight into the session — show a loader (not the old setup screen) while it auto-starts.
+  if (!mode && !finished && pastPaperId && !studySet && !mcqId && !resumeId && !autoStartFailed) return <SkeletonPage />;
 
   if (!mode) {
     // Difficulty mix for this set, shown as quick chips on the hero AND

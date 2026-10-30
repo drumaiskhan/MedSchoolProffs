@@ -7,7 +7,7 @@ import { requireAdmin } from "../middlewares/auth";
 import { dbErrorMessage } from "../lib/dbErrors";
 import { logger } from "../lib/logger";
 import {
-  buildFullBackup,
+  streamFullBackup,
   validateFullBackup,
   restoreFullBackup,
   relinkPastPapersFromBackup,
@@ -40,15 +40,24 @@ const ScopeQuery = z.object({ scope: z.enum(["content", "users", "full"]) });
 router.get("/admin/full-backup/export", requireAdmin, async (req, res): Promise<void> => {
   const parsed = ScopeQuery.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: 'scope must be "content", "users", or "full"' }); return; }
+  const scope = parsed.data.scope;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  // Send headers immediately and stream the body so the host proxy never sees an idle connection.
+  req.setTimeout?.(0);
+  res.setTimeout?.(0);
+  res.status(200);
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="medschoolproffs-${scope}-backup-${stamp}.json"`);
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
   try {
-    const backup = await buildFullBackup(parsed.data.scope);
-    const stamp = backup.exportedAt.replace(/[:.]/g, "-").slice(0, 19);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Disposition", `attachment; filename="medschoolproffs-${parsed.data.scope}-backup-${stamp}.json"`);
-    res.status(200).send(JSON.stringify(backup, null, 2));
+    await streamFullBackup(scope, res as unknown as Parameters<typeof streamFullBackup>[1]);
+    res.end();
   } catch (err) {
     logger.error({ err }, "[full-backup] export failed");
-    res.status(500).json({ error: `Could not build the backup: ${dbErrorMessage(err, "unknown error")}` });
+    // Headers are already out, so a clean JSON error is impossible; kill the connection so the
+    // browser reports a failed download instead of saving a truncated (invalid) file.
+    res.destroy(err instanceof Error ? err : undefined);
   }
 });
 

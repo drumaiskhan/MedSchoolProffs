@@ -252,6 +252,53 @@ export async function buildFullBackup(scope: BackupScopeName): Promise<FullBacku
   };
 }
 
+/**
+ * Streaming export. The old route built the WHOLE database in memory, pretty-printed it
+ * (doubling its size) and only then sent the first byte — on large databases the host proxy
+ * dropped the idle connection / the process ran out of memory, which the browser reported as
+ * "the request never reached the server". This writes the same file format table-by-table,
+ * compact, flushing as it goes, so the connection never sits idle and memory stays small.
+ * (`counts` is written after `data` because it is only known once each table has been read;
+ * JSON key order does not matter to the validator/restore code.)
+ */
+export async function streamFullBackup(
+  scope: BackupScopeName,
+  res: { write: (chunk: string) => boolean; once: (ev: string, cb: () => void) => unknown; flush?: () => void; destroyed?: boolean; writableEnded?: boolean },
+): Promise<void> {
+  const specs = specsFor(scope);
+  const out = async (chunk: string): Promise<void> => {
+    if (res.destroyed || res.writableEnded) throw new Error("client disconnected");
+    const ok = res.write(chunk);
+    res.flush?.();
+    if (!ok) await new Promise<void>((resolve) => res.once("drain", () => resolve()));
+  };
+  const counts: Record<string, number> = {};
+  await out(
+    `{"formatVersion":${JSON.stringify(FULL_BACKUP_FORMAT_VERSION)},"application":${JSON.stringify(APPLICATION_NAME)},` +
+      `"scope":${JSON.stringify(scope)},"exportedAt":${JSON.stringify(new Date().toISOString())},` +
+      `"source":{"database":"postgresql"},"data":{`,
+  );
+  let firstTable = true;
+  for (const spec of specs) {
+    const rows = (await db.select().from(spec.table)) as Record<string, unknown>[];
+    const cleaned = spec.redactSettingSecrets && scope !== "full"
+      ? rows.map(redactSettingRow)
+      : spec.key === "users"
+        ? rows.map(redactUserRow)
+        : rows;
+    counts[spec.key] = cleaned.length;
+    await out(`${firstTable ? "" : ","}${JSON.stringify(spec.key)}:[`);
+    firstTable = false;
+    const BATCH = 500;
+    for (let i = 0; i < cleaned.length; i += BATCH) {
+      const part = cleaned.slice(i, i + BATCH).map((r) => JSON.stringify(r)).join(",");
+      await out(`${i === 0 ? "" : ","}${part}`);
+    }
+    await out("]");
+  }
+  await out(`},"counts":${JSON.stringify(counts)}}`);
+}
+
 // ---------------------------------------------------------------------------
 // Validation — read-only. Never touches the database beyond the one COUNT
 // query that checks whether the target tables already hold data.
