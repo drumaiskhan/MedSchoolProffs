@@ -1018,6 +1018,13 @@ export const settingsApi = {
   testEmail: (to: string, slot?: number) => request<{ ok: boolean; error?: string }>('/admin/settings/test-email', { method: 'POST', body: JSON.stringify(slot ? { to, slot } : { to }) }),
 };
 
+// Universal device limit: one number for every student account (see the
+// "Devices per student account" panel in Settings → Security).
+export const deviceLimitApi = {
+  summary: () => request<{ defaultLimit: number; students: number; overrides: number }>('/admin/device-limit/summary'),
+  applyToAll: (maxDevices: number) => request<{ ok: true; limit: number; students: number; overridesCleared: number }>('/admin/device-limit/apply-all', { method: 'POST', body: JSON.stringify({ maxDevices }) }),
+};
+
 export const auditApi = {
   list: (limit = 100) => request<AuditLogEntry[]>(`/admin/audit-logs?limit=${limit}`),
 };

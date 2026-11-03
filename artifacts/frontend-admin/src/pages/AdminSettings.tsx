@@ -17,8 +17,8 @@ import {
 } from 'lucide-react';
 import { readableForegroundHsl, DEFAULT_THEME } from '@/lib/theme';
 import { toast } from '@/hooks/use-toast';
-import { settingsApi, ApiRequestError, type TrialFeatureOption } from '@/lib/api';
-import { AdminAccountSection, AdminImageUpload, ColorField, FaviconUploader, NotificationBroadcastPanel, SectionHeader } from '@/lib/shared';
+import { settingsApi, deviceLimitApi, ApiRequestError, type TrialFeatureOption } from '@/lib/api';
+import { AdminAccountSection, AdminImageUpload, ConfirmDialog, ColorField, FaviconUploader, NotificationBroadcastPanel, SectionHeader } from '@/lib/shared';
 import { Button, Callout, Chip, Field, OptionCard, Panel, SaveBar, SecretInput, SelectInput, StatusPill, SubSection, TextArea, TextInput, ToggleRow } from '@/lib/admin-ui';
 import { queryClient } from '@/lib/query-client';
 import { AchievementConfigPanel } from '@/components/AchievementConfigPanel';
@@ -52,6 +52,44 @@ function parseJson<T>(raw: string | undefined, fallback: T): T {
 
 function parseYears(raw: string | undefined): number[] {
   return Array.from(new Set((raw || '').split(',').map((p) => Number(p.trim())).filter((n) => Number.isInteger(n) && n >= 1 && n <= 6))).sort((a, b) => a - b);
+}
+
+// Universal device limit: one number applied to every student account at once.
+// Applying also clears any per-student override so nobody keeps an old custom
+// limit, and it becomes the default for students who sign up later. It saves
+// on its own (it is not part of the page's Save bar).
+function DeviceLimitPanel() {
+  const summary = useQuery({ queryKey: ['device-limit-summary'], queryFn: deviceLimitApi.summary });
+  const [draft, setDraft] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const d = summary.data;
+  const shown = draft ?? (d ? String(d.defaultLimit) : '');
+  const n = /^\d+$/.test(shown.trim()) ? Number(shown.trim()) : NaN;
+  const valid = Number.isInteger(n) && n >= 0 && n <= 50;
+  const label = (v: number) => (v === 0 ? 'unlimited' : `${v} device${v === 1 ? '' : 's'}`);
+  const apply = useMutation({
+    mutationFn: (v: number) => deviceLimitApi.applyToAll(v),
+    onSuccess: (r) => {
+      setConfirming(false); setDraft(null);
+      queryClient.invalidateQueries({ queryKey: ['device-limit-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['student-devices'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-settings'] });
+      toast({ title: `Device limit set to ${label(r.limit)} for all accounts`, description: r.overridesCleared > 0 ? `${r.overridesCleared} custom per-student limit${r.overridesCleared === 1 ? ' was' : 's were'} replaced.` : undefined });
+    },
+    onError: (err: unknown) => { setConfirming(false); toast({ title: 'Could not set the device limit', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }); },
+  });
+  return <Panel icon={Users} tone="green" title="Devices per student account" description="How many devices one student account can be signed in on at the same time. Signing out (or an admin resetting devices) frees a slot. Admin accounts are never limited.">
+    <div className="flex flex-wrap items-center gap-3">
+      <TextInput type="number" min={0} max={50} value={shown} onChange={(e) => setDraft(e.target.value)} disabled={!d} className="w-24" data-testid="input-universal-device-limit" />
+      <span className="text-xs text-muted-foreground">devices at once — 0 means unlimited</span>
+      <Button variant="primary" icon={Users} disabled={!d || !valid} onClick={() => setConfirming(true)} data-testid="button-apply-device-limit-all">Apply to all accounts</Button>
+    </div>
+    {d && <p className="mt-3 text-[11px] leading-5 text-muted-foreground" data-testid="text-device-limit-summary">
+      Currently {label(d.defaultLimit)} by default · {d.overrides === 0 ? 'no students have a custom limit' : `${d.overrides} of ${d.students} students have their own custom limit`}.
+    </p>}
+    <p className="mt-2 text-[11px] leading-5 text-muted-foreground">Applying sets this limit for every student, replaces any custom per-student limits, and becomes the default for new sign-ups. Nobody is signed out — a student already over the new limit just can't sign in on another device until they're under it. You can still give one student a different limit afterwards from their page under Students.</p>
+    {confirming && valid && <ConfirmDialog title="Set the device limit for every account?" body={`Every student account will be limited to ${label(n)} signed in at once${d && d.overrides > 0 ? `, replacing the ${d.overrides} custom limit${d.overrides === 1 ? '' : 's'} currently set` : ''}. Nobody is signed out.`} confirmLabel="Apply to all" pendingLabel="Applying…" tone="primary" testId="apply-device-limit-all" onCancel={() => setConfirming(false)} onConfirm={() => apply.mutate(n)} pending={apply.isPending} />}
+  </Panel>;
 }
 
 function AdminSettings() {
@@ -516,19 +554,14 @@ function AdminSettings() {
               <Button variant="primary" icon={Copy} onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/admin-signup/1?code=${encodeURIComponent(values.ADMIN_SIGNUP_CODE || '')}`); toast({ title: 'Invite link copied' }); }} data-testid="button-copy-admin-invite-link">Copy link</Button>
             </div>}
           </Panel>
-          <Panel icon={Users} tone="green" title="Devices per student account" description="How many devices one student account can be signed in on at the same time. Signing out (or an admin resetting devices) frees a slot. Admin accounts are never limited.">
-            <div className="flex flex-wrap items-center gap-3">
-              <TextInput type="number" min={0} max={50} value={values.DEFAULT_MAX_DEVICES ?? ''} placeholder="2" onChange={(e) => set('DEFAULT_MAX_DEVICES', e.target.value)} className="w-24" data-testid="input-default-max-devices" />
-              <span className="text-xs text-muted-foreground">devices at once — blank means 2, 0 means unlimited</span>
-            </div>
-            <p className="mt-3 text-[11px] leading-5 text-muted-foreground">This is the default for every student. To give one student more or fewer, open them under Students and change their device limit there — that overrides this number for them only. Lowering it never signs anyone out; it only blocks new sign-ins until they're under the limit.</p>
-          </Panel>
+          <DeviceLimitPanel />
+
           <AdminAccountSection />
         </>}
 
         {tab === 'notifications' && <NotificationBroadcastPanel />}
 
-        {tab !== 'notifications' && <SaveBar dirty={dirty} saving={save.isPending} saved={save.isSuccess && !dirty} onSave={() => save.mutate(values)} onDiscard={() => setForm(null)} />}
+        {tab !== 'notifications' && <SaveBar dirty={dirty} saving={save.isPending} saved={save.isSuccess && !dirty} onSave={() => { const { DEFAULT_MAX_DEVICES: _ignored, ...rest } = values; save.mutate(rest); }} onDiscard={() => setForm(null)} />}
       </div>
     </div>
   </div>;

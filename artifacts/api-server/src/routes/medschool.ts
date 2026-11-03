@@ -75,7 +75,8 @@ import {
   userSessionsTable,
 } from "@workspace/db";
 import { requireAuth, requireAdmin, requireMembershipFor, isAdminRole } from "../middlewares/auth";
-import { getDefaultDeviceLimit, getEffectiveDeviceLimit, listActiveSessions, revokeAllForUser, revokeOneForUser, MAX_DEVICES_CEILING } from "../lib/deviceSessions";
+import { getDefaultDeviceLimit, getEffectiveDeviceLimit, listActiveSessions, revokeAllForUser, revokeOneForUser, MAX_DEVICES_CEILING, DEVICE_LIMIT_SETTING } from "../lib/deviceSessions";
+import { setSetting } from "../lib/settings";
 import { getStudentTargeting, getVisibleModuleIds, getVisibleBlockIds, describeModuleTargeting, isTargetVisible } from "../lib/contentVisibility";
 import { resolveFileUrl, THUMBNAIL_TRANSFORM } from "../lib/storage";
 import { dbErrorMessage } from "../lib/dbErrors";
@@ -1643,6 +1644,33 @@ router.patch("/students/:id/device-limit", requireAdmin, async (req, res): Promi
   if (!row) { res.status(404).json({ error: "Student not found" }); return; }
   await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "STUDENT_DEVICE_LIMIT_SET", entity: "user", entityId: id, metadata: JSON.stringify({ maxDevices: parsed.data.maxDevices }) });
   res.json({ ok: true, limit: await getEffectiveDeviceLimit(row), override: row.maxDevices });
+});
+
+// Universal device limit. One number for EVERY student account: it becomes the
+// platform default and every per-student override is cleared, so nobody keeps
+// an old custom limit. Admins are never limited. Nobody is signed out — accounts
+// already above the new limit just can't sign in on another device until they
+// drop below it. Per-student limits can still be set again afterwards.
+router.get("/admin/device-limit/summary", requireAdmin, async (_req, res): Promise<void> => {
+  const [defaultLimit, [counts]] = await Promise.all([
+    getDefaultDeviceLimit(),
+    db.select({
+      students: sql<number>`count(*)::int`,
+      overrides: sql<number>`count(${usersTable.maxDevices})::int`,
+    }).from(usersTable).where(eq(usersTable.role, "student")),
+  ]);
+  res.json({ defaultLimit, students: counts?.students ?? 0, overrides: counts?.overrides ?? 0 });
+});
+
+router.post("/admin/device-limit/apply-all", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = z.object({ maxDevices: z.number().int().min(0).max(MAX_DEVICES_CEILING) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: `Device limit must be a whole number from 0 (unlimited) to ${MAX_DEVICES_CEILING}.` }); return; }
+  const { maxDevices } = parsed.data;
+  const cleared = await db.update(usersTable).set({ maxDevices: null }).where(and(eq(usersTable.role, "student"), sql`${usersTable.maxDevices} IS NOT NULL`)).returning({ id: usersTable.id });
+  await setSetting(DEVICE_LIMIT_SETTING, String(maxDevices));
+  const [counts] = await db.select({ n: sql<number>`count(*)::int` }).from(usersTable).where(eq(usersTable.role, "student"));
+  await db.insert(auditLogsTable).values({ actorId: req.user!.id, action: "DEVICE_LIMIT_APPLIED_TO_ALL", entity: "platform", metadata: JSON.stringify({ maxDevices, overridesCleared: cleared.length, students: counts?.n ?? 0 }) });
+  res.json({ ok: true, limit: maxDevices, students: counts?.n ?? 0, overridesCleared: cleared.length });
 });
 
 // Sign one device out (frees its slot; that browser is logged out on its next request).
