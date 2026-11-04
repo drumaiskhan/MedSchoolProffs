@@ -1203,6 +1203,84 @@ export async function generateOptionExplanations(request: ExplanationRequest, mo
   })(), GENERATE_OPTION_EXPLANATIONS_HARD_DEADLINE_MS, () => []);
 }
 
+// ---------------------------------------------------------------------------
+// Option-explanation RECTIFIER. generateOptionExplanations above backfills
+// short (1-2 sentence) text where it is missing; this one rewrites what is
+// already there — thin, one-line, generic or partly wrong per-option
+// explanations — into long, specific, teaching-quality ones. Existing text is
+// handed to the model as a DRAFT to keep (if correct), expand and fix.
+// ---------------------------------------------------------------------------
+
+/** Per-option text shorter than this counts as "thin" and is picked up by the rectifier. */
+export const RECTIFY_MIN_OPTION_CHARS = 220;
+/** A rewritten option explanation shorter than this is rejected (the row is left untouched). */
+const RECTIFY_ACCEPT_MIN_CHARS = 150;
+
+export interface RectifyOptionExplanationsRequest extends ExplanationRequest {
+  /** The question's overall explanation, if any — extra context for the model. */
+  explanation?: string | null;
+  /** Existing per-option explanations (index-aligned, may contain null/empty). */
+  existing?: Array<string | null> | null;
+  /** "Module › Subject › Topic" — so the answer is pitched at the right subject. */
+  topicPath?: string | null;
+}
+
+function buildRectifyOptionExplanationsPrompt({ question, options, correctAnswer, explanation, existing, topicPath }: RectifyOptionExplanationsRequest): string {
+  const optionList = options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join("\n");
+  const draft = options
+    .map((_, i) => `${String.fromCharCode(65 + i)}: ${existing?.[i]?.trim() || "(none yet)"}`)
+    .join("\n");
+  return [
+    "You are a senior medical educator rewriting the answer key of an MBBS/BDS exam-prep MCQ so that EVERY option has its own long, detailed, genuinely useful explanation.",
+    "A student who got the question wrong should finish reading and understand the concept, not just the verdict.",
+    "",
+    "WRITE EACH OPTION'S EXPLANATION IN THE HOUSE STYLE of the answer keys on this site. The app shows each one under its option, so do NOT write the option letter or repeat the option text as a heading. Each explanation is 2-3 full, substantial sentences (roughly 40-70 words), flowing prose, verdict first and woven into the sentence, then the specific reason:",
+    "  - Correct option, e.g. \"Informing the magistrate is the correct answer because unnatural deaths must be reported to judicial authorities, who then authorize post-mortems and investigations.\" (also fine: \"This is correct; radiation causes DNA damage that activates p53, leading to the intrinsic pathway of apoptosis...\")",
+    "  - Wrong option, e.g. \"Preserving samples is crucial for toxicological analysis but is part of the clinical management and evidence collection that follows the legal notification; it is not the overarching 'most important' duty compared to triggering the legal machinery.\" (also fine: \"This is incorrect because hyperplasia is a growth adaptation involving increased cell number, which is the opposite of the intended effect of therapy.\")",
+    "Make them noticeably fuller than a one-liner: do not stop after the verdict. Correct option — the reason it is right PLUS the underlying mechanism / rule / anatomy / pharmacology and how it ties to the stem. Wrong option — what that option actually is or is true for, why it does not fit THIS question (name the deciding feature or what the correct answer does that it does not), and what it is commonly confused with.",
+    "Be specific and factual — real names, values, structures, rules, mechanisms. No filler, never just restate the option. Refer to other options by name/content, never by letter (options can be shuffled). Plain text only, no markdown, no bullet characters.",
+    "",
+    "The existing draft explanations below may be too short, vague, or occasionally wrong. Keep any correct information, expand it, and silently fix anything incorrect. The marked correct answer is the answer key — do not change which option is correct; if the question itself looks flawed, still explain as faithfully and accurately as you can.",
+    NO_REASONING_INSTRUCTION,
+    "",
+    topicPath ? `Subject area: ${topicPath}` : "",
+    `Question: ${question}`,
+    `Options:\n${optionList}`,
+    correctAnswer ? `Correct answer: ${correctAnswer}` : "",
+    explanation?.trim() ? `Existing overall explanation: ${explanation.trim()}` : "",
+    `Existing per-option drafts:\n${draft}`,
+    "",
+    `Respond with ONLY a valid JSON array of exactly ${options.length} strings, no prose before or after, no code fences — one explanation per option, in the exact same order as the options above:`,
+    `[${options.map(() => '"..."').join(", ")}]`,
+  ].filter(Boolean).join("\n");
+}
+
+// Long output (5 options x ~140 words) takes noticeably longer than the
+// short backfill, so this gets a bigger deadline — still under Netlify's 26s
+// proxy ceiling, which is why the route only runs a few questions per call.
+const RECTIFY_HARD_DEADLINE_MS = 22_000;
+
+/** Rewrites a question's per-option explanations into long, detailed ones.
+ * Returns [] (caller keeps the existing text) on a bad shape, a too-short
+ * result for any option, an error, or taking too long — it never returns a
+ * partial / misaligned array, so nothing can be silently misattributed to
+ * the wrong option. */
+export async function rectifyOptionExplanations(request: RectifyOptionExplanationsRequest, modelOverride?: string): Promise<string[]> {
+  return withHardDeadline((async () => {
+    try {
+      const raw = await runPrompt(buildRectifyOptionExplanationsPrompt(request), Math.max(1500, request.options.length * 450), "array", modelOverride);
+      const cleaned = stripReasoningArtifacts(raw).replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+      const parsed: unknown = JSON.parse(cleaned);
+      if (!Array.isArray(parsed) || parsed.length !== request.options.length) return [];
+      const out = parsed.map((e) => String(e ?? "").replace(/\s+/g, " ").replace(/^\(?[A-Ea-e][\.\):]\s+/, "").trim()); // drop a stray leading "A. " — the UI adds the letter
+      if (out.some((e) => e.length < RECTIFY_ACCEPT_MIN_CHARS)) return [];
+      return out;
+    } catch {
+      return [];
+    }
+  })(), RECTIFY_HARD_DEADLINE_MS, () => []);
+}
+
 function buildRewriteDuplicatePrompt({ question, options, correctAnswer, otherQuestion }: { question: string; options: string[]; correctAnswer: string | null; otherQuestion: string }): string {
   const optionList = options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join("\n");
   return [

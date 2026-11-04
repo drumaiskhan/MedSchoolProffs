@@ -1,9 +1,9 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, mcqsTable, flashcardsTable, topicsTable, subjectsTable, modulesTable, auditLogsTable } from "@workspace/db";
 import { requireAdmin, requireAuth, requireMembershipFor } from "../middlewares/auth";
-import { generateExplanation, generateFlashcardExplanation, generateFlashcardSet, generateMcqSet, classifyDifficulty, generateOptionExplanations, rewriteDuplicateMcq, repairInvalidMcq, generateMcqReference, AiNotConfiguredError } from "../lib/aiExplain";
+import { generateExplanation, generateFlashcardExplanation, generateFlashcardSet, generateMcqSet, classifyDifficulty, generateOptionExplanations, rectifyOptionExplanations, RECTIFY_MIN_OPTION_CHARS, rewriteDuplicateMcq, repairInvalidMcq, generateMcqReference, AiNotConfiguredError } from "../lib/aiExplain";
 import { getAllSettings } from "../lib/settings";
 import { logger } from "../lib/logger";
 
@@ -367,6 +367,87 @@ router.post("/admin/mcqs/generate-option-explanations", requireAdmin, async (req
   }
   const generated = results.filter((r) => r.optionExplanations.length).length;
   res.json({ generated, remaining, results });
+});
+
+// ---------------------------------------------------------------------------
+// Admin: option-explanation RECTIFIER. Unlike generate-option-explanations
+// (which only fills blanks, 1-2 sentences each), this rewrites per-option
+// explanations that are missing, one-liners or thin into long, detailed ones —
+// scoped the same way (a topic / subject / module / past paper, or explicit ids).
+//
+// Each question is a long AI call, so a request handles only a few and the
+// frontend loops. The loop is cursor-based (`afterId`, ascending id) rather
+// than "re-query what's still thin": a question whose rewrite fails or comes
+// back too short is left untouched, and without a cursor it would be picked
+// up again forever. A rewrite is only saved when the AI returned one long
+// string per option (see rectifyOptionExplanations), so a failure never
+// overwrites existing text.
+//
+// `force: true` also redoes questions whose explanations are already long.
+// ---------------------------------------------------------------------------
+
+const RECTIFY_BATCH_CAP = 3;
+const RectifyOptionExplanationsBody = z.union([
+  z.object({ ids: z.array(z.number().int().positive()).min(1).max(RECTIFY_BATCH_CAP) }),
+  z.object({
+    all: z.literal(true),
+    afterId: z.number().int().min(0).optional(),
+    force: z.boolean().optional(),
+    filters: z.object({ moduleId: z.number().int().optional(), subjectId: z.number().int().optional(), topicId: z.number().int().optional(), pastPaperId: z.number().int().optional() }).optional(),
+  }),
+]);
+
+router.post("/admin/mcqs/rectify-option-explanations", requireAdmin, async (req, res): Promise<void> => {
+  const parsed = RectifyOptionExplanationsBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const body = parsed.data;
+
+  const scopeFilter = "ids" in body ? undefined : and(
+    body.filters?.moduleId ? eq(mcqsTable.moduleId, body.filters.moduleId) : undefined,
+    body.filters?.subjectId ? eq(mcqsTable.subjectId, body.filters.subjectId) : undefined,
+    body.filters?.topicId ? eq(mcqsTable.topicId, body.filters.topicId) : undefined,
+    body.filters?.pastPaperId ? eq(mcqsTable.pastPaperId, body.filters.pastPaperId) : undefined,
+  );
+  // "Needs work": no explanations, wrong count, or any option's text blank / thin.
+  const thin = sql`(${mcqsTable.optionExplanations} IS NULL OR array_length(${mcqsTable.optionExplanations}, 1) IS DISTINCT FROM array_length(${mcqsTable.options}, 1) OR EXISTS (SELECT 1 FROM unnest(${mcqsTable.optionExplanations}) e WHERE e IS NULL OR char_length(trim(e)) < ${RECTIFY_MIN_OPTION_CHARS}))`;
+  const needsWork = "ids" in body || body.force ? undefined : thin;
+  const afterId = "ids" in body ? 0 : body.afterId ?? 0;
+  const columns = { id: mcqsTable.id, question: mcqsTable.question, options: mcqsTable.options, correctAnswer: mcqsTable.correctAnswer, explanation: mcqsTable.explanation, optionExplanations: mcqsTable.optionExplanations, moduleId: mcqsTable.moduleId, subjectId: mcqsTable.subjectId, topicId: mcqsTable.topicId };
+
+  const rows = "ids" in body
+    ? await db.select(columns).from(mcqsTable).where(inArray(mcqsTable.id, body.ids)).orderBy(asc(mcqsTable.id))
+    : await db.select(columns).from(mcqsTable).where(and(scopeFilter, needsWork, gt(mcqsTable.id, afterId))).orderBy(asc(mcqsTable.id)).limit(RECTIFY_BATCH_CAP);
+
+  if (!rows.length) { res.json({ processed: 0, rectified: 0, failed: 0, remaining: 0, nextAfterId: afterId, results: [] }); return; }
+  const lastId = rows[rows.length - 1].id;
+
+  let remaining = 0;
+  if (!("ids" in body)) {
+    const [{ count: c } = { count: 0 }] = await db.select({ count: sql<number>`count(*)` }).from(mcqsTable).where(and(scopeFilter, needsWork, gt(mcqsTable.id, lastId)));
+    remaining = Number(c);
+  }
+
+  // "Module › Subject › Topic" for the prompt (few distinct ids per batch).
+  const pick = <T,>(xs: Array<T | null | undefined>) => Array.from(new Set(xs.filter((x): x is T => x != null)));
+  const [mods, subs, tops] = await Promise.all([
+    pick(rows.map((r) => r.moduleId)).length ? db.select({ id: modulesTable.id, name: modulesTable.name }).from(modulesTable).where(inArray(modulesTable.id, pick(rows.map((r) => r.moduleId)))) : [],
+    pick(rows.map((r) => r.subjectId)).length ? db.select({ id: subjectsTable.id, name: subjectsTable.name }).from(subjectsTable).where(inArray(subjectsTable.id, pick(rows.map((r) => r.subjectId)))) : [],
+    pick(rows.map((r) => r.topicId)).length ? db.select({ id: topicsTable.id, name: topicsTable.name }).from(topicsTable).where(inArray(topicsTable.id, pick(rows.map((r) => r.topicId)))) : [],
+  ]);
+  const nameOf = (list: Array<{ id: number; name: string }>, id: number | null) => list.find((x) => x.id === id)?.name;
+
+  const results = await Promise.all(rows.map(async (row) => {
+    const options = row.options as string[];
+    const topicPath = [nameOf(mods, row.moduleId), nameOf(subs, row.subjectId), nameOf(tops, row.topicId)].filter(Boolean).join(" › ") || null;
+    const optionExplanations = await rectifyOptionExplanations({
+      question: row.question, options, correctAnswer: row.correctAnswer,
+      explanation: row.explanation, existing: row.optionExplanations as Array<string | null> | null, topicPath,
+    });
+    if (optionExplanations.length) await db.update(mcqsTable).set({ optionExplanations }).where(eq(mcqsTable.id, row.id));
+    return { id: row.id, ok: optionExplanations.length > 0 };
+  }));
+  const rectified = results.filter((r) => r.ok).length;
+  res.json({ processed: rows.length, rectified, failed: rows.length - rectified, remaining, nextAfterId: lastId, results });
 });
 
 // ---------------------------------------------------------------------------

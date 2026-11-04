@@ -279,6 +279,32 @@ export function AnalysisPanel({ rows, label, filters }: { rows: AdminMcqRow[]; l
     },
     onError: (err: unknown) => toast({ title: 'Could not generate option explanations', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
   });
+  // Rectifier: rewrites missing / thin per-option explanations in this scope
+  // into long, detailed ones. Cursor loop (afterId) so a question the AI
+  // can't rewrite is skipped and reported instead of being retried forever.
+  const rectifyOptionExplanations = useMutation({
+    mutationFn: async () => {
+      let rectified = 0, failed = 0, afterId = 0, remaining = Infinity;
+      const progress = toast({ title: 'Rectifying option explanations…', description: `Starting "${label}"…` });
+      try {
+        while (remaining > 0) {
+          const res = await mcqAdminApi.rectifyOptionExplanations({ all: true, afterId, filters });
+          rectified += res.rectified; failed += res.failed; remaining = res.remaining; afterId = res.nextAfterId;
+          if (res.processed === 0) break;
+          progress.update({ id: progress.id, title: 'Rectifying option explanations…', description: `${rectified} rewritten${failed ? `, ${failed} skipped` : ''} in "${label}" — ${remaining} left…` });
+        }
+      } finally {
+        progress.dismiss();
+      }
+      return { rectified, failed };
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-mcqs-tree'] });
+      queryClient.invalidateQueries({ queryKey: getListMcqsQueryKey() });
+      toast({ title: `AI rewrote option explanations for ${res.rectified} question${res.rectified === 1 ? '' : 's'} in "${label}"`, description: res.failed ? `${res.failed} could not be rewritten (AI timed out or returned something unusable) — their existing text was kept. Run it again to retry.` : undefined });
+    },
+    onError: (err: unknown) => toast({ title: 'Could not rectify option explanations', description: err instanceof ApiRequestError ? err.message : 'Something went wrong.', variant: 'destructive' }),
+  });
   // Randomly reorders each question's options in this scope (in one shot —
   // it's a local reorder, not an AI call, so unlike classify-difficulty
   // above it isn't batch-capped). Fixes banks where the correct option is
@@ -306,6 +332,7 @@ export function AnalysisPanel({ rows, label, filters }: { rows: AdminMcqRow[]; l
     <div className="mt-2 flex flex-wrap gap-2">
       <button type="button" disabled={classify.isPending} onClick={(e) => { e.stopPropagation(); classify.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-classify-difficulty" title={`Re-runs AI difficulty classification on every question in "${label}" (${a.total} total) — one click, processed in the background in small batches`}>{classify.isPending ? 'Classifying…' : <><Wand2 size={12} /> AI: classify difficulty (all {a.total})</>}</button>
       <button type="button" disabled={generateOptionExplanations.isPending} onClick={(e) => { e.stopPropagation(); generateOptionExplanations.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-generate-option-explanations" title={`Generates per-option explanations for every question in "${label}" that's missing them — one click, processed in the background in small batches`}>{generateOptionExplanations.isPending ? 'Generating…' : <><Wand2 size={12} /> AI: generate option explanations (all)</>}</button>
+      <button type="button" disabled={rectifyOptionExplanations.isPending} onClick={(e) => { e.stopPropagation(); rectifyOptionExplanations.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-rectify-option-explanations" title={`Rewrites missing or short per-option explanations for every question in "${label}" into long, detailed ones (existing text is used as a draft and only replaced when the AI returns a full rewrite). Slower than the plain generator — a few questions at a time.`}>{rectifyOptionExplanations.isPending ? 'Rectifying…' : <><Wand2 size={12} /> AI: rectify option explanations (long)</>}</button>
       <button type="button" disabled={shuffle.isPending} onClick={(e) => { e.stopPropagation(); shuffle.mutate(); }} className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-[11px] font-bold text-primary disabled:opacity-50" data-testid="button-shuffle-options" title="Randomly reorders every question's options in this scope, so the correct answer isn't always the same letter — the correct option moves with its text, it stays correct wherever it lands">{shuffle.isPending ? 'Shuffling…' : <><Shuffle size={12} /> Shuffle option order (all {a.total})</>}</button>
       <button type="button" disabled={shuffleSeq.isPending || rows.length < 2} onClick={(e) => { e.stopPropagation(); shuffleSeq.mutate(); }} className={SEQ_BTN} data-testid="button-shuffle-sequence" title={`Mixes the order of all ${rows.length} questions in "${label}" so they no longer appear grouped by import.`}><Shuffle size={12} /> {shuffleSeq.isPending ? 'Mixing…' : 'Shuffle MCQ sequence'}</button>
     </div>

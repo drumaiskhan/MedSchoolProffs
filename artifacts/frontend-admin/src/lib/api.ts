@@ -578,6 +578,11 @@ export const mcqAdminApi = {
   // `remaining > 0` (handled automatically by the AnalysisPanel button in
   // shared.tsx). Skips questions that already have a full set of
   // per-option explanations rather than overwriting them.
+  // AI rectifier: rewrites missing / thin per-option explanations into long,
+  // detailed ones. Cursor-based — keep calling with `afterId: nextAfterId`
+  // until `remaining` is 0 (a few questions per call; each is a long AI call).
+  rectifyOptionExplanations: (body: { ids: number[] } | { all: true; afterId?: number; force?: boolean; filters?: { moduleId?: number; subjectId?: number; topicId?: number; pastPaperId?: number } }) =>
+    request<{ processed: number; rectified: number; failed: number; remaining: number; nextAfterId: number; results: Array<{ id: number; ok: boolean }> }>('/admin/mcqs/rectify-option-explanations', { method: 'POST', body: JSON.stringify(body) }),
   generateOptionExplanations: (body: { ids: number[] } | { all: true; filters?: { moduleId?: number; subjectId?: number; topicId?: number; pastPaperId?: number } }) =>
     request<{ generated: number; remaining: number; results: Array<{ id: number; optionExplanations: string[] }> }>('/admin/mcqs/generate-option-explanations', { method: 'POST', body: JSON.stringify(body) }),
   // One-click fix for the "imported 406, module only shows 380" gap — see
