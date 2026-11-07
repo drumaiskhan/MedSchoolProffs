@@ -358,6 +358,18 @@ CREATE TABLE IF NOT EXISTS med_coupons (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS med_coupons_code_idx ON med_coupons (code);
 
+-- Admin leaderboard adjustments (signed points offset per student).
+CREATE TABLE IF NOT EXISTS med_leaderboard_adjustments (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  points_delta INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  updated_by INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS med_leaderboard_adjustments_user_idx ON med_leaderboard_adjustments (user_id);
+
 -- Per-book purchases — see the matching comment in ensureSchema.ts, which
 -- is what actually runs at boot.
 CREATE TABLE IF NOT EXISTS med_book_purchases (

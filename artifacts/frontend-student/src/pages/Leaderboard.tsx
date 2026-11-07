@@ -14,6 +14,7 @@ import { StandingHero } from '@/components/leaderboard/StandingHero';
 import { Podium3D } from '@/components/leaderboard/Podium3D';
 import { RankRowCard } from '@/components/leaderboard/RankRow';
 import { YouDock } from '@/components/leaderboard/YouDock';
+import '@/components/leaderboard/leaderboard-modern.css';
 
 const RANGES: Array<{ value: string; label: string }> = [
   { value: '7d', label: 'Weekly' }, { value: '30d', label: 'Monthly' }, { value: '3m', label: 'Quarterly' }, { value: '1y', label: 'Yearly' },

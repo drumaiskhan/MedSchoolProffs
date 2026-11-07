@@ -33,6 +33,7 @@ export const pageLoaders = {
   AdminTeam: () => import('@/pages/AdminTeam'),
   AdminSettings: () => import('@/pages/AdminSettings'),
   AdminDatabaseBackup: () => import('@/pages/AdminDatabaseBackup'),
+  AdminLeaderboard: () => import('@/pages/AdminLeaderboard'),
 } as const;
 
 type PageName = keyof typeof pageLoaders;
@@ -40,7 +41,7 @@ type PageName = keyof typeof pageLoaders;
 // URL -> page chunk. Longest prefix wins (see resolve()).
 const ROUTES: Array<[string, PageName]> = [
   ['/notifications', 'Notifications'], ['/profile', 'Profile'],
-  ['/admin/students', 'AdminStudents'], ['/admin/payments', 'AdminPaymentsHub'], ['/admin/payment-details', 'AdminPaymentsHub'],
+  ['/admin/students', 'AdminStudents'], ['/admin/leaderboard', 'AdminLeaderboard'], ['/admin/payments', 'AdminPaymentsHub'], ['/admin/payment-details', 'AdminPaymentsHub'],
   ['/admin/plans', 'AdminPlans'], ['/admin/coupons', 'AdminCoupons'], ['/admin/academic-structure', 'AdminAcademicStructure'],
   ['/admin/content', 'AdminContent'], ['/admin/subjects', 'AdminSubjectsPage'], ['/admin/topics', 'AdminTopicsPage'],
   ['/admin/quality', 'AdminQualityCenter'], ['/admin/mcqs', 'AdminMcqs'], ['/admin/flashcards', 'AdminFlashcards'],

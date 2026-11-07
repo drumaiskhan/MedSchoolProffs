@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, practiceAttemptsTable, practiceAnswersTable, mcqsTable, usersTable, topicsTable, subjectsTable } from "@workspace/db";
 import { requireAuth, requireMembershipFor } from "../middlewares/auth";
 import { liveStreak, utcDay, parseTzOffset, streakFromDays, type RebuiltStreak } from "../lib/streak";
+import { buildLeaderboard, RANGE_DAYS } from "../lib/leaderboard";
 import { trialDailyMcqCapError, getTrialDailyMcqStatus } from "../lib/trial";
 
 const router: IRouter = Router();
@@ -148,7 +149,6 @@ router.get("/student/trial-mcq-usage", requireAuth, async (req, res): Promise<vo
 // Analytics dashboard
 // ---------------------------------------------------------------------------
 
-const RANGE_DAYS: Record<string, number> = { "7d": 7, "30d": 30, "3m": 90, "1y": 365 };
 
 router.get("/student/analytics", requireAuth, async (req, res): Promise<void> => {
   const range = typeof req.query.range === "string" ? req.query.range : "7d";
@@ -274,78 +274,25 @@ router.get("/student/progress", requireAuth, async (req, res): Promise<void> => 
 
 router.get("/leaderboard", requireAuth, async (req, res): Promise<void> => {
   const range = typeof req.query.range === "string" ? req.query.range : "30d";
-  const days = RANGE_DAYS[range] ?? 30;
-  const since = new Date();
-  since.setDate(since.getDate() - days);
 
-  const rows = await db
-    .select({
-      userId: practiceAttemptsTable.userId,
-      totalQuestions: sql<number>`sum(${practiceAttemptsTable.totalQuestions})`,
-      totalCorrect: sql<number>`sum(${practiceAttemptsTable.correctCount})`,
-      sessions: sql<number>`count(*)`,
-    })
-    .from(practiceAttemptsTable)
-    .where(gte(practiceAttemptsTable.createdAt, since))
-    .groupBy(practiceAttemptsTable.userId);
-
-  // Points formula (section 4 fix notes): ranking by raw correct-answer
-  // count rewards pure volume — a student who blitzes through 500 easy
-  // questions outranks one with excellent accuracy on fewer, harder ones.
-  // 10 points per correct answer, minus 3 per wrong answer (floored at 0)
-  // rewards genuine mastery over guessing/volume-farming, since spamming
-  // wrong answers actively costs points instead of just not helping.
-  // These weights are a reasonable default, not a spec — easy to retune.
-  const scored = rows.map((row) => {
-    const correct = Number(row.totalCorrect ?? 0);
-    const total = Number(row.totalQuestions ?? 0);
-    const wrong = Math.max(0, total - correct);
-    const points = Math.max(0, correct * 10 - wrong * 3);
-    return { ...row, points, correct, total };
-  });
-
-  // Bug fix: this used to pull every row from usersTable unfiltered (no
-  // WHERE at all) on every poll — including admin accounts and
-  // soft-deleted students — then just looked names up by id. An admin
-  // account that had ever submitted a practice session (e.g. while
-  // browsing the student portal to check something) would rank on the
-  // student leaderboard, and a student who deleted their account would
-  // keep showing up forever since nothing excluded status "DELETED".
-  // Filtering to real, current students here (and dropping their
-  // attempts from `scored`/ranking entirely, not just hiding the name)
-  // is what the "community" framing on the leaderboard actually promises.
-  const userIds = scored.map((r) => r.userId);
-  const students = userIds.length
-    ? await db.select().from(usersTable).where(and(inArray(usersTable.id, userIds), eq(usersTable.role, "student"), ne(usersTable.status, "DELETED")))
-    : [];
-  const studentMap = new Map(students.map((u) => [u.id, u]));
-
-  // Ties on points used to fall back to whatever order the GROUP BY happened
-  // to return, so two students on the same score could swap places between
-  // polls (the page refreshes every 10s). Break ties by accuracy, then volume,
-  // then id so the order is stable.
-  const ranked = scored
-    .filter((row) => studentMap.has(row.userId))
-    .sort((a, b) => b.points - a.points || (b.total ? b.correct / b.total : 0) - (a.total ? a.correct / a.total : 0) || b.total - a.total || a.userId - b.userId);
+  // Points formula: 10 per correct answer, minus 3 per wrong (floored at 0),
+  // plus any admin adjustment — see lib/leaderboard.ts. Only real, current
+  // students rank (admins and soft-deleted accounts are excluded there).
+  const ranked = (await buildLeaderboard(range)).filter((row) => row.total > 0 || row.adjustment !== 0);
 
   res.json(ranked.map((row, index) => {
-    const student = studentMap.get(row.userId);
+    const student = row.user;
     // Live streak (0 once a day has been missed) — see lib/streak.ts.
     const streak = liveStreak(student);
     return {
       rank: index + 1,
       userId: row.userId,
-      name: student?.name ?? "Student",
+      name: student.name ?? "Student",
       currentStreak: streak.current,
       longestStreak: streak.longest,
       practicedToday: streak.practicedToday,
-      // Same field the payment/profile views already surface a student's
-      // college under (usersTable.institution — see userView/paymentView in
-      // routes/medschool.ts) — added here so the leaderboard can show which
-      // college each player is from, without a separate institutionsTable
-      // join or a new column.
-      institution: student?.institution ?? null,
-      sessions: Number(row.sessions),
+      institution: student.institution ?? null,
+      sessions: row.sessions,
       questionsAnswered: row.total,
       correct: row.correct,
       points: row.points,

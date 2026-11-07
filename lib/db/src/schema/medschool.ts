@@ -253,6 +253,20 @@ export const couponsTable = pgTable("med_coupons", {
   ...timestamps,
 }, (table) => ({ codeIdx: uniqueIndex("med_coupons_code_idx").on(table.code) }));
 
+// Admin leaderboard adjustments: one row per student holding a signed points
+// offset that is added on top of the points computed from practice attempts
+// (see lib/leaderboard.ts). Rank is always derived from final points, so an
+// admin "rank up/down" is just a computed points offset. Deleting the row
+// resets the student to their earned score.
+export const leaderboardAdjustmentsTable = pgTable("med_leaderboard_adjustments", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  pointsDelta: integer("points_delta").notNull().default(0),
+  note: text("note"),
+  updatedBy: integer("updated_by"),
+  ...timestamps,
+}, (table) => ({ userIdx: uniqueIndex("med_leaderboard_adjustments_user_idx").on(table.userId) }));
+
 // Per-book purchases (client decision, superseding the earlier "any active
 // membership unlocks paid books" approach): a paid book now requires its
 // OWN approved purchase, reviewed by an admin independently of the

@@ -5,7 +5,7 @@ import { useId, type ReactNode } from 'react';
 import { Link } from 'wouter';
 import { CheckCircle2, Flame, Target, Trophy, Zap, BookOpen } from 'lucide-react';
 import type { StreakCard } from '@/lib/api';
-import { Count, FlameIcon, Medal } from '@/lib/fx3d';
+import { Count, FlameIcon } from '@/lib/fx3d';
 import { beatPercent, neighbour, placeTone, type Metric, type RankedRow } from './metrics';
 
 const WEEKDAY = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -66,7 +66,7 @@ function RankEmblem({ position, tone, beat }: { position: number; tone: ReturnTy
       <circle className="lbx-emblem__bg" cx="50" cy="50" r={R} />
       <circle className="lbx-emblem__fg" cx="50" cy="50" r={R} stroke={`url(#re${uid})`} strokeDasharray={C} strokeDashoffset={C * (1 - frac)} />
     </svg>
-    <Medal tone={tone} size={76}><span data-testid="text-your-rank">#{position}</span></Medal>
+    <span className="lm-emblem-num"><span data-testid="text-your-rank">#{position}</span></span>
   </span>;
 }
 

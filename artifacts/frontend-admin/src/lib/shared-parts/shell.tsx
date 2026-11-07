@@ -55,7 +55,7 @@ export const navGroups: Array<{ label: string; items: NavItem[] }> = [
 
 export const adminGroups: Array<{ label: string; items: NavItem[] }> = [
   { label: 'Overview', items: [
-    ['/admin', 'Admin overview', LayoutDashboard], ['/admin/students', 'Students', Users],
+    ['/admin', 'Admin overview', LayoutDashboard], ['/admin/students', 'Students', Users], ['/admin/leaderboard', 'Leaderboard', Trophy],
   ] },
   { label: 'Payments', items: [
     ['/admin/plans', 'Subscription plans', CreditCard], ['/admin/coupons', 'Coupon codes', Percent], ['/admin/payments', 'Payments & collection', ReceiptText],
@@ -80,7 +80,7 @@ export const adminGroups: Array<{ label: string; items: NavItem[] }> = [
 // Hue (HSL degrees) of each page's keycap in the sidebar — same idea as the
 // student panel's NAV_HUE, so the glossy icon tiles tint per destination.
 const NAV_HUE: Record<string, number> = {
-  '/admin': 214, '/admin/students': 172, '/admin/plans': 152, '/admin/coupons': 38, '/admin/payments': 45,
+  '/admin': 214, '/admin/students': 172, '/admin/leaderboard': 48, '/admin/plans': 152, '/admin/coupons': 38, '/admin/payments': 45,
   '/admin/academic-structure': 205, '/admin/content': 228, '/admin/subjects': 190, '/admin/topics': 200,
   '/admin/mcqs': 268, '/admin/quality': 160, '/admin/flashcards': 290, '/admin/books': 22, '/admin/book-purchases': 12,
   '/admin/past-papers': 350, '/admin/exams': 4, '/admin/ospe-osce': 330,

@@ -1043,6 +1043,16 @@ export const couponsAdminApi = {
   remove: (id: number) => request<{ ok: true }>(`/coupons/${id}`, { method: 'DELETE' }),
 };
 
+export interface AdminLeaderboardRow { rank: number; userId: number; name: string; email: string; institution: string | null; sessions: number; questionsAnswered: number; correct: number; earnedPoints: number; adjustment: number; points: number }
+export const leaderboardAdminApi = {
+  list: (range = '30d') => request<{ range: string; rows: AdminLeaderboardRow[] }>(`/admin/leaderboard?range=${range}`),
+  addPoints: (userId: number, delta: number, range = '30d') => request<AdminLeaderboardRow>(`/admin/leaderboard/${userId}/points?range=${range}`, { method: 'POST', body: JSON.stringify({ delta }) }),
+  setPoints: (userId: number, setTo: number, range = '30d') => request<AdminLeaderboardRow>(`/admin/leaderboard/${userId}/points?range=${range}`, { method: 'POST', body: JSON.stringify({ setTo }) }),
+  move: (userId: number, direction: 'up' | 'down', places: number, range = '30d') => request<AdminLeaderboardRow>(`/admin/leaderboard/${userId}/rank?range=${range}`, { method: 'POST', body: JSON.stringify({ direction, places }) }),
+  setRank: (userId: number, targetRank: number, range = '30d') => request<AdminLeaderboardRow>(`/admin/leaderboard/${userId}/rank?range=${range}`, { method: 'POST', body: JSON.stringify({ targetRank }) }),
+  reset: (userId: number, range = '30d') => request<AdminLeaderboardRow>(`/admin/leaderboard/${userId}/adjustment?range=${range}`, { method: 'DELETE' }),
+};
+
 export interface AdminBookPurchase { id: number; bookId: number; bookTitle: string; amount: number; currency: string; method: string; reference: string; paymentDate: string; proofPath: string | null; status: 'PAYMENT_PENDING_REVIEW' | 'approved' | 'rejected' | 'suspended'; rejectionReason: string | null; submittedAt: string; reviewedAt: string | null; user?: { name: string; email: string } }
 export const bookPurchasesAdminApi = {
   list: () => request<AdminBookPurchase[]>('/admin/book-purchases'),
